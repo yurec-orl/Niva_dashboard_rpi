@@ -2,5 +2,5 @@
 
 pub mod gpio_input;
 
-pub use gpio_input::{GpioInput, GpioInputConfig, MultiGpioInput, PinState};
+pub use gpio_input::{GpioInput, GpioInputConfig, PinState};
 pub use rppal::gpio::Bias;
