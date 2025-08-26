@@ -1,0 +1,84 @@
+# Rust build artifacts
+/target/
+**/target/
+
+# Cargo lock file (should be included for binaries, excluded for libraries)
+# Since this is a binary project (dashboard application), we keep Cargo.lock
+# Cargo.lock
+
+# Cargo build cache
+.cargo/
+
+# Rust debug information
+**/*.pdb
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.bak
+*.orig
+
+# Raspberry Pi specific
+# Exclude any hardware-specific configuration files that shouldn't be shared
+# config.local.*
+# *.local
+
+# Documentation build artifacts
+/doc/
+/docs/book/
+
+# Test artifacts
+*.profraw
+
+# IDE specific files
+.vscode/settings.json
+.vscode/launch.json
+.vscode/tasks.json
+.vscode/.ropeproject
+
+# Rust analyzer cache
+.rust-analyzer/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Backup files
+*.bk
+*~
+
+# Core dumps
+core
+core.*
+
+# Runtime artifacts
+*.pid
+*.seed
+*.log.*
+
+# Hardware test outputs (if any)
+gpio_test_output.txt
+sensor_logs/
+
+# Build scripts output
+build.rs.out
