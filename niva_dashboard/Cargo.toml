@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 rppal = "0.22.1"
+sdl2 = { version = "0.35", features = ["ttf"] }
 
 # For development/testing on x86_64, we'll use a mock graphics implementation
 # For Raspberry Pi deployment, these would be the actual SDL2 bindings

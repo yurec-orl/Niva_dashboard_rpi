@@ -855,3 +855,258 @@ unsafe fn setup_vertex_attributes(pos_attr: i32, color_attr: i32) {
         (2 * std::mem::size_of::<f32>()) as *const std::ffi::c_void,
     );
 }
+
+// Text rendering test using SDL2 TTF
+pub fn run_text_rendering_test() -> Result<(), String> {
+    use sdl2::pixels::Color;
+    use sdl2::rect::Rect;
+    use sdl2::render::TextureQuery;
+    use sdl2::ttf::FontStyle;
+    
+    println!("Starting Text Rendering Test with SDL2 TTF...");
+    
+    // Initialize SDL2 and TTF
+    let sdl_context = sdl2::init().map_err(|e| e.to_string())?;
+    let video_subsystem = sdl_context.video().map_err(|e| e.to_string())?;
+    let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string())?;
+    
+    println!("SDL2 TTF version: {}", sdl2::ttf::get_linked_version());
+    
+    // Create window
+    let window = video_subsystem
+        .window("Niva Dashboard - Text Rendering Test", 800, 480)
+        .position_centered()
+        .build()
+        .map_err(|e| e.to_string())?;
+    
+    let mut canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
+    let texture_creator = canvas.texture_creator();
+    
+    // Load built-in fonts or use system fonts
+    // For this demo, we'll try to load common system fonts
+    let font_paths = vec![
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+        "/System/Library/Fonts/Arial.ttf", // macOS
+        "/System/Library/Fonts/Courier.ttc", // macOS
+        "C:/Windows/Fonts/arial.ttf", // Windows
+        "C:/Windows/Fonts/cour.ttf", // Windows
+    ];
+    
+    // Find available fonts
+    let mut fonts = Vec::new();
+    for path in &font_paths {
+        if std::path::Path::new(path).exists() {
+            match ttf_context.load_font(path, 24) {
+                Ok(font) => {
+                    fonts.push((font, path.to_string()));
+                    if fonts.len() >= 2 { break; } // We only need 2 fonts
+                }
+                Err(_) => continue,
+            }
+        }
+    }
+    
+    // If no system fonts found, create embedded font data (fallback)
+    if fonts.is_empty() {
+        println!("No system fonts found. Using fallback text rendering...");
+        return run_fallback_text_test();
+    }
+    
+    println!("Found {} fonts to test with", fonts.len());
+    
+    // Create different sized versions of the fonts
+    let font_sizes = vec![16, 24, 32, 48, 64];
+    let mut all_fonts = Vec::new();
+    
+    for (_, font_path) in &fonts {
+        for &size in &font_sizes {
+            match ttf_context.load_font(font_path, size) {
+                Ok(mut font) => {
+                    // Set different styles for variety
+                    match size {
+                        48 => font.set_style(FontStyle::BOLD),
+                        64 => font.set_style(FontStyle::BOLD | FontStyle::ITALIC),
+                        _ => font.set_style(FontStyle::NORMAL),
+                    }
+                    all_fonts.push((font, size, font_path.clone()));
+                }
+                Err(e) => println!("Failed to load font {} at size {}: {}", font_path, size, e),
+            }
+        }
+    }
+    
+    // Test texts for dashboard
+    let test_texts = vec![
+        ("НИВА ПАНЕЛЬ", Color::RGB(255, 255, 255)),
+        ("Speed: 85 km/h", Color::RGB(0, 255, 0)),
+        ("RPM: 3500", Color::RGB(255, 165, 0)),
+        ("Fuel: 75%", Color::RGB(255, 255, 0)),
+        ("Temp: 89°C", Color::RGB(255, 100, 100)),
+        ("ENGINE OK", Color::RGB(0, 255, 0)),
+        ("12:34 PM", Color::RGB(100, 200, 255)),
+        ("GPS: ACTIVE", Color::RGB(150, 255, 150)),
+    ];
+    
+    // Main rendering loop
+    let mut event_pump = sdl_context.event_pump().map_err(|e| e.to_string())?;
+    let mut frame_count = 0;
+    let total_frames = 300; // 5 seconds at 60fps
+    
+    'running: loop {
+        // Handle events
+        for event in event_pump.poll_iter() {
+            match event {
+                sdl2::event::Event::Quit { .. } |
+                sdl2::event::Event::KeyDown { keycode: Some(sdl2::keyboard::Keycode::Escape), .. } => {
+                    break 'running;
+                }
+                _ => {}
+            }
+        }
+        
+        // Clear screen with dark dashboard background
+        canvas.set_draw_color(Color::RGB(5, 5, 15));
+        canvas.clear();
+        
+        let mut y_offset = 10;
+        let mut font_index = 0;
+        
+        // Render each test text with different fonts and sizes
+        for (text, color) in &test_texts {
+            if font_index < all_fonts.len() {
+                let (ref font, size, ref font_name) = all_fonts[font_index];
+                
+                // Render text to surface
+                match font.render(text).blended(*color) {
+                    Ok(surface) => {
+                        match texture_creator.create_texture_from_surface(&surface) {
+                            Ok(texture) => {
+                                let TextureQuery { width, height, .. } = texture.query();
+                                
+                                // Position text
+                                let dest_rect = Rect::new(20, y_offset, width, height);
+                                
+                                // Draw the text
+                                if let Err(e) = canvas.copy(&texture, None, Some(dest_rect)) {
+                                    println!("Failed to copy texture: {}", e);
+                                }
+                                
+                                // Show font info occasionally
+                                if frame_count % 60 == 0 {
+                                    println!("Rendered '{}' with {} (size {})", text, font_name, size);
+                                }
+                                
+                                y_offset += height as i32 + 5;
+                            }
+                            Err(e) => println!("Failed to create texture: {}", e),
+                        }
+                    }
+                    Err(e) => println!("Failed to render text '{}': {}", text, e),
+                }
+                
+                font_index = (font_index + 1) % all_fonts.len();
+            }
+        }
+        
+        // Add animated element - cycling through font sizes
+        let anim_font_idx = (frame_count / 30) % all_fonts.len();
+        if anim_font_idx < all_fonts.len() {
+            let (ref anim_font, anim_size, _) = all_fonts[anim_font_idx];
+            let animation_text = format!("Font Size: {}", anim_size);
+            
+            match anim_font.render(&animation_text).blended(Color::RGB(255, 255, 255)) {
+                Ok(surface) => {
+                    if let Ok(texture) = texture_creator.create_texture_from_surface(&surface) {
+                        let TextureQuery { width, height, .. } = texture.query();
+                        let dest_rect = Rect::new(400, 50, width, height);
+                        let _ = canvas.copy(&texture, None, Some(dest_rect));
+                    }
+                }
+                Err(_) => {}
+            }
+        }
+        
+        canvas.present();
+        frame_count += 1;
+        
+        if frame_count >= total_frames {
+            break 'running;
+        }
+        
+        std::thread::sleep(std::time::Duration::from_millis(16)); // ~60fps
+    }
+    
+    println!("Text rendering test completed successfully!");
+    Ok(())
+}
+
+// Fallback text rendering for when no system fonts are available
+fn run_fallback_text_test() -> Result<(), String> {
+    println!("Running fallback text rendering test...");
+    
+    // Initialize basic SDL2 for drawing rectangles as "text"
+    let sdl_context = sdl2::init().map_err(|e| e.to_string())?;
+    let video_subsystem = sdl_context.video().map_err(|e| e.to_string())?;
+    
+    let window = video_subsystem
+        .window("Niva Dashboard - Fallback Text Test", 800, 480)
+        .position_centered()
+        .build()
+        .map_err(|e| e.to_string())?;
+    
+    let mut canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
+    let mut event_pump = sdl_context.event_pump().map_err(|e| e.to_string())?;
+    
+    // Simple bitmap-style "text" using rectangles
+    let mut frame_count = 0;
+    
+    'running: loop {
+        for event in event_pump.poll_iter() {
+            match event {
+                sdl2::event::Event::Quit { .. } |
+                sdl2::event::Event::KeyDown { keycode: Some(sdl2::keyboard::Keycode::Escape), .. } => {
+                    break 'running;
+                }
+                _ => {}
+            }
+        }
+        
+        canvas.set_draw_color(sdl2::pixels::Color::RGB(5, 5, 15));
+        canvas.clear();
+        
+        // Draw simple rectangles to represent different "font sizes"
+        let sizes = vec![10, 15, 20, 25, 30];
+        let colors = vec![
+            sdl2::pixels::Color::RGB(255, 255, 255),
+            sdl2::pixels::Color::RGB(0, 255, 0),
+            sdl2::pixels::Color::RGB(255, 165, 0),
+            sdl2::pixels::Color::RGB(255, 255, 0),
+            sdl2::pixels::Color::RGB(255, 100, 100),
+        ];
+        
+        for (i, (&size, &color)) in sizes.iter().zip(colors.iter()).enumerate() {
+            canvas.set_draw_color(color);
+            let y = 50 + i as i32 * 60;
+            // Draw a series of rectangles to represent text
+            for j in 0..10 {
+                let rect = sdl2::rect::Rect::new(50 + j * (size + 5), y, size as u32, size as u32);
+                let _ = canvas.fill_rect(rect);
+            }
+        }
+        
+        canvas.present();
+        frame_count += 1;
+        
+        if frame_count >= 180 { // 3 seconds
+            break 'running;
+        }
+        
+        std::thread::sleep(std::time::Duration::from_millis(16));
+    }
+    
+    println!("Fallback text test completed!");
+    Ok(())
+}

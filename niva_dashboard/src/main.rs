@@ -2,7 +2,7 @@ mod hardware;
 mod graphics;
 
 use hardware::GpioInput;
-use graphics::{run_opengl_test, run_dashboard_gauges_test, run_moving_needle_test};
+use graphics::{run_opengl_test, run_dashboard_gauges_test, run_moving_needle_test, run_text_rendering_test};
 use std::thread;
 use std::time::Duration;
 
@@ -12,6 +12,7 @@ fn main() {
     println!("1. Basic OpenGL triangle test");
     println!("2. Simple moving needle test");
     println!("3. Multi-gauge dashboard test");
+    println!("4. Text rendering test with multiple fonts and sizes");
     
     // For now, run all tests in sequence
     println!("\n=== Basic OpenGL Triangle Test ===");
@@ -30,6 +31,12 @@ fn main() {
     match run_dashboard_gauges_test() {
         Ok(()) => println!("Dashboard gauges test completed successfully!"),
         Err(e) => eprintln!("Dashboard gauges test failed: {}", e),
+    }
+    
+    println!("\n=== Text Rendering Test ===");
+    match run_text_rendering_test() {
+        Ok(()) => println!("Text rendering test completed successfully!"),
+        Err(e) => eprintln!("Text rendering test failed: {}", e),
     }
     
     // Keep the GPIO test functionality available
