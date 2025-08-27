@@ -2,7 +2,7 @@ mod hardware;
 mod graphics;
 
 use hardware::GpioInput;
-use graphics::{run_opengl_test, run_dashboard_gauges_test, run_moving_needle_test, run_text_rendering_test, run_sdl2_gauges_test, run_sdl2_advanced_needles_test, GraphicsContext};
+use graphics::{run_opengl_test, run_dashboard_gauges_test, run_moving_needle_test, run_text_rendering_test, run_sdl2_gauges_test, run_sdl2_advanced_needles_test, run_opengl_rotating_needles_demo, GraphicsContext};
 use std::thread;
 use std::time::Duration;
 use std::env;
@@ -18,9 +18,10 @@ fn main() {
     println!("4. Text rendering test with multiple fonts and sizes");
     println!("5. SDL2 high-level gauge rendering test");
     println!("6. SDL2 advanced needle rendering methods (rectangles, polygons, textures)");
-    println!("7. GPIO input test");
-    println!("8. Combined graphics test (shared context)");
-    println!("Usage: cargo run -- [basic|needle|gauges|text|sdl2|advanced|gpio|all]");
+    println!("7. OpenGL rotating needles demo with antialiasing and variable thickness");
+    println!("8. GPIO input test");
+    println!("9. Combined graphics test (shared context)");
+    println!("Usage: cargo run -- [basic|needle|gauges|text|sdl2|advanced|rotating|gpio|all]");
     
     let test_name = if args.len() >= 2 {
         &args[1]
@@ -54,6 +55,10 @@ fn main() {
             println!("\n=== SDL2 Advanced Needle Rendering Methods ===");
             run_graphics_test("Niva Dashboard - Advanced Needles", run_sdl2_advanced_needles_test);
         }
+        "rotating" => {
+            println!("\n=== OpenGL Rotating Needles Demo with Antialiasing ===");
+            run_graphics_test("Niva Dashboard - Rotating Needles", run_opengl_rotating_needles_demo);
+        }
         "gpio" => {
             println!("\n=== Single GPIO Input Example ===");
             match test_single_gpio_input() {
@@ -83,6 +88,9 @@ fn main() {
             println!("\n=== SDL2 Advanced Needle Rendering Methods ===");
             run_graphics_test("Niva Dashboard - Advanced Needles", run_sdl2_advanced_needles_test);
             
+            println!("\n=== OpenGL Rotating Needles Demo with Antialiasing ===");
+            run_graphics_test("Niva Dashboard - Rotating Needles", run_opengl_rotating_needles_demo);
+            
             println!("\n=== Single GPIO Input Example ===");
             match test_single_gpio_input() {
                 Ok(_) => println!("Single GPIO test completed successfully"),
@@ -91,7 +99,7 @@ fn main() {
         }
         _ => {
             eprintln!("Unknown test: {}", test_name);
-            eprintln!("Valid options: basic, needle, gauges, text, sdl2, advanced, gpio, all");
+            eprintln!("Valid options: basic, needle, gauges, text, sdl2, advanced, rotating, gpio, all");
             std::process::exit(1);
         }
     }

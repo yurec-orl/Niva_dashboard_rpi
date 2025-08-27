@@ -7,7 +7,7 @@ A software dashboard for automotive use, written in Rust and designed to run on 
 - **Target Device**: Raspberry Pi 4
 - **Graphics**: Raspberry Pi OpenGL library
 - **Input**: GPIO-connected physical buttons (2 rows, left and right sides)
-- **Display**: Central screen for data visualization
+- **Display**: Central screen for data visualization, 800x480 pixels.
 
 ## Physical Layout
 ```

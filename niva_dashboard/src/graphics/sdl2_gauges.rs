@@ -440,19 +440,19 @@ pub fn run_sdl2_advanced_needles_test(_context: &GraphicsContext) -> Result<(), 
     // Define needle test configurations
     let needle_configs = [
         // Top row - Different methods with medium thickness
-        (200, 150, 100, "Rectangle", 12, Color::RGB(255, 100, 100)),
-        (600, 150, 100, "Polygon", 12, Color::RGB(100, 255, 100)),
-        (1000, 150, 100, "Textured", 12, Color::RGB(100, 100, 255)),
+        (200, 100, 100, "Rectangle", 12, Color::RGB(255, 100, 100)),
+        (400, 100, 100, "Polygon", 12, Color::RGB(100, 255, 100)),
+        (600, 100, 100, "Textured", 12, Color::RGB(100, 100, 255)),
         
         // Middle row - Thick needles comparison
-        (200, 350, 80, "Rect-Thick", 20, Color::RGB(255, 150, 50)),
-        (600, 350, 80, "Poly-Thick", 20, Color::RGB(150, 255, 50)),
-        (1000, 350, 80, "Text-Thick", 20, Color::RGB(50, 150, 255)),
+        (200, 240, 80, "Rect-Thick", 20, Color::RGB(255, 150, 50)),
+        (400, 240, 80, "Poly-Thick", 20, Color::RGB(150, 255, 50)),
+        (600, 240, 80, "Text-Thick", 20, Color::RGB(50, 150, 255)),
         
         // Bottom row - Thin needles comparison
-        (200, 550, 60, "Rect-Thin", 4, Color::RGB(255, 200, 100)),
-        (600, 550, 60, "Poly-Thin", 4, Color::RGB(200, 255, 100)),
-        (1000, 550, 60, "Text-Thin", 4, Color::RGB(100, 200, 255)),
+        (200, 380, 60, "Rect-Thin", 4, Color::RGB(255, 200, 100)),
+        (400, 380, 60, "Poly-Thin", 4, Color::RGB(200, 255, 100)),
+        (600, 380, 60, "Text-Thin", 4, Color::RGB(100, 200, 255)),
     ];
     
     'running: loop {
@@ -507,11 +507,11 @@ pub fn run_sdl2_advanced_needles_test(_context: &GraphicsContext) -> Result<(), 
             draw_filled_circle(&mut canvas, x, y, 8, Color::RGB(120, 120, 120))?;
             
             // Draw method label
-            draw_method_label(&mut canvas, x, y + length + 30, method, thickness)?;
+            //draw_method_label(&mut canvas, x, y + length + 30, method, thickness)?;
         }
         
         // Draw performance comparison info
-        draw_performance_comparison(&mut canvas, frame_count)?;
+        //draw_performance_comparison(&mut canvas, frame_count)?;
         
         // Present the frame
         canvas.present();

@@ -42,6 +42,15 @@ extern "C" {
     fn glGetShaderInfoLog(shader: u32, bufSize: i32, length: *mut i32, infoLog: *mut i8);
     fn glGetProgramInfoLog(program: u32, bufSize: i32, length: *mut i32, infoLog: *mut i8);
     fn glGetError() -> u32;
+    
+    // Additional OpenGL functions for antialiasing and blending
+    fn glEnable(cap: u32);
+    fn glDisable(cap: u32);
+    fn glBlendFunc(sfactor: u32, dfactor: u32);
+    fn glLineWidth(width: f32);
+    fn glUniformMatrix4fv(location: i32, count: i32, transpose: u8, value: *const f32);
+    fn glUniform2f(location: i32, v0: f32, v1: f32);
+    fn glUniform4f(location: i32, v0: f32, v1: f32, v2: f32, v3: f32);
 }
 
 // SDL2 constants
@@ -67,6 +76,15 @@ const GL_FLOAT: u32 = 0x1406;
 const GL_COMPILE_STATUS: u32 = 0x8B81;
 const GL_LINK_STATUS: u32 = 0x8B82;
 const GL_NO_ERROR: u32 = 0;
+
+// Additional constants for antialiasing and blending
+const GL_BLEND: u32 = 0x0BE2;
+const GL_SRC_ALPHA: u32 = 0x0302;
+const GL_ONE_MINUS_SRC_ALPHA: u32 = 0x0303;
+const GL_LINE_SMOOTH: u32 = 0x0B20;
+const GL_POLYGON_SMOOTH: u32 = 0x0B41;
+const GL_TRIANGLE_STRIP: u32 = 0x0005;
+const GL_TRIANGLE_FAN: u32 = 0x0006;
 
 // SDL Event structure (simplified)
 #[repr(C)]
@@ -979,4 +997,545 @@ fn run_fallback_text_test() -> Result<(), String> {
     
     println!("Fallback text test completed!");
     Ok(())
+}
+
+/// Advanced OpenGL rotating needles demo with antialiasing and variable thickness
+pub fn run_opengl_rotating_needles_demo(context: &GraphicsContext) -> Result<(), String> {
+    println!("Starting OpenGL Rotating Needles Demo with Antialiasing...");
+    println!("Resolution: 800x480 - Multiple needles with different sizes and thickness");
+    
+    unsafe {
+        glViewport(0, 0, context.width, context.height);
+        
+        // Enable antialiasing and blending for smooth needles
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glEnable(GL_LINE_SMOOTH);
+        
+        println!("Creating advanced needle shader program...");
+        let shader_program = create_advanced_needle_shader_program()?;
+        
+        // Create different needle geometries with varying thickness
+        let needle_configs = create_multiple_needle_geometries()?;
+        
+        // Get shader locations
+        let pos_attr = glGetAttribLocation(shader_program, b"position\0".as_ptr() as *const i8);
+        let color_attr = glGetAttribLocation(shader_program, b"color\0".as_ptr() as *const i8);
+        let thickness_attr = glGetAttribLocation(shader_program, b"thickness\0".as_ptr() as *const i8);
+        let time_uniform = glGetUniformLocation(shader_program, b"time\0".as_ptr() as *const i8);
+        let resolution_uniform = glGetUniformLocation(shader_program, b"resolution\0".as_ptr() as *const i8);
+        let rotation_uniform = glGetUniformLocation(shader_program, b"rotation\0".as_ptr() as *const i8);
+        let center_uniform = glGetUniformLocation(shader_program, b"center\0".as_ptr() as *const i8);
+        let scale_uniform = glGetUniformLocation(shader_program, b"scale\0".as_ptr() as *const i8);
+        
+        if pos_attr == -1 || color_attr == -1 {
+            return Err("Failed to get needle shader attributes".to_string());
+        }
+        
+        println!("Running advanced rotating needles animation...");
+        println!("Features: 6 needles, variable thickness, antialiasing, smooth rotation");
+        
+        let mut frame_count = 0;
+        let total_frames = 720; // 12 seconds at 60fps
+        
+        while frame_count < total_frames {
+            if context.should_quit() {
+                break;
+            }
+            
+            render_rotating_needles_frame(
+                frame_count, 
+                shader_program, 
+                &needle_configs,
+                pos_attr, 
+                color_attr, 
+                thickness_attr,
+                time_uniform, 
+                resolution_uniform,
+                rotation_uniform,
+                center_uniform,
+                scale_uniform
+            );
+            
+            context.swap_buffers();
+            frame_count += 1;
+            
+            std::thread::sleep(std::time::Duration::from_millis(16)); // ~60fps
+        }
+        
+        println!("OpenGL rotating needles demo completed successfully!");
+    }
+    
+    Ok(())
+}
+
+#[derive(Clone)]
+struct NeedleConfig {
+    vbo: u32,
+    vertex_count: i32,
+    position: (f32, f32),    // Center position on screen
+    scale: f32,              // Size multiplier
+    color: (f32, f32, f32),  // RGB color
+    speed: f32,              // Rotation speed multiplier
+    thickness_base: f32,     // Base thickness
+    draw_mode: u32,          // GL_TRIANGLES, GL_TRIANGLE_STRIP, etc.
+}
+
+unsafe fn create_advanced_needle_shader_program() -> Result<u32, String> {
+    let vertex_shader_source = b"
+attribute vec2 position;
+attribute vec3 color;
+attribute float thickness;
+varying vec3 v_color;
+varying float v_thickness;
+uniform float time;
+uniform vec2 resolution;
+uniform float rotation;
+uniform vec2 center;
+uniform float scale;
+
+void main() {
+    // Apply rotation matrix
+    float cos_r = cos(rotation);
+    float sin_r = sin(rotation);
+    
+    vec2 rotated_pos = vec2(
+        position.x * cos_r - position.y * sin_r,
+        position.x * sin_r + position.y * cos_r
+    );
+    
+    // Scale and translate
+    vec2 scaled_pos = rotated_pos * scale + center;
+    
+    // Convert to normalized device coordinates
+    vec2 ndc = (scaled_pos / resolution) * 2.0 - 1.0;
+    ndc.y = -ndc.y; // Flip Y for screen coordinates
+    
+    gl_Position = vec4(ndc, 0.0, 1.0);
+    v_color = color;
+    v_thickness = thickness;
+}
+\0";
+    
+    let fragment_shader_source = b"
+precision mediump float;
+varying vec3 v_color;
+varying float v_thickness;
+uniform float time;
+
+void main() {
+    // Antialiasing effect based on thickness
+    float alpha = 1.0;
+    
+    // Add slight pulsing effect
+    float pulse = 0.9 + 0.1 * sin(time * 2.0);
+    
+    // Color modulation with thickness
+    vec3 final_color = v_color * pulse;
+    
+    // Smooth antialiasing
+    alpha = smoothstep(0.0, v_thickness * 0.1, v_thickness);
+    
+    gl_FragColor = vec4(final_color, alpha);
+}
+\0";
+    
+    // Create and compile vertex shader
+    let vertex_shader = glCreateShader(GL_VERTEX_SHADER);
+    if vertex_shader == 0 {
+        return Err("Failed to create advanced needle vertex shader".to_string());
+    }
+    
+    let vertex_src_ptr = vertex_shader_source.as_ptr() as *const i8;
+    glShaderSource(vertex_shader, 1, &vertex_src_ptr, std::ptr::null());
+    glCompileShader(vertex_shader);
+    
+    let mut compile_status = 0i32;
+    glGetShaderiv(vertex_shader, GL_COMPILE_STATUS, &mut compile_status);
+    if compile_status == 0 {
+        return Err("Advanced needle vertex shader compilation failed".to_string());
+    }
+    
+    // Create and compile fragment shader
+    let fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
+    if fragment_shader == 0 {
+        return Err("Failed to create advanced needle fragment shader".to_string());
+    }
+    
+    let fragment_src_ptr = fragment_shader_source.as_ptr() as *const i8;
+    glShaderSource(fragment_shader, 1, &fragment_src_ptr, std::ptr::null());
+    glCompileShader(fragment_shader);
+    
+    let mut compile_status = 0i32;
+    glGetShaderiv(fragment_shader, GL_COMPILE_STATUS, &mut compile_status);
+    if compile_status == 0 {
+        return Err("Advanced needle fragment shader compilation failed".to_string());
+    }
+    
+    // Create and link shader program
+    let program = glCreateProgram();
+    if program == 0 {
+        return Err("Failed to create advanced needle shader program".to_string());
+    }
+    
+    glAttachShader(program, vertex_shader);
+    glAttachShader(program, fragment_shader);
+    glLinkProgram(program);
+    
+    let mut link_status = 0i32;
+    glGetProgramiv(program, GL_LINK_STATUS, &mut link_status);
+    if link_status == 0 {
+        return Err("Advanced needle shader program linking failed".to_string());
+    }
+    
+    println!("Advanced needle shader program created successfully!");
+    Ok(program)
+}
+
+unsafe fn create_multiple_needle_geometries() -> Result<Vec<NeedleConfig>, String> {
+    let mut configs = Vec::new();
+    
+    // Needle 1: Thin speedometer needle (top-left)
+    let thin_needle_vbo = create_thin_needle_geometry()?;
+    configs.push(NeedleConfig {
+        vbo: thin_needle_vbo,
+        vertex_count: 6, // Triangle strip for thin needle
+        position: (200.0, 120.0),
+        scale: 80.0,
+        color: (1.0, 1.0, 1.0), // White
+        speed: 1.0,
+        thickness_base: 1.0,
+        draw_mode: GL_TRIANGLE_STRIP,
+    });
+    
+    // Needle 2: Medium RPM needle (top-right)
+    let medium_needle_vbo = create_medium_needle_geometry()?;
+    configs.push(NeedleConfig {
+        vbo: medium_needle_vbo,
+        vertex_count: 8, // Triangle strip for medium needle
+        position: (600.0, 120.0),
+        scale: 90.0,
+        color: (1.0, 0.3, 0.0), // Orange
+        speed: 1.5,
+        thickness_base: 2.0,
+        draw_mode: GL_TRIANGLE_STRIP,
+    });
+    
+    // Needle 3: Thick fuel needle (middle-left)
+    let thick_needle_vbo = create_thick_needle_geometry()?;
+    configs.push(NeedleConfig {
+        vbo: thick_needle_vbo,
+        vertex_count: 10, // Triangle strip for thick needle
+        position: (200.0, 240.0),
+        scale: 70.0,
+        color: (0.0, 1.0, 0.0), // Green
+        speed: 0.8,
+        thickness_base: 3.0,
+        draw_mode: GL_TRIANGLE_STRIP,
+    });
+    
+    // Needle 4: Temperature needle (middle-right)
+    let temp_needle_vbo = create_tapered_needle_geometry()?;
+    configs.push(NeedleConfig {
+        vbo: temp_needle_vbo,
+        vertex_count: 12, // Triangle strip for tapered needle
+        position: (600.0, 240.0),
+        scale: 85.0,
+        color: (1.0, 0.0, 0.0), // Red
+        speed: 0.6,
+        thickness_base: 2.5,
+        draw_mode: GL_TRIANGLE_STRIP,
+    });
+    
+    // Needle 5: Oil pressure needle (bottom-left)
+    let oil_needle_vbo = create_wide_needle_geometry()?;
+    configs.push(NeedleConfig {
+        vbo: oil_needle_vbo,
+        vertex_count: 14, // Triangle strip for wide needle
+        position: (200.0, 360.0),
+        scale: 60.0,
+        color: (0.0, 0.0, 1.0), // Blue
+        speed: 1.2,
+        thickness_base: 4.0,
+        draw_mode: GL_TRIANGLE_STRIP,
+    });
+    
+    // Needle 6: Voltage needle (bottom-right)
+    let voltage_needle_vbo = create_precision_needle_geometry()?;
+    configs.push(NeedleConfig {
+        vbo: voltage_needle_vbo,
+        vertex_count: 16, // Triangle strip for precision needle
+        position: (600.0, 360.0),
+        scale: 75.0,
+        color: (1.0, 1.0, 0.0), // Yellow
+        speed: 2.0,
+        thickness_base: 1.5,
+        draw_mode: GL_TRIANGLE_STRIP,
+    });
+    
+    println!("Created {} needle configurations with varying thickness and styles", configs.len());
+    Ok(configs)
+}
+
+// Create different needle geometries with variable thickness
+
+unsafe fn create_thin_needle_geometry() -> Result<u32, String> {
+    let mut vbo = 0u32;
+    glGenBuffers(1, &mut vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    
+    // Thin needle: x, y, r, g, b, thickness
+    let vertices: [f32; 36] = [
+        // Base (wide)
+        -0.02,  0.0, 1.0, 1.0, 1.0, 2.0,
+         0.02,  0.0, 1.0, 1.0, 1.0, 2.0,
+        // Mid point
+        -0.01,  0.5, 1.0, 1.0, 1.0, 1.5,
+         0.01,  0.5, 1.0, 1.0, 1.0, 1.5,
+        // Tip (narrow)
+        -0.005, 0.9, 1.0, 1.0, 1.0, 1.0,
+         0.005, 0.9, 1.0, 1.0, 1.0, 1.0,
+    ];
+    
+    glBufferData(GL_ARRAY_BUFFER, 
+                (vertices.len() * std::mem::size_of::<f32>()) as isize,
+                vertices.as_ptr() as *const std::ffi::c_void,
+                GL_STATIC_DRAW);
+    
+    Ok(vbo)
+}
+
+unsafe fn create_medium_needle_geometry() -> Result<u32, String> {
+    let mut vbo = 0u32;
+    glGenBuffers(1, &mut vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    
+    // Medium needle with more segments
+    let vertices: [f32; 48] = [
+        // Base
+        -0.03,  0.0, 1.0, 0.3, 0.0, 3.0,
+         0.03,  0.0, 1.0, 0.3, 0.0, 3.0,
+        // First segment
+        -0.025, 0.3, 1.0, 0.3, 0.0, 2.5,
+         0.025, 0.3, 1.0, 0.3, 0.0, 2.5,
+        // Second segment
+        -0.02,  0.6, 1.0, 0.3, 0.0, 2.0,
+         0.02,  0.6, 1.0, 0.3, 0.0, 2.0,
+        // Tip
+        -0.01,  0.85, 1.0, 0.3, 0.0, 1.5,
+         0.01,  0.85, 1.0, 0.3, 0.0, 1.5,
+    ];
+    
+    glBufferData(GL_ARRAY_BUFFER, 
+                (vertices.len() * std::mem::size_of::<f32>()) as isize,
+                vertices.as_ptr() as *const std::ffi::c_void,
+                GL_STATIC_DRAW);
+    
+    Ok(vbo)
+}
+
+unsafe fn create_thick_needle_geometry() -> Result<u32, String> {
+    let mut vbo = 0u32;
+    glGenBuffers(1, &mut vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    
+    // Thick needle
+    let vertices: [f32; 60] = [
+        // Base (very wide)
+        -0.05,  0.0, 0.0, 1.0, 0.0, 5.0,
+         0.05,  0.0, 0.0, 1.0, 0.0, 5.0,
+        // Segment 1
+        -0.04,  0.2, 0.0, 1.0, 0.0, 4.0,
+         0.04,  0.2, 0.0, 1.0, 0.0, 4.0,
+        // Segment 2
+        -0.035, 0.4, 0.0, 1.0, 0.0, 3.5,
+         0.035, 0.4, 0.0, 1.0, 0.0, 3.5,
+        // Segment 3
+        -0.025, 0.6, 0.0, 1.0, 0.0, 3.0,
+         0.025, 0.6, 0.0, 1.0, 0.0, 3.0,
+        // Tip
+        -0.015, 0.8, 0.0, 1.0, 0.0, 2.0,
+         0.015, 0.8, 0.0, 1.0, 0.0, 2.0,
+    ];
+    
+    glBufferData(GL_ARRAY_BUFFER, 
+                (vertices.len() * std::mem::size_of::<f32>()) as isize,
+                vertices.as_ptr() as *const std::ffi::c_void,
+                GL_STATIC_DRAW);
+    
+    Ok(vbo)
+}
+
+unsafe fn create_tapered_needle_geometry() -> Result<u32, String> {
+    let mut vbo = 0u32;
+    glGenBuffers(1, &mut vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    
+    // Tapered needle with smooth transition
+    let vertices: [f32; 72] = [
+        // Base
+        -0.04,  0.0, 1.0, 0.0, 0.0, 4.0,
+         0.04,  0.0, 1.0, 0.0, 0.0, 4.0,
+        // Smooth taper
+        -0.035, 0.15, 1.0, 0.0, 0.0, 3.5,
+         0.035, 0.15, 1.0, 0.0, 0.0, 3.5,
+        -0.03,  0.3, 1.0, 0.0, 0.0, 3.0,
+         0.03,  0.3, 1.0, 0.0, 0.0, 3.0,
+        -0.025, 0.45, 1.0, 0.0, 0.0, 2.5,
+         0.025, 0.45, 1.0, 0.0, 0.0, 2.5,
+        -0.02,  0.6, 1.0, 0.0, 0.0, 2.0,
+         0.02,  0.6, 1.0, 0.0, 0.0, 2.0,
+        -0.01,  0.75, 1.0, 0.0, 0.0, 1.5,
+         0.01,  0.75, 1.0, 0.0, 0.0, 1.5,
+    ];
+    
+    glBufferData(GL_ARRAY_BUFFER, 
+                (vertices.len() * std::mem::size_of::<f32>()) as isize,
+                vertices.as_ptr() as *const std::ffi::c_void,
+                GL_STATIC_DRAW);
+    
+    Ok(vbo)
+}
+
+unsafe fn create_wide_needle_geometry() -> Result<u32, String> {
+    let mut vbo = 0u32;
+    glGenBuffers(1, &mut vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    
+    // Wide needle - maintains width longer
+    let vertices: [f32; 84] = [
+        // Base (extra wide)
+        -0.06,  0.0, 0.0, 0.0, 1.0, 6.0,
+         0.06,  0.0, 0.0, 0.0, 1.0, 6.0,
+        // Keep wide for longer
+        -0.055, 0.1, 0.0, 0.0, 1.0, 5.5,
+         0.055, 0.1, 0.0, 0.0, 1.0, 5.5,
+        -0.05,  0.2, 0.0, 0.0, 1.0, 5.0,
+         0.05,  0.2, 0.0, 0.0, 1.0, 5.0,
+        -0.045, 0.3, 0.0, 0.0, 1.0, 4.5,
+         0.045, 0.3, 0.0, 0.0, 1.0, 4.5,
+        -0.04,  0.4, 0.0, 0.0, 1.0, 4.0,
+         0.04,  0.4, 0.0, 0.0, 1.0, 4.0,
+        -0.03,  0.5, 0.0, 0.0, 1.0, 3.0,
+         0.03,  0.5, 0.0, 0.0, 1.0, 3.0,
+        // Finally taper
+        -0.02,  0.7, 0.0, 0.0, 1.0, 2.0,
+         0.02,  0.7, 0.0, 0.0, 1.0, 2.0,
+    ];
+    
+    glBufferData(GL_ARRAY_BUFFER, 
+                (vertices.len() * std::mem::size_of::<f32>()) as isize,
+                vertices.as_ptr() as *const std::ffi::c_void,
+                GL_STATIC_DRAW);
+    
+    Ok(vbo)
+}
+
+unsafe fn create_precision_needle_geometry() -> Result<u32, String> {
+    let mut vbo = 0u32;
+    glGenBuffers(1, &mut vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    
+    // Precision needle with many segments for smooth antialiasing
+    let vertices: [f32; 96] = [
+        // Base
+        -0.025, 0.0, 1.0, 1.0, 0.0, 2.5,
+         0.025, 0.0, 1.0, 1.0, 0.0, 2.5,
+        // Many small segments for smooth rendering
+        -0.024, 0.1, 1.0, 1.0, 0.0, 2.4,
+         0.024, 0.1, 1.0, 1.0, 0.0, 2.4,
+        -0.022, 0.2, 1.0, 1.0, 0.0, 2.2,
+         0.022, 0.2, 1.0, 1.0, 0.0, 2.2,
+        -0.02,  0.3, 1.0, 1.0, 0.0, 2.0,
+         0.02,  0.3, 1.0, 1.0, 0.0, 2.0,
+        -0.018, 0.4, 1.0, 1.0, 0.0, 1.8,
+         0.018, 0.4, 1.0, 1.0, 0.0, 1.8,
+        -0.015, 0.5, 1.0, 1.0, 0.0, 1.5,
+         0.015, 0.5, 1.0, 1.0, 0.0, 1.5,
+        -0.012, 0.6, 1.0, 1.0, 0.0, 1.2,
+         0.012, 0.6, 1.0, 1.0, 0.0, 1.2,
+        -0.008, 0.75, 1.0, 1.0, 0.0, 0.8,
+         0.008, 0.75, 1.0, 1.0, 0.0, 0.8,
+    ];
+    
+    glBufferData(GL_ARRAY_BUFFER, 
+                (vertices.len() * std::mem::size_of::<f32>()) as isize,
+                vertices.as_ptr() as *const std::ffi::c_void,
+                GL_STATIC_DRAW);
+    
+    Ok(vbo)
+}
+
+unsafe fn render_rotating_needles_frame(
+    frame: i32,
+    shader_program: u32,
+    needle_configs: &[NeedleConfig],
+    pos_attr: i32,
+    color_attr: i32,
+    thickness_attr: i32,
+    time_uniform: i32,
+    resolution_uniform: i32,
+    rotation_uniform: i32,
+    center_uniform: i32,
+    scale_uniform: i32,
+) {
+    // Clear with dark dashboard background
+    glClearColor(0.02, 0.02, 0.08, 1.0);
+    glClear(GL_COLOR_BUFFER_BIT);
+    
+    glUseProgram(shader_program);
+    
+    let time = frame as f32 * 0.016; // ~60fps timing
+    glUniform1f(time_uniform, time);
+    glUniform2f(resolution_uniform, 800.0, 480.0);
+    
+    // Render each needle with its specific configuration
+    for (i, config) in needle_configs.iter().enumerate() {
+        // Calculate individual needle rotation
+        let rotation_angle = time * config.speed * 0.5; // Slow, smooth rotation
+        let needle_angle = rotation_angle + (i as f32 * 0.3); // Offset each needle
+        
+        // Set uniforms for this needle
+        glUniform1f(rotation_uniform, needle_angle);
+        glUniform2f(center_uniform, config.position.0, config.position.1);
+        glUniform1f(scale_uniform, config.scale);
+        
+        // Bind needle geometry
+        glBindBuffer(GL_ARRAY_BUFFER, config.vbo);
+        
+        // Setup vertex attributes with 6 floats per vertex (x, y, r, g, b, thickness)
+        let stride = 6 * std::mem::size_of::<f32>() as i32;
+        
+        glEnableVertexAttribArray(pos_attr as u32);
+        glVertexAttribPointer(
+            pos_attr as u32, 2, GL_FLOAT, 0,
+            stride, std::ptr::null(),
+        );
+        
+        glEnableVertexAttribArray(color_attr as u32);
+        glVertexAttribPointer(
+            color_attr as u32, 3, GL_FLOAT, 0,
+            stride, (2 * std::mem::size_of::<f32>()) as *const std::ffi::c_void,
+        );
+        
+        glEnableVertexAttribArray(thickness_attr as u32);
+        glVertexAttribPointer(
+            thickness_attr as u32, 1, GL_FLOAT, 0,
+            stride, (5 * std::mem::size_of::<f32>()) as *const std::ffi::c_void,
+        );
+        
+        // Draw the needle
+        glDrawArrays(config.draw_mode, 0, config.vertex_count);
+    }
+    
+    // Print status every 60 frames
+    if frame % 60 == 0 {
+        let rotation_degrees = (time * 0.5 * 180.0 / std::f32::consts::PI) % 360.0;
+        println!(
+            "Frame {} - {} needles rotating at {:.1}° with antialiasing", 
+            frame, needle_configs.len(), rotation_degrees
+        );
+    }
+    
+    glFlush();
 }
