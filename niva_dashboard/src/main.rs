@@ -2,23 +2,34 @@ mod hardware;
 mod graphics;
 
 use hardware::GpioInput;
-use graphics::run_opengl_test;
+use graphics::{run_opengl_test, run_dashboard_gauges_test, run_moving_needle_test};
 use std::thread;
 use std::time::Duration;
 
 fn main() {
     println!("Niva Dashboard - Raspberry Pi Version");
-    println!("Initializing graphics system...");
+    println!("Available test modes:");
+    println!("1. Basic OpenGL triangle test");
+    println!("2. Simple moving needle test");
+    println!("3. Multi-gauge dashboard test");
     
+    // For now, run all tests in sequence
+    println!("\n=== Basic OpenGL Triangle Test ===");
     match run_opengl_test() {
-        Ok(()) => {
-            println!("Graphics test completed successfully!");
-            println!("Ready to implement dashboard components.");
-        }
-        Err(e) => {
-            eprintln!("Graphics test failed: {}", e);
-            std::process::exit(1);
-        }
+        Ok(()) => println!("Basic graphics test completed successfully!"),
+        Err(e) => eprintln!("Basic graphics test failed: {}", e),
+    }
+    
+    println!("\n=== Simple Moving Needle Test ===");
+    match run_moving_needle_test() {
+        Ok(()) => println!("Moving needle test completed successfully!"),
+        Err(e) => eprintln!("Moving needle test failed: {}", e),
+    }
+    
+    println!("\n=== Multi-Gauge Dashboard Test ===");
+    match run_dashboard_gauges_test() {
+        Ok(()) => println!("Dashboard gauges test completed successfully!"),
+        Err(e) => eprintln!("Dashboard gauges test failed: {}", e),
     }
     
     // Keep the GPIO test functionality available
