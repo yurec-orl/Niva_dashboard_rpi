@@ -405,6 +405,478 @@ pub fn run_sdl2_gauges_test(_context: &GraphicsContext) -> Result<(), String> {
     Ok(())
 }
 
+/// Advanced SDL2 needle rendering demonstration
+pub fn run_sdl2_advanced_needles_test(_context: &GraphicsContext) -> Result<(), String> {
+    println!("Starting SDL2 Advanced Needle Rendering Test...");
+    println!("Demonstrating: Rectangles, Polygons, and Textured needle methods");
+    
+    // Initialize SDL2 separately
+    let sdl_context = sdl2::init().map_err(|e| e.to_string())?;
+    let video_subsystem = sdl_context.video().map_err(|e| e.to_string())?;
+    
+    // Create window for advanced needle rendering
+    let window = video_subsystem
+        .window("Niva Dashboard - Advanced Needle Methods", 1200, 700)
+        .position_centered()
+        .build()
+        .map_err(|e| e.to_string())?;
+    
+    let mut canvas = window.into_canvas()
+        .accelerated()
+        .present_vsync()
+        .build()
+        .map_err(|e| e.to_string())?;
+    
+    let texture_creator = canvas.texture_creator();
+    
+    // Create needle textures for different thicknesses
+    let needle_textures = create_needle_textures(&texture_creator)?;
+    
+    let mut event_pump = sdl_context.event_pump().map_err(|e| e.to_string())?;
+    
+    let mut frame_count = 0;
+    let total_frames = 720; // 12 seconds at 60fps
+    
+    // Define needle test configurations
+    let needle_configs = [
+        // Top row - Different methods with medium thickness
+        (200, 150, 100, "Rectangle", 12, Color::RGB(255, 100, 100)),
+        (600, 150, 100, "Polygon", 12, Color::RGB(100, 255, 100)),
+        (1000, 150, 100, "Textured", 12, Color::RGB(100, 100, 255)),
+        
+        // Middle row - Thick needles comparison
+        (200, 350, 80, "Rect-Thick", 20, Color::RGB(255, 150, 50)),
+        (600, 350, 80, "Poly-Thick", 20, Color::RGB(150, 255, 50)),
+        (1000, 350, 80, "Text-Thick", 20, Color::RGB(50, 150, 255)),
+        
+        // Bottom row - Thin needles comparison
+        (200, 550, 60, "Rect-Thin", 4, Color::RGB(255, 200, 100)),
+        (600, 550, 60, "Poly-Thin", 4, Color::RGB(200, 255, 100)),
+        (1000, 550, 60, "Text-Thin", 4, Color::RGB(100, 200, 255)),
+    ];
+    
+    'running: loop {
+        // Handle events
+        for event in event_pump.poll_iter() {
+            match event {
+                sdl2::event::Event::Quit { .. } |
+                sdl2::event::Event::KeyDown { keycode: Some(sdl2::keyboard::Keycode::Escape), .. } => {
+                    break 'running;
+                }
+                _ => {}
+            }
+        }
+        
+        // Clear with dark background
+        canvas.set_draw_color(Color::RGB(15, 15, 25));
+        canvas.clear();
+        
+        // Calculate rotation angles (different speeds for visual comparison)
+        let time = frame_count as f64 / 60.0;
+        let base_angle = time * 45.0; // 45 degrees per second
+        
+        // Draw section headers
+        draw_section_headers(&mut canvas)?;
+        
+        // Draw all needles with different methods
+        for (i, &(x, y, length, method, thickness, color)) in needle_configs.iter().enumerate() {
+            // Different rotation speeds for each row
+            let speed_multiplier = match i / 3 {
+                0 => 1.0,    // Top row: normal speed
+                1 => 0.7,    // Middle row: slower
+                2 => 1.3,    // Bottom row: faster
+                _ => 1.0,
+            };
+            
+            let angle = base_angle * speed_multiplier;
+            
+            match method {
+                "Rectangle" | "Rect-Thick" | "Rect-Thin" => {
+                    draw_rectangle_needle(&mut canvas, x, y, length, angle, thickness, color)?;
+                }
+                "Polygon" | "Poly-Thick" | "Poly-Thin" => {
+                    draw_polygon_needle(&mut canvas, x, y, length, angle, thickness, color)?;
+                }
+                "Textured" | "Text-Thick" | "Text-Thin" => {
+                    draw_textured_needle(&mut canvas, &needle_textures, x, y, length, angle, thickness, color)?;
+                }
+                _ => {}
+            }
+            
+            // Draw center point
+            draw_filled_circle(&mut canvas, x, y, 8, Color::RGB(120, 120, 120))?;
+            
+            // Draw method label
+            draw_method_label(&mut canvas, x, y + length + 30, method, thickness)?;
+        }
+        
+        // Draw performance comparison info
+        draw_performance_comparison(&mut canvas, frame_count)?;
+        
+        // Present the frame
+        canvas.present();
+        
+        frame_count += 1;
+        if frame_count >= total_frames {
+            break 'running;
+        }
+        
+        // Print status occasionally
+        if frame_count % 120 == 0 {
+            println!("Frame {} - Demonstrating {} needle rendering methods", 
+                    frame_count, needle_configs.len());
+        }
+        
+        std::thread::sleep(std::time::Duration::from_millis(16)); // ~60fps
+    }
+    
+    println!("SDL2 advanced needles test completed successfully!");
+    Ok(())
+}
+
+/// Create pre-rendered needle textures for different thicknesses
+fn create_needle_textures(texture_creator: &TextureCreator<WindowContext>) -> Result<Vec<sdl2::render::Texture>, String> {
+    let mut textures = Vec::new();
+    let thicknesses = [4, 8, 12, 16, 20, 24, 28, 32];
+
+    for &thickness in &thicknesses {
+        // Create a texture for this needle thickness
+        let texture_size = 120;
+        let texture = texture_creator
+            .create_texture_target(sdl2::pixels::PixelFormatEnum::RGBA8888, texture_size, texture_size)
+            .map_err(|e| e.to_string())?;
+        
+        // Note: SDL2 Rust doesn't have with_texture_canvas method
+        // We'll create a simple pre-rendered needle using CPU-side rendering
+        // For now, we'll just store the texture and draw the needle at runtime
+        
+        textures.push(texture);
+    }
+    
+    Ok(textures)
+}
+
+/// Draw needle using rotated rectangle method
+fn draw_rectangle_needle(canvas: &mut Canvas<Window>, center_x: i32, center_y: i32, 
+                        length: i32, angle_degrees: f64, thickness: i32, 
+                        color: Color) -> Result<(), String> {
+    let angle_rad = angle_degrees.to_radians();
+    let cos_a = angle_rad.cos();
+    let sin_a = angle_rad.sin();
+    
+    // Create rectangle representing the needle
+    let half_thickness = thickness as f64 / 2.0;
+    let needle_length = length as f64;
+    
+    // Rectangle corners (local coordinates: pointing up)
+    let local_corners = [
+        (-half_thickness, 0.0),           // Base left
+        (half_thickness, 0.0),            // Base right
+        (half_thickness / 3.0, -needle_length * 0.9), // Near tip right
+        (-half_thickness / 3.0, -needle_length * 0.9), // Near tip left
+        (0.0, -needle_length),            // Sharp tip
+    ];
+    
+    // Transform to world coordinates
+    let mut world_corners = Vec::new();
+    for &(x, y) in &local_corners {
+        let world_x = center_x + (x * cos_a - y * sin_a) as i32;
+        let world_y = center_y + (x * sin_a + y * cos_a) as i32;
+        world_corners.push(Point::new(world_x, world_y));
+    }
+    
+    // Fill the needle shape
+    fill_polygon(canvas, &world_corners, color)?;
+    
+    // Draw outline for definition
+    canvas.set_draw_color(Color::RGB(
+        (color.r as f64 * 0.7) as u8,
+        (color.g as f64 * 0.7) as u8,
+        (color.b as f64 * 0.7) as u8,
+    ));
+    
+    for i in 0..world_corners.len() {
+        let start = world_corners[i];
+        let end = world_corners[(i + 1) % world_corners.len()];
+        canvas.draw_line(start, end).map_err(|e| e.to_string())?;
+    }
+    
+    Ok(())
+}
+
+/// Draw needle using polygon/triangle method with advanced shaping
+fn draw_polygon_needle(canvas: &mut Canvas<Window>, center_x: i32, center_y: i32, 
+                      length: i32, angle_degrees: f64, thickness: i32, 
+                      color: Color) -> Result<(), String> {
+    let angle_rad = angle_degrees.to_radians();
+    let cos_a = angle_rad.cos();
+    let sin_a = angle_rad.sin();
+    
+    // Create sophisticated needle shape with multiple segments
+    let half_thickness = thickness as f64 / 2.0;
+    let needle_length = length as f64;
+    
+    // Multi-segment needle for smooth tapering
+    let segments = 8;
+    let mut needle_points = Vec::new();
+    
+    // Generate left side points (base to tip)
+    for i in 0..=segments {
+        let progress = i as f64 / segments as f64;
+        let y = -needle_length * progress;
+        
+        // Advanced tapering function for realistic needle shape
+        let taper_factor = if progress < 0.7 {
+            1.0 - progress * 0.3  // Gradual taper
+        } else {
+            0.7 - (progress - 0.7) * 2.0  // Rapid taper to point
+        }.max(0.05);
+        
+        let x = -half_thickness * taper_factor;
+        
+        let world_x = center_x + (x * cos_a - y * sin_a) as i32;
+        let world_y = center_y + (x * sin_a + y * cos_a) as i32;
+        needle_points.push(Point::new(world_x, world_y));
+    }
+    
+    // Generate right side points (tip to base)
+    for i in (0..segments).rev() {
+        let progress = i as f64 / segments as f64;
+        let y = -needle_length * progress;
+        
+        let taper_factor = if progress < 0.7 {
+            1.0 - progress * 0.3
+        } else {
+            0.7 - (progress - 0.7) * 2.0
+        }.max(0.05);
+        
+        let x = half_thickness * taper_factor;
+        
+        let world_x = center_x + (x * cos_a - y * sin_a) as i32;
+        let world_y = center_y + (x * sin_a + y * cos_a) as i32;
+        needle_points.push(Point::new(world_x, world_y));
+    }
+    
+    // Fill the polygon
+    fill_polygon(canvas, &needle_points, color)?;
+    
+    // Add gradient effect by drawing darker interior
+    let dark_color = Color::RGB(
+        (color.r as f64 * 0.6) as u8,
+        (color.g as f64 * 0.6) as u8,
+        (color.b as f64 * 0.6) as u8,
+    );
+    
+    // Draw center line for depth effect
+    let tip_x = center_x + (-needle_length * sin_a) as i32;
+    let tip_y = center_y + (needle_length * cos_a) as i32;
+    canvas.set_draw_color(dark_color);
+    canvas.draw_line(Point::new(center_x, center_y), Point::new(tip_x, tip_y))
+        .map_err(|e| e.to_string())?;
+    
+    Ok(())
+}
+
+/// Draw needle using simplified "textured" method (runtime generation)
+fn draw_textured_needle(canvas: &mut Canvas<Window>, _textures: &[sdl2::render::Texture], 
+                       center_x: i32, center_y: i32, length: i32, 
+                       angle_degrees: f64, thickness: i32, color: Color) -> Result<(), String> {
+    // For demonstration purposes, we'll create a "textured" effect using runtime drawing
+    // This simulates what would be a pre-rendered texture approach
+    
+    let angle_rad = angle_degrees.to_radians();
+    let cos_a = angle_rad.cos();
+    let sin_a = angle_rad.sin();
+    
+    let half_thickness = thickness as f64 / 2.0;
+    let needle_length = length as f64;
+    
+    // Create sophisticated "textured" needle with gradient effect
+    let segments = 20;
+    
+    for segment in 0..segments {
+        let progress = segment as f64 / segments as f64;
+        let y = -needle_length * progress;
+        
+        // Create variable thickness with smooth tapering
+        let taper_factor = if progress < 0.8 {
+            1.0 - progress * 0.4  // Gradual taper
+        } else {
+            0.6 - (progress - 0.8) * 2.5  // Rapid taper to point
+        }.max(0.1);
+        
+        let segment_thickness = half_thickness * taper_factor;
+        
+        // Create gradient color effect (simulate texture)
+        let base_intensity = 1.0 - progress * 0.5;
+        let edge_effect = (segment as f64 * 0.2).sin().abs() * 0.3; // Add texture pattern
+        let final_intensity = (base_intensity + edge_effect).min(1.0);
+        
+        let r = (color.r as f64 * final_intensity) as u8;
+        let g = (color.g as f64 * final_intensity) as u8;
+        let b = (color.b as f64 * final_intensity) as u8;
+        
+        canvas.set_draw_color(Color::RGB(r, g, b));
+        
+        // Draw segment as thick line
+        for t in 0..(segment_thickness * 2.0) as i32 {
+            let x_offset = t as f64 - segment_thickness;
+            
+            let world_x = center_x + (x_offset * cos_a - y * sin_a) as i32;
+            let world_y = center_y + (x_offset * sin_a + y * cos_a) as i32;
+            
+            let _ = canvas.draw_point(Point::new(world_x, world_y));
+        }
+    }
+    
+    // Add highlight edge for 3D effect
+    canvas.set_draw_color(Color::RGB(
+        (color.r as f64 * 1.3).min(255.0) as u8,
+        (color.g as f64 * 1.3).min(255.0) as u8,
+        (color.b as f64 * 1.3).min(255.0) as u8,
+    ));
+    
+    // Draw bright edge line
+    let edge_x = center_x + (-half_thickness * 0.7 * cos_a) as i32;
+    let edge_y = center_y + (-half_thickness * 0.7 * sin_a) as i32;
+    let tip_x = center_x + (-needle_length * 0.9 * sin_a) as i32;
+    let tip_y = center_y + (needle_length * 0.9 * cos_a) as i32;
+    
+    canvas.draw_line(Point::new(edge_x, edge_y), Point::new(tip_x, tip_y))
+        .map_err(|e| e.to_string())?;
+    
+    Ok(())
+}
+
+/// Fill a polygon using scan line algorithm
+fn fill_polygon(canvas: &mut Canvas<Window>, points: &[Point], color: Color) -> Result<(), String> {
+    if points.len() < 3 {
+        return Ok(());
+    }
+    
+    canvas.set_draw_color(color);
+    
+    // Find bounding box
+    let min_x = points.iter().map(|p| p.x).min().unwrap_or(0);
+    let max_x = points.iter().map(|p| p.x).max().unwrap_or(0);
+    let min_y = points.iter().map(|p| p.y).min().unwrap_or(0);
+    let max_y = points.iter().map(|p| p.y).max().unwrap_or(0);
+    
+    // Scan line fill
+    for y in min_y..=max_y {
+        let mut intersections = Vec::new();
+        
+        // Find intersections with all edges
+        for i in 0..points.len() {
+            let p1 = points[i];
+            let p2 = points[(i + 1) % points.len()];
+            
+            if (p1.y <= y && y < p2.y) || (p2.y <= y && y < p1.y) {
+                if p2.y != p1.y {
+                    let x = p1.x + (y - p1.y) * (p2.x - p1.x) / (p2.y - p1.y);
+                    intersections.push(x);
+                }
+            }
+        }
+        
+        intersections.sort();
+        
+        // Fill between pairs of intersections
+        for chunk in intersections.chunks(2) {
+            if chunk.len() == 2 {
+                for x in chunk[0]..=chunk[1] {
+                    if x >= min_x && x <= max_x {
+                        let _ = canvas.draw_point(Point::new(x, y));
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+/// Draw section headers for the demonstration
+fn draw_section_headers(canvas: &mut Canvas<Window>) -> Result<(), String> {
+    canvas.set_draw_color(Color::RGB(200, 200, 200));
+    
+    // Draw header boxes and labels
+    let headers = [
+        (200, 50, "RECTANGLE METHOD"),
+        (600, 50, "POLYGON METHOD"),
+        (1000, 50, "TEXTURED METHOD"),
+    ];
+    
+    for &(x, y, label) in &headers {
+        // Header background
+        let header_rect = Rect::new(x - 80, y, 160, 30);
+        canvas.draw_rect(header_rect).map_err(|e| e.to_string())?;
+        
+        // Simple text representation
+        let text_rect = Rect::new(x - 60, y + 8, 120, 14);
+        canvas.fill_rect(text_rect).map_err(|e| e.to_string())?;
+    }
+    
+    Ok(())
+}
+
+/// Draw method label for each needle
+fn draw_method_label(canvas: &mut Canvas<Window>, x: i32, y: i32, method: &str, thickness: i32) -> Result<(), String> {
+    canvas.set_draw_color(Color::RGB(180, 180, 180));
+    
+    // Method name box
+    let label_width = 80;
+    let label_rect = Rect::new(x - label_width / 2, y, label_width as u32, 16);
+    canvas.draw_rect(label_rect).map_err(|e| e.to_string())?;
+    
+    // Thickness indicator
+    let thickness_rect = Rect::new(x - 30, y + 20, 60, (thickness / 2).max(2) as u32);
+    canvas.fill_rect(thickness_rect).map_err(|e| e.to_string())?;
+    
+    // Performance indicator (simulated)
+    let perf_color = match method {
+        s if s.contains("Text") => Color::RGB(100, 255, 100), // Textured: Best performance
+        s if s.contains("Poly") => Color::RGB(255, 255, 100), // Polygon: Good performance
+        s if s.contains("Rect") => Color::RGB(255, 150, 100), // Rectangle: Moderate performance
+        _ => Color::RGB(128, 128, 128),
+    };
+    
+    canvas.set_draw_color(perf_color);
+    let perf_rect = Rect::new(x - 20, y + 25 + thickness / 2, 40, 6);
+    canvas.fill_rect(perf_rect).map_err(|e| e.to_string())?;
+    
+    Ok(())
+}
+
+/// Draw performance comparison information
+fn draw_performance_comparison(canvas: &mut Canvas<Window>, frame: i32) -> Result<(), String> {
+    canvas.set_draw_color(Color::RGB(255, 255, 255));
+    
+    // Info panel background
+    let info_rect = Rect::new(20, 20, 350, 120);
+    canvas.draw_rect(info_rect).map_err(|e| e.to_string())?;
+    
+    // Title
+    let title_rect = Rect::new(30, 30, 200, 12);
+    canvas.fill_rect(title_rect).map_err(|e| e.to_string())?;
+    
+    // Performance metrics (visual representation)
+    let frame_text = format!("Frame: {}", frame);
+    let metrics = [
+        (40, 50, 80, "Textured: Fastest"),
+        (40, 70, 60, "Polygon: Smooth"),  
+        (40, 90, 50, "Rectangle: Simple"),
+        (40, 110, 100, frame_text.as_str()),
+    ];
+    
+    for &(x, y, width, _label) in &metrics {
+        let metric_rect = Rect::new(x, y, width as u32, 8);
+        canvas.fill_rect(metric_rect).map_err(|e| e.to_string())?;
+    }
+    
+    Ok(())
+}
+
 // Standalone gauge drawing functions that work directly with SDL2 canvas
 // These avoid the SDL2 initialization issue by not creating their own context
 

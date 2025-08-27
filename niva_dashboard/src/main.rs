@@ -2,7 +2,7 @@ mod hardware;
 mod graphics;
 
 use hardware::GpioInput;
-use graphics::{run_opengl_test, run_dashboard_gauges_test, run_moving_needle_test, run_text_rendering_test, run_sdl2_gauges_test, GraphicsContext};
+use graphics::{run_opengl_test, run_dashboard_gauges_test, run_moving_needle_test, run_text_rendering_test, run_sdl2_gauges_test, run_sdl2_advanced_needles_test, GraphicsContext};
 use std::thread;
 use std::time::Duration;
 use std::env;
@@ -17,9 +17,10 @@ fn main() {
     println!("3. Multi-gauge dashboard test (OpenGL)");
     println!("4. Text rendering test with multiple fonts and sizes");
     println!("5. SDL2 high-level gauge rendering test");
-    println!("6. GPIO input test");
-    println!("7. Combined graphics test (shared context)");
-    println!("Usage: cargo run -- [basic|needle|gauges|text|sdl2|gpio|all]");
+    println!("6. SDL2 advanced needle rendering methods (rectangles, polygons, textures)");
+    println!("7. GPIO input test");
+    println!("8. Combined graphics test (shared context)");
+    println!("Usage: cargo run -- [basic|needle|gauges|text|sdl2|advanced|gpio|all]");
     
     let test_name = if args.len() >= 2 {
         &args[1]
@@ -49,6 +50,10 @@ fn main() {
             println!("\n=== SDL2 High-Level Gauge Rendering Test ===");
             run_graphics_test("Niva Dashboard - SDL2 Gauges", run_sdl2_gauges_test);
         }
+        "advanced" => {
+            println!("\n=== SDL2 Advanced Needle Rendering Methods ===");
+            run_graphics_test("Niva Dashboard - Advanced Needles", run_sdl2_advanced_needles_test);
+        }
         "gpio" => {
             println!("\n=== Single GPIO Input Example ===");
             match test_single_gpio_input() {
@@ -75,6 +80,9 @@ fn main() {
             println!("\n=== SDL2 High-Level Gauge Rendering Test ===");
             run_graphics_test("Niva Dashboard - SDL2 Gauges", run_sdl2_gauges_test);
             
+            println!("\n=== SDL2 Advanced Needle Rendering Methods ===");
+            run_graphics_test("Niva Dashboard - Advanced Needles", run_sdl2_advanced_needles_test);
+            
             println!("\n=== Single GPIO Input Example ===");
             match test_single_gpio_input() {
                 Ok(_) => println!("Single GPIO test completed successfully"),
@@ -83,7 +91,7 @@ fn main() {
         }
         _ => {
             eprintln!("Unknown test: {}", test_name);
-            eprintln!("Valid options: basic, needle, gauges, text, sdl2, gpio, all");
+            eprintln!("Valid options: basic, needle, gauges, text, sdl2, advanced, gpio, all");
             std::process::exit(1);
         }
     }
