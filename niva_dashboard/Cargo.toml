@@ -1,7 +1,19 @@
 [package]
 name = "niva_dashboard"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 rppal = "0.22.1"
+
+# For development/testing on x86_64, we'll use a mock graphics implementation
+# For Raspberry Pi deployment, these would be the actual SDL2 bindings
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+
+[target.'cfg(target_arch = "arm")'.dependencies]
+# Uncomment these for actual Raspberry Pi deployment:
+# sdl2 = "0.35"
+# gl = "0.14"
+
+[target.armv7-unknown-linux-gnueabihf]
+linker = "arm-linux-gnueabihf-gcc"

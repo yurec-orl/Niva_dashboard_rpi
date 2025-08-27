@@ -1,13 +1,27 @@
 mod hardware;
+mod graphics;
 
-use hardware::{GpioInput, GpioInputConfig, Bias};
+use hardware::GpioInput;
+use graphics::run_opengl_test;
 use std::thread;
 use std::time::Duration;
 
 fn main() {
-    println!("Niva Dashboard - GPIO Input Test");
+    println!("Niva Dashboard - Raspberry Pi Version");
+    println!("Initializing graphics system...");
     
-    // Example of single GPIO input
+    match run_opengl_test() {
+        Ok(()) => {
+            println!("Graphics test completed successfully!");
+            println!("Ready to implement dashboard components.");
+        }
+        Err(e) => {
+            eprintln!("Graphics test failed: {}", e);
+            std::process::exit(1);
+        }
+    }
+    
+    // Keep the GPIO test functionality available
     println!("\n=== Single GPIO Input Example ===");
     match test_single_gpio_input() {
         Ok(_) => println!("Single GPIO test completed successfully"),
