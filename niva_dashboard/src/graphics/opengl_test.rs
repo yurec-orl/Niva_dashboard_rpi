@@ -1,5 +1,6 @@
 #![allow(unused)]
 use std::ffi::CString;
+use crate::graphics::context::GraphicsContext;
 
 // SDL2 and OpenGL ES bindings
 extern "C" {
@@ -77,46 +78,12 @@ struct SDL_Event {
 
 const SDL_QUIT: u32 = 0x100;
 
-pub fn run_opengl_test() -> Result<(), String> {
+pub fn run_opengl_test(context: &GraphicsContext) -> Result<(), String> {
     println!("Starting OpenGL ES test for Raspberry Pi Dashboard...");
     
     unsafe {
-        // Initialize SDL2
-        if SDL_Init(SDL_INIT_VIDEO) < 0 {
-            return Err("Failed to initialize SDL2".to_string());
-        }
-        
-        // Set OpenGL ES attributes
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
-        
-        // Create window (dashboard size - adjust as needed)
-        let title = CString::new("Niva Dashboard - OpenGL Test").unwrap();
-        let window = SDL_CreateWindow(
-            title.as_ptr(),
-            SDL_WINDOWPOS_CENTERED,
-            SDL_WINDOWPOS_CENTERED,
-            800,  // Width - adjust for your display
-            480,  // Height - adjust for your display
-            SDL_WINDOW_OPENGL
-        );
-        
-        if window.is_null() {
-            SDL_Quit();
-            return Err("Failed to create SDL2 window".to_string());
-        }
-        
-        // Create OpenGL context
-        let gl_context = SDL_GL_CreateContext(window);
-        if gl_context.is_null() {
-            SDL_DestroyWindow(window);
-            SDL_Quit();
-            return Err("Failed to create OpenGL context".to_string());
-        }
-        
         // Set viewport
-        glViewport(0, 0, 800, 480);
+        glViewport(0, 0, context.width, context.height);
         
         println!("OpenGL ES context created successfully!");
         println!("Setting up simple triangle rendering...");
@@ -126,9 +93,6 @@ pub fn run_opengl_test() -> Result<(), String> {
         let shader_program = create_shader_program()?;
         println!("Shader program created with ID: {}", shader_program);
         if shader_program == 0 {
-            SDL_GL_DeleteContext(gl_context);
-            SDL_DestroyWindow(window);
-            SDL_Quit();
             return Err("Failed to create shader program".to_string());
         }
         
@@ -159,48 +123,31 @@ pub fn run_opengl_test() -> Result<(), String> {
         println!("Shader attribute locations - position: {}, color: {}", pos_attr, color_attr);
         
         if pos_attr == -1 || color_attr == -1 {
-            SDL_GL_DeleteContext(gl_context);
-            SDL_DestroyWindow(window);
-            SDL_Quit();
             return Err("Failed to get shader attribute locations".to_string());
         }
         
         println!("Running dashboard visualization test...");
         
         // Main render loop
-        let mut running = true;
         let mut frame_count = 0;
         
-        while running {
-            // Poll events
-            let mut event = SDL_Event { type_: 0, padding: [0; 52] };
-            while SDL_PollEvent(&mut event) != 0 {
-                if event.type_ == SDL_QUIT {
-                    running = false;
-                }
+        while frame_count < 300 {
+            // Check for quit events
+            if context.should_quit() {
+                break;
             }
             
             // Render test graphics
             render_dashboard_frame(frame_count, shader_program, vbo, pos_attr, color_attr);
             
             // Swap buffers
-            SDL_GL_SwapWindow(window);
+            context.swap_buffers();
             
             frame_count += 1;
-            
-            // Run for 300 frames (~5 seconds at 60fps)
-            if frame_count > 300 {
-                running = false;
-            }
             
             // Simple frame rate control
             std::thread::sleep(std::time::Duration::from_millis(16)); // ~60fps
         }
-        
-        // Cleanup
-        SDL_GL_DeleteContext(gl_context);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
         
         println!("OpenGL ES test completed successfully!");
     }
@@ -361,41 +308,11 @@ unsafe fn render_dashboard_frame(frame: i32, shader_program: u32, vbo: u32, pos_
 // Dashboard test functions for automotive-style gauges and animations
 
 /// Run dashboard gauge test with multiple indicators
-pub fn run_dashboard_gauges_test() -> Result<(), String> {
+pub fn run_dashboard_gauges_test(context: &GraphicsContext) -> Result<(), String> {
     println!("Starting Multi-Gauge Dashboard Test...");
     
     unsafe {
-        // Initialize SDL2 and OpenGL context
-        if SDL_Init(SDL_INIT_VIDEO) < 0 {
-            return Err("Failed to initialize SDL2".to_string());
-        }
-        
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
-        
-        let title = CString::new("Niva Dashboard - Multi-Gauge Test").unwrap();
-        let window = SDL_CreateWindow(
-            title.as_ptr(),
-            SDL_WINDOWPOS_CENTERED,
-            SDL_WINDOWPOS_CENTERED,
-            800, 480,
-            SDL_WINDOW_OPENGL
-        );
-        
-        if window.is_null() {
-            SDL_Quit();
-            return Err("Failed to create SDL2 window".to_string());
-        }
-        
-        let gl_context = SDL_GL_CreateContext(window);
-        if gl_context.is_null() {
-            SDL_DestroyWindow(window);
-            SDL_Quit();
-            return Err("Failed to create OpenGL context".to_string());
-        }
-        
-        glViewport(0, 0, 800, 480);
+        glViewport(0, 0, context.width, context.height);
         
         println!("Creating dashboard gauges shader program...");
         let shader_program = create_dashboard_shader_program()?;
@@ -413,34 +330,22 @@ pub fn run_dashboard_gauges_test() -> Result<(), String> {
         
         println!("Running multi-gauge dashboard animation...");
         
-        let mut running = true;
         let mut frame_count = 0;
         
-        while running {
-            let mut event = SDL_Event { type_: 0, padding: [0; 52] };
-            while SDL_PollEvent(&mut event) != 0 {
-                if event.type_ == SDL_QUIT {
-                    running = false;
-                }
+        while frame_count < 480 {
+            // Check for quit events
+            if context.should_quit() {
+                break;
             }
             
             render_dashboard_gauges_frame(frame_count, shader_program, speedometer_vbo, rpm_vbo, 
                                         fuel_vbo, temp_vbo, pos_attr, color_attr, time_uniform);
             
-            SDL_GL_SwapWindow(window);
+            context.swap_buffers();
             frame_count += 1;
-            
-            // Run for 480 frames (~8 seconds)
-            if frame_count > 480 {
-                running = false;
-            }
             
             std::thread::sleep(std::time::Duration::from_millis(16));
         }
-        
-        SDL_GL_DeleteContext(gl_context);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
         
         println!("Dashboard gauges test completed successfully!");
     }
@@ -449,41 +354,11 @@ pub fn run_dashboard_gauges_test() -> Result<(), String> {
 }
 
 /// Simple moving needle test - sweeps from 8 o'clock to 4 o'clock over 4 seconds
-pub fn run_moving_needle_test() -> Result<(), String> {
+pub fn run_moving_needle_test(context: &GraphicsContext) -> Result<(), String> {
     println!("Starting Simple Moving Needle Test...");
     
     unsafe {
-        // Initialize SDL2 and OpenGL context
-        if SDL_Init(SDL_INIT_VIDEO) < 0 {
-            return Err("Failed to initialize SDL2".to_string());
-        }
-        
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
-        
-        let title = CString::new("Niva Dashboard - Moving Needle Test").unwrap();
-        let window = SDL_CreateWindow(
-            title.as_ptr(),
-            SDL_WINDOWPOS_CENTERED,
-            SDL_WINDOWPOS_CENTERED,
-            800, 480,
-            SDL_WINDOW_OPENGL
-        );
-        
-        if window.is_null() {
-            SDL_Quit();
-            return Err("Failed to create SDL2 window".to_string());
-        }
-        
-        let gl_context = SDL_GL_CreateContext(window);
-        if gl_context.is_null() {
-            SDL_DestroyWindow(window);
-            SDL_Quit();
-            return Err("Failed to create OpenGL context".to_string());
-        }
-        
-        glViewport(0, 0, 800, 480);
+        glViewport(0, 0, context.width, context.height);
         
         println!("Creating simple needle shader program...");
         let shader_program = create_simple_needle_shader_program()?;
@@ -502,30 +377,23 @@ pub fn run_moving_needle_test() -> Result<(), String> {
         
         println!("Running needle animation - 8 o'clock to 4 o'clock sweep...");
         
-        let mut running = true;
         let mut frame_count = 0;
         let total_frames = 240; // 4 seconds at 60fps
         
-        while running && frame_count < total_frames {
-            let mut event = SDL_Event { type_: 0, padding: [0; 52] };
-            while SDL_PollEvent(&mut event) != 0 {
-                if event.type_ == SDL_QUIT {
-                    running = false;
-                }
+        while frame_count < total_frames {
+            // Check for quit events
+            if context.should_quit() {
+                break;
             }
             
             render_simple_needle_frame(frame_count, total_frames, shader_program, needle_vbo, 
                                      pos_attr, color_attr, angle_uniform);
             
-            SDL_GL_SwapWindow(window);
+            context.swap_buffers();
             frame_count += 1;
             
             std::thread::sleep(std::time::Duration::from_millis(16)); // ~60fps
         }
-        
-        SDL_GL_DeleteContext(gl_context);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
         
         println!("Simple needle test completed successfully!");
     }
@@ -857,22 +725,24 @@ unsafe fn setup_vertex_attributes(pos_attr: i32, color_attr: i32) {
 }
 
 // Text rendering test using SDL2 TTF
-pub fn run_text_rendering_test() -> Result<(), String> {
+pub fn run_text_rendering_test(context: &GraphicsContext) -> Result<(), String> {
+    // Import SDL2 TTF functionality
     use sdl2::pixels::Color;
     use sdl2::rect::Rect;
     use sdl2::render::TextureQuery;
     use sdl2::ttf::FontStyle;
     
     println!("Starting Text Rendering Test with SDL2 TTF...");
+    println!("Note: This test creates its own SDL2 canvas for TTF rendering");
     
-    // Initialize SDL2 and TTF
+    // Initialize SDL2 and TTF (separate from the OpenGL context)
     let sdl_context = sdl2::init().map_err(|e| e.to_string())?;
     let video_subsystem = sdl_context.video().map_err(|e| e.to_string())?;
     let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string())?;
     
     println!("SDL2 TTF version: {}", sdl2::ttf::get_linked_version());
     
-    // Create window
+    // Create window for text rendering (separate from OpenGL window)
     let window = video_subsystem
         .window("Niva Dashboard - Text Rendering Test", 800, 480)
         .position_centered()
