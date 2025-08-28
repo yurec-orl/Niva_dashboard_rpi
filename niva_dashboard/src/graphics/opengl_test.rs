@@ -1723,10 +1723,10 @@ void main() {
         // Standard screen coordinates: (0,0) at top-left, Y increases downward
         let projection_uniform = glGetUniformLocation(self.shader_program, b"projection\0".as_ptr() as *const i8);
         let projection_matrix: [f32; 16] = [
-            2.0/width, 0.0,        0.0, 0.0,
-            0.0,       2.0/height, 0.0, 0.0,
-            0.0,       0.0,        -1.0, 0.0,
-            -1.0,      -1.0,       0.0, 1.0,
+            2.0/width, 0.0,         0.0, 0.0,
+            0.0,       -2.0/height, 0.0, 0.0,  // Negative Y scaling to flip coordinate system
+            0.0,       0.0,         -1.0, 0.0,
+            -1.0,      1.0,         0.0, 1.0,  // Y translation adjusted for flipped coordinates
         ];
         glUniformMatrix4fv(projection_uniform, 1, 0, projection_matrix.as_ptr());
         
@@ -1794,17 +1794,20 @@ void main() {
         let w = (*glyph).bitmap.width as f32 * scale;
         let h = (*glyph).bitmap.rows as f32 * scale;
         let xrel = x + (*glyph).bitmap_left as f32 * scale;
-        let yrel = y - ((*glyph).bitmap.rows as f32 - (*glyph).bitmap_top as f32) * scale;
+        // For screen coordinates (Y=0 at top): position glyph relative to baseline
+        // y is the baseline position, bitmap_top is distance from baseline to top of glyph
+        let yrel = y - (*glyph).bitmap_top as f32 * scale;
         
         // Create quad vertices (x, y, tex_x, tex_y)
+        // Note: Texture coordinates are flipped in V (Y) to compensate for flipped projection matrix
         let vertices: [f32; 24] = [
-            xrel,     yrel + h, 0.0, 0.0,
-            xrel,     yrel,     0.0, 1.0,
-            xrel + w, yrel,     1.0, 1.0,
+            xrel,     yrel + h, 0.0, 1.0,  // Top-left corner, tex coords (0,1) - flipped V
+            xrel,     yrel,     0.0, 0.0,  // Bottom-left corner, tex coords (0,0) - flipped V
+            xrel + w, yrel,     1.0, 0.0,  // Bottom-right corner, tex coords (1,0) - flipped V
             
-            xrel,     yrel + h, 0.0, 0.0,
-            xrel + w, yrel,     1.0, 1.0,
-            xrel + w, yrel + h, 1.0, 0.0,
+            xrel,     yrel + h, 0.0, 1.0,  // Top-left corner, tex coords (0,1) - flipped V
+            xrel + w, yrel,     1.0, 0.0,  // Bottom-right corner, tex coords (1,0) - flipped V
+            xrel + w, yrel + h, 1.0, 1.0,  // Top-right corner, tex coords (1,1) - flipped V
         ];
         
         // Upload vertex data
@@ -1876,7 +1879,7 @@ pub fn run_opengl_text_rendering_test(context: &GraphicsContext) -> Result<(), S
         
         // Dashboard text samples
         let dashboard_texts = vec![
-            ("NIVA DASHBOARD", 50.0, 50.0, 1.5, (1.0, 1.0, 1.0)),
+            ("НИВА МФИ ТЕСТ", 50.0, 50.0, 1.5, (1.0, 1.0, 1.0)),
             ("Speed: 85 km/h", 50.0, 100.0, 1.0, (0.0, 1.0, 0.0)),
             ("RPM: 3500", 50.0, 140.0, 1.0, (1.0, 0.6, 0.0)),
             ("Fuel: 75%", 50.0, 180.0, 1.0, (1.0, 1.0, 0.0)),
