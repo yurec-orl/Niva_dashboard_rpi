@@ -1,9 +1,10 @@
 use std::env;
 
 fn main() {
-    // Tell Cargo to link against SDL2 and OpenGL ES libraries
+    // Tell Cargo to link against SDL2, OpenGL ES, and FreeType libraries
     println!("cargo:rustc-link-lib=SDL2");
     println!("cargo:rustc-link-lib=GLESv2");
+    println!("cargo:rustc-link-lib=freetype");
     
     // For cross-compilation to Raspberry Pi
     if env::var("TARGET").unwrap_or_default().contains("armv7-unknown-linux-gnueabihf") {

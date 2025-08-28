@@ -19,6 +19,10 @@ impl SDL2GaugeRenderer {
         let sdl_context = sdl2::init().map_err(|e| e.to_string())?;
         let video_subsystem = sdl_context.video().map_err(|e| e.to_string())?;
         
+        // Hide mouse cursor for dashboard application
+        let _mouse_util = sdl_context.mouse();
+        _mouse_util.show_cursor(false);
+        
         let window = video_subsystem
             .window(title, width, height)
             .position_centered()
@@ -53,7 +57,6 @@ impl SDL2GaugeRenderer {
         // Major tick marks and numbers
         for i in 0..=num_major_ticks {
             let angle = -225.0 + (270.0 * i as f64 / num_major_ticks as f64);
-            let tick_value = (max_speed * i as f64 / num_major_ticks as f64) as i32;
             
             self.draw_gauge_tick(center_x, center_y, radius, angle, 15, 4, 
                                Color::RGB(200, 200, 220))?;
@@ -231,7 +234,7 @@ impl SDL2GaugeRenderer {
         for t in 0..thickness {
             let r = radius - t;
             for angle in 0..360 {
-                let rad = (angle as f64 * PI / 180.0);
+                let rad = angle as f64 * PI / 180.0;
                 let px = x + (r as f64 * rad.cos()) as i32;
                 let py = y + (r as f64 * rad.sin()) as i32;
                 self.canvas.draw_point(Point::new(px, py))
@@ -337,6 +340,10 @@ pub fn run_sdl2_gauges_test(_context: &GraphicsContext) -> Result<(), String> {
     let sdl_context = sdl2::init().map_err(|e| e.to_string())?;
     let video_subsystem = sdl_context.video().map_err(|e| e.to_string())?;
     
+    // Hide mouse cursor for dashboard application  
+    let _mouse_util = sdl_context.mouse();
+    _mouse_util.show_cursor(false);
+    
     // Create window for gauge rendering
     let window = video_subsystem
         .window("Niva Dashboard - SDL2 Gauges", 800, 480)
@@ -413,6 +420,10 @@ pub fn run_sdl2_advanced_needles_test(_context: &GraphicsContext) -> Result<(), 
     // Initialize SDL2 separately
     let sdl_context = sdl2::init().map_err(|e| e.to_string())?;
     let video_subsystem = sdl_context.video().map_err(|e| e.to_string())?;
+    
+    // Hide mouse cursor for dashboard application
+    let _mouse_util = sdl_context.mouse();
+    _mouse_util.show_cursor(false);
     
     // Create window for advanced needle rendering
     let window = video_subsystem
@@ -539,7 +550,7 @@ fn create_needle_textures(texture_creator: &TextureCreator<WindowContext>) -> Re
     let mut textures = Vec::new();
     let thicknesses = [4, 8, 12, 16, 20, 24, 28, 32];
 
-    for &thickness in &thicknesses {
+    for &_thickness in &thicknesses {
         // Create a texture for this needle thickness
         let texture_size = 120;
         let texture = texture_creator
@@ -807,7 +818,7 @@ fn draw_section_headers(canvas: &mut Canvas<Window>) -> Result<(), String> {
         (1000, 50, "TEXTURED METHOD"),
     ];
     
-    for &(x, y, label) in &headers {
+    for &(x, y, _label) in &headers {
         // Header background
         let header_rect = Rect::new(x - 80, y, 160, 30);
         canvas.draw_rect(header_rect).map_err(|e| e.to_string())?;
@@ -1071,7 +1082,7 @@ fn draw_circle_outline(canvas: &mut Canvas<Window>, x: i32, y: i32, radius: i32,
     for t in 0..thickness {
         let r = radius - t;
         for angle in 0..360 {
-            let rad = (angle as f64 * PI / 180.0);
+            let rad = angle as f64 * PI / 180.0;
             let px = x + (r as f64 * rad.cos()) as i32;
             let py = y + (r as f64 * rad.sin()) as i32;
             canvas.draw_point(Point::new(px, py))

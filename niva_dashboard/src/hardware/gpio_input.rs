@@ -1,5 +1,4 @@
 use rppal::gpio::{Gpio, InputPin, Level, Bias, Result as GpioResult};
-use std::error::Error;
 use std::fmt;
 
 /// Represents the logical state of a GPIO input pin
@@ -94,9 +93,9 @@ impl GpioInput {
     }
     
     /// Get the configuration
-    pub fn config(&self) -> &GpioInputConfig {
-        &self.config
-    }
+    // pub fn config(&self) -> &GpioInputConfig {
+    //     &self.config
+    // }
     
     /// Check if the pin is configured as active low
     pub fn is_active_low(&self) -> bool {

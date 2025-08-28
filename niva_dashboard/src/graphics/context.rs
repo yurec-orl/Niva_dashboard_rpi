@@ -129,18 +129,7 @@ impl GraphicsContext {
         let events = self.poll_events();
         events.iter().any(|event| event.type_ == SDL_QUIT)
     }
-    
-    /// Update the window title
-    pub fn set_title(&self, title: &str) {
-        // Note: SDL_SetWindowTitle would need to be added to bindings
-        // For now, this is a placeholder
-        println!("Window title would be updated to: {}", title);
-    }
-    
-    /// Get window dimensions
-    pub fn dimensions(&self) -> (i32, i32) {
-        (self.width, self.height)
-    }
+
 }
 
 impl Drop for GraphicsContext {
@@ -158,18 +147,4 @@ impl Drop for GraphicsContext {
         }
         println!("Graphics context cleaned up");
     }
-}
-
-/// Trait for test functions that use the shared graphics context
-pub trait GraphicsTest {
-    fn run_with_context(context: &GraphicsContext) -> Result<(), String>;
-}
-
-/// Helper function to create a shared context and run multiple tests
-pub fn run_tests_with_shared_context<F>(title: &str, test_runner: F) -> Result<(), String>
-where
-    F: FnOnce(&GraphicsContext) -> Result<(), String>,
-{
-    let context = GraphicsContext::new_dashboard(title)?;
-    test_runner(&context)
 }

@@ -1,5 +1,8 @@
 # Niva Dashboard - Raspberry Pi Car Dashboard
 
+## General constraints
+When answering the question, ask before generating demos or examples first.
+
 ## Project Overview
 A software dashboard for automotive use, written in Rust and designed to run on Raspberry Pi 4. The system mimics a multi-functional display (MFD) commonly found in aircraft, featuring a central screen with one row of configurable buttons on the left and right sides.
 

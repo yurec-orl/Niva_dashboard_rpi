@@ -2,6 +2,9 @@
 use std::ffi::CString;
 use crate::graphics::context::GraphicsContext;
 
+// Import FreeType bindings from freetype-sys crate
+use freetype_sys as ft;
+
 // SDL2 and OpenGL ES bindings
 extern "C" {
     // SDL2 functions
@@ -51,6 +54,16 @@ extern "C" {
     fn glUniformMatrix4fv(location: i32, count: i32, transpose: u8, value: *const f32);
     fn glUniform2f(location: i32, v0: f32, v1: f32);
     fn glUniform4f(location: i32, v0: f32, v1: f32, v2: f32, v3: f32);
+    
+    // Additional OpenGL texture functions
+    fn glGenTextures(n: i32, textures: *mut u32);
+    fn glBindTexture(target: u32, texture: u32);
+    fn glTexImage2D(target: u32, level: i32, internalformat: i32, width: i32, height: i32, border: i32, format: u32, type_: u32, pixels: *const std::ffi::c_void);
+    fn glTexParameteri(target: u32, pname: u32, param: i32);
+    fn glDeleteTextures(n: i32, textures: *const u32);
+    fn glActiveTexture(texture: u32);
+    fn glUniform1i(location: i32, v0: i32);
+    fn glPixelStorei(pname: u32, param: i32);
 }
 
 // SDL2 constants
@@ -75,7 +88,7 @@ const GL_LINES: u32 = 0x0001;
 const GL_FLOAT: u32 = 0x1406;
 const GL_COMPILE_STATUS: u32 = 0x8B81;
 const GL_LINK_STATUS: u32 = 0x8B82;
-const GL_NO_ERROR: u32 = 0;
+const GL_NO_ERROR: u32 = 0x0;
 
 // Additional constants for antialiasing and blending
 const GL_BLEND: u32 = 0x0BE2;
@@ -85,6 +98,19 @@ const GL_LINE_SMOOTH: u32 = 0x0B20;
 const GL_POLYGON_SMOOTH: u32 = 0x0B41;
 const GL_TRIANGLE_STRIP: u32 = 0x0005;
 const GL_TRIANGLE_FAN: u32 = 0x0006;
+
+// Additional OpenGL constants for textures
+const GL_TEXTURE_2D: u32 = 0x0DE1;
+const GL_TEXTURE0: u32 = 0x84C0;
+const GL_TEXTURE_MIN_FILTER: u32 = 0x2801;
+const GL_TEXTURE_MAG_FILTER: u32 = 0x2800;
+const GL_LINEAR: u32 = 0x2601;
+const GL_RED: u32 = 0x1903;
+const GL_UNSIGNED_BYTE: u32 = 0x1401;
+const GL_TEXTURE_WRAP_S: u32 = 0x2802;
+const GL_TEXTURE_WRAP_T: u32 = 0x2803;
+const GL_CLAMP_TO_EDGE: u32 = 0x812F;
+const GL_UNPACK_ALIGNMENT: u32 = 0x0CF5;
 
 // SDL Event structure (simplified)
 #[repr(C)]
@@ -758,6 +784,10 @@ pub fn run_text_rendering_test(context: &GraphicsContext) -> Result<(), String> 
     let video_subsystem = sdl_context.video().map_err(|e| e.to_string())?;
     let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string())?;
     
+    // Hide mouse cursor for dashboard application
+    let _mouse_util = sdl_context.mouse();
+    _mouse_util.show_cursor(false);
+    
     println!("SDL2 TTF version: {}", sdl2::ttf::get_linked_version());
     
     // Create window for text rendering (separate from OpenGL window)
@@ -938,6 +968,10 @@ fn run_fallback_text_test() -> Result<(), String> {
     // Initialize basic SDL2 for drawing rectangles as "text"
     let sdl_context = sdl2::init().map_err(|e| e.to_string())?;
     let video_subsystem = sdl_context.video().map_err(|e| e.to_string())?;
+    
+    // Hide mouse cursor for dashboard application
+    let _mouse_util = sdl_context.mouse();
+    _mouse_util.show_cursor(false);
     
     let window = video_subsystem
         .window("Niva Dashboard - Fallback Text Test", 800, 480)
@@ -1538,4 +1572,360 @@ unsafe fn render_rotating_needles_frame(
     }
     
     glFlush();
+}
+
+// Text rendering system using FreeType
+struct OpenGLTextRenderer {
+    ft_library: ft::FT_Library,
+    ft_face: ft::FT_Face,
+    shader_program: u32,
+    vao: u32,
+    vbo: u32,
+    texture: u32,
+    font_size: u32,
+}
+
+impl OpenGLTextRenderer {
+    unsafe fn new(font_path: &str, font_size: u32) -> Result<Self, String> {
+        // Initialize FreeType
+        let mut ft_library: ft::FT_Library = std::ptr::null_mut();
+        if ft::FT_Init_FreeType(&mut ft_library) != 0 {
+            return Err("Failed to initialize FreeType library".to_string());
+        }
+        
+        // Load font face
+        let mut ft_face: ft::FT_Face = std::ptr::null_mut();
+        let font_path_cstr = std::ffi::CString::new(font_path).map_err(|_| "Invalid font path")?;
+        
+        if ft::FT_New_Face(ft_library, font_path_cstr.as_ptr(), 0, &mut ft_face) != 0 {
+            ft::FT_Done_FreeType(ft_library);
+            return Err(format!("Failed to load font: {}", font_path));
+        }
+        
+        // Set font size
+        if ft::FT_Set_Pixel_Sizes(ft_face, 0, font_size) != 0 {
+            ft::FT_Done_Face(ft_face);
+            ft::FT_Done_FreeType(ft_library);
+            return Err("Failed to set font size".to_string());
+        }
+        
+        // Create text rendering shader
+        let shader_program = Self::create_text_shader_program()?;
+        
+        // Create VAO and VBO for text quads
+        let mut vao = 0u32;
+        let mut vbo = 0u32;
+        glGenBuffers(1, &mut vao);
+        glGenBuffers(1, &mut vbo);
+        
+        // Create texture for glyph rendering
+        let mut texture = 0u32;
+        glGenTextures(1, &mut texture);
+        
+        println!("OpenGL text renderer initialized with FreeType");
+        println!("Font: {}, Size: {}px", font_path, font_size);
+        
+        Ok(OpenGLTextRenderer {
+            ft_library,
+            ft_face,
+            shader_program,
+            vao,
+            vbo,
+            texture,
+            font_size,
+        })
+    }
+    
+    unsafe fn create_text_shader_program() -> Result<u32, String> {
+        let vertex_shader_source = b"
+attribute vec4 vertex; // <vec2 pos, vec2 tex>
+varying vec2 tex_coords;
+uniform mat4 projection;
+
+void main() {
+    gl_Position = projection * vec4(vertex.xy, 0.0, 1.0);
+    tex_coords = vertex.zw;
+}
+\0";
+        
+        let fragment_shader_source = b"
+precision mediump float;
+varying vec2 tex_coords;
+uniform sampler2D text_texture;
+uniform vec3 text_color;
+
+void main() {
+    vec4 sampled = vec4(1.0, 1.0, 1.0, texture2D(text_texture, tex_coords).r);
+    gl_FragColor = vec4(text_color, 1.0) * sampled;
+}
+\0";
+        
+        // Create and compile vertex shader
+        let vertex_shader = glCreateShader(GL_VERTEX_SHADER);
+        if vertex_shader == 0 {
+            return Err("Failed to create text vertex shader".to_string());
+        }
+        
+        let vertex_src_ptr = vertex_shader_source.as_ptr() as *const i8;
+        glShaderSource(vertex_shader, 1, &vertex_src_ptr, std::ptr::null());
+        glCompileShader(vertex_shader);
+        
+        let mut compile_status = 0i32;
+        glGetShaderiv(vertex_shader, GL_COMPILE_STATUS, &mut compile_status);
+        if compile_status == 0 {
+            return Err("Text vertex shader compilation failed".to_string());
+        }
+        
+        // Create and compile fragment shader
+        let fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
+        if fragment_shader == 0 {
+            return Err("Failed to create text fragment shader".to_string());
+        }
+        
+        let fragment_src_ptr = fragment_shader_source.as_ptr() as *const i8;
+        glShaderSource(fragment_shader, 1, &fragment_src_ptr, std::ptr::null());
+        glCompileShader(fragment_shader);
+        
+        let mut compile_status = 0i32;
+        glGetShaderiv(fragment_shader, GL_COMPILE_STATUS, &mut compile_status);
+        if compile_status == 0 {
+            return Err("Text fragment shader compilation failed".to_string());
+        }
+        
+        // Create and link shader program
+        let program = glCreateProgram();
+        if program == 0 {
+            return Err("Failed to create text shader program".to_string());
+        }
+        
+        glAttachShader(program, vertex_shader);
+        glAttachShader(program, fragment_shader);
+        glLinkProgram(program);
+        
+        let mut link_status = 0i32;
+        glGetProgramiv(program, GL_LINK_STATUS, &mut link_status);
+        if link_status == 0 {
+            return Err("Text shader program linking failed".to_string());
+        }
+        
+        println!("Text rendering shader program created successfully!");
+        Ok(program)
+    }
+    
+    unsafe fn render_text(&mut self, text: &str, x: f32, y: f32, scale: f32, color: (f32, f32, f32), width: f32, height: f32) -> Result<(), String> {
+        glUseProgram(self.shader_program);
+        
+        // Set text color
+        let color_uniform = glGetUniformLocation(self.shader_program, b"text_color\0".as_ptr() as *const i8);
+        glUniform3f(color_uniform, color.0, color.1, color.2);
+        
+        // Set up projection matrix (orthographic for 2D text) - use actual dimensions
+        // Standard screen coordinates: (0,0) at top-left, Y increases downward
+        let projection_uniform = glGetUniformLocation(self.shader_program, b"projection\0".as_ptr() as *const i8);
+        let projection_matrix: [f32; 16] = [
+            2.0/width, 0.0,        0.0, 0.0,
+            0.0,       2.0/height, 0.0, 0.0,
+            0.0,       0.0,        -1.0, 0.0,
+            -1.0,      -1.0,       0.0, 1.0,
+        ];
+        glUniformMatrix4fv(projection_uniform, 1, 0, projection_matrix.as_ptr());
+        
+        // Set up texture
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, self.texture);
+        let texture_uniform = glGetUniformLocation(self.shader_program, b"text_texture\0".as_ptr() as *const i8);
+        glUniform1i(texture_uniform, 0);
+        
+        // Get vertex attribute location
+        let vertex_attr = glGetAttribLocation(self.shader_program, b"vertex\0".as_ptr() as *const i8);
+        
+        glBindBuffer(GL_ARRAY_BUFFER, self.vbo);
+        glEnableVertexAttribArray(vertex_attr as u32);
+        glVertexAttribPointer(vertex_attr as u32, 4, GL_FLOAT, 0, 0, std::ptr::null());
+        
+        // Render each character
+        let mut cursor_x = x;
+        for ch in text.chars() {
+            cursor_x += self.render_character(ch, cursor_x, y, scale)?;
+        }
+        
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        
+        Ok(())
+    }
+    
+    unsafe fn render_character(&mut self, ch: char, x: f32, y: f32, scale: f32) -> Result<f32, String> {
+        // Load character glyph
+        if ft::FT_Load_Char(self.ft_face, ch as u64, ft::FT_LOAD_RENDER as i32) != 0 {
+            return Err(format!("Failed to load character: {}", ch));
+        }
+        
+        // Get glyph slot
+        let glyph = (*self.ft_face).glyph;
+        
+        // Configure texture with proper alignment for FreeType bitmaps
+        glBindTexture(GL_TEXTURE_2D, self.texture);
+        
+        // Set pixel alignment to 1 byte to handle FreeType's bitmap format
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        
+        glTexImage2D(
+            GL_TEXTURE_2D,
+            0,
+            GL_RED as i32,
+            (*glyph).bitmap.width as i32,
+            (*glyph).bitmap.rows as i32,
+            0,
+            GL_RED,
+            GL_UNSIGNED_BYTE,
+            (*glyph).bitmap.buffer as *const std::ffi::c_void,
+        );
+        
+        // Reset pixel alignment to default
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE as i32);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE as i32);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR as i32);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR as i32);
+        
+        // Calculate quad vertices
+        let w = (*glyph).bitmap.width as f32 * scale;
+        let h = (*glyph).bitmap.rows as f32 * scale;
+        let xrel = x + (*glyph).bitmap_left as f32 * scale;
+        let yrel = y - ((*glyph).bitmap.rows as f32 - (*glyph).bitmap_top as f32) * scale;
+        
+        // Create quad vertices (x, y, tex_x, tex_y)
+        let vertices: [f32; 24] = [
+            xrel,     yrel + h, 0.0, 0.0,
+            xrel,     yrel,     0.0, 1.0,
+            xrel + w, yrel,     1.0, 1.0,
+            
+            xrel,     yrel + h, 0.0, 0.0,
+            xrel + w, yrel,     1.0, 1.0,
+            xrel + w, yrel + h, 1.0, 0.0,
+        ];
+        
+        // Upload vertex data
+        glBufferData(
+            GL_ARRAY_BUFFER,
+            (vertices.len() * std::mem::size_of::<f32>()) as isize,
+            vertices.as_ptr() as *const std::ffi::c_void,
+            GL_STATIC_DRAW,
+        );
+        
+        // Render quad
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        
+        // Return advance for next character
+        Ok(((*glyph).advance.x >> 6) as f32 * scale)
+    }
+}
+
+impl Drop for OpenGLTextRenderer {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.ft_face.is_null() {
+                ft::FT_Done_Face(self.ft_face);
+            }
+            if !self.ft_library.is_null() {
+                ft::FT_Done_FreeType(self.ft_library);
+            }
+            
+            glDeleteTextures(1, &self.texture);
+            // Note: VAO/VBO cleanup would need proper OpenGL context
+        }
+    }
+}
+
+/// OpenGL text rendering test using FreeType
+pub fn run_opengl_text_rendering_test(context: &GraphicsContext) -> Result<(), String> {
+    println!("Starting OpenGL Text Rendering Test with FreeType...");
+    println!("Rendering high-quality text directly in OpenGL context");
+    
+    unsafe {
+        glViewport(0, 0, context.width, context.height);
+        
+        // Enable blending for text transparency
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        
+        // Try to find a suitable font
+        let font_paths = vec![
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/System/Library/Fonts/Arial.ttf", // macOS
+            "C:/Windows/Fonts/arial.ttf", // Windows
+        ];
+        
+        let mut font_path = None;
+        for path in &font_paths {
+            if std::path::Path::new(path).exists() {
+                font_path = Some(*path);
+                break;
+            }
+        }
+        
+        let font_path = font_path.ok_or("No suitable font found for OpenGL text rendering")?;
+        
+        // Create text renderer
+        let mut text_renderer = OpenGLTextRenderer::new(font_path, 24)?;
+        
+        println!("Running OpenGL text rendering demonstration...");
+        
+        // Dashboard text samples
+        let dashboard_texts = vec![
+            ("NIVA DASHBOARD", 50.0, 50.0, 1.5, (1.0, 1.0, 1.0)),
+            ("Speed: 85 km/h", 50.0, 100.0, 1.0, (0.0, 1.0, 0.0)),
+            ("RPM: 3500", 50.0, 140.0, 1.0, (1.0, 0.6, 0.0)),
+            ("Fuel: 75%", 50.0, 180.0, 1.0, (1.0, 1.0, 0.0)),
+            ("Temp: 89C", 50.0, 220.0, 1.0, (1.0, 0.4, 0.4)),
+            ("ENGINE OK", 400.0, 100.0, 1.2, (0.0, 1.0, 0.0)),
+            ("GPS: ACTIVE", 400.0, 140.0, 1.0, (0.6, 1.0, 0.6)),
+            ("12:34 PM", 400.0, 180.0, 1.0, (0.4, 0.8, 1.0)),
+        ];
+        
+        let mut frame_count = 0;
+        let total_frames = 300; // 5 seconds at 60fps
+        
+        while frame_count < total_frames {
+            if context.should_quit() {
+                break;
+            }
+            
+            // Clear with dark dashboard background
+            glClearColor(0.02, 0.02, 0.08, 1.0);
+            glClear(GL_COLOR_BUFFER_BIT);
+            
+            // Render all dashboard text
+            for (text, x, y, scale, color) in &dashboard_texts {
+                text_renderer.render_text(text, *x, *y, *scale, *color, context.width as f32, context.height as f32)?;
+            }
+            
+            // Add animated text
+            let time = frame_count as f32 * 0.016;
+            let pulse_scale = 1.0 + 0.2 * (time * 2.0).sin();
+            let animated_text = format!("Frame: {}", frame_count);
+            text_renderer.render_text(&animated_text, 50.0, 350.0, pulse_scale, (1.0, 0.5, 1.0), context.width as f32, context.height as f32)?;
+            
+            // Add FPS counter
+            let fps_text = format!("FPS: {:.1}", 1.0 / 0.016);
+            text_renderer.render_text(&fps_text, 600.0, 50.0, 0.8, (0.8, 0.8, 0.8), context.width as f32, context.height as f32)?;
+            
+            context.swap_buffers();
+            frame_count += 1;
+            
+            // Print status every 60 frames
+            if frame_count % 60 == 0 {
+                println!("Frame {} - OpenGL text rendering with FreeType", frame_count);
+            }
+            
+            std::thread::sleep(std::time::Duration::from_millis(16)); // ~60fps
+        }
+        
+        println!("OpenGL text rendering test completed successfully!");
+    }
+    
+    Ok(())
 }
