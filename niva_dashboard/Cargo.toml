@@ -16,6 +16,3 @@ freetype-sys = "0.13"
 # Uncomment these for actual Raspberry Pi deployment:
 # sdl2 = "0.35"
 # gl = "0.14"
-
-[target.armv7-unknown-linux-gnueabihf]
-linker = "arm-linux-gnueabihf-gcc"
