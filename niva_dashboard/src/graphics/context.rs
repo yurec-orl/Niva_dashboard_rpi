@@ -832,6 +832,52 @@ impl GraphicsContext {
             }
         }
     }
+    
+    /// Hide the mouse cursor for dashboard applications
+    pub fn hide_cursor(&self) -> Result<(), String> {
+        use std::fs::File;
+        use std::io::Write;
+        
+        // Method 1: Hide cursor via console escape sequence
+        print!("\x1b[?25l"); // ANSI escape sequence to hide cursor
+        std::io::stdout().flush().map_err(|e| format!("Failed to flush stdout: {}", e))?;
+        
+        // Method 2: Try to hide cursor via /dev/tty
+        if let Ok(mut tty) = File::options().write(true).open("/dev/tty") {
+            let _ = tty.write_all(b"\x1b[?25l");
+            let _ = tty.flush();
+        }
+        
+        // Method 3: Try to disable cursor via kernel parameter (best effort)
+        if let Ok(mut file) = File::options().write(true).open("/sys/class/graphics/fbcon/cursor_blink") {
+            let _ = file.write_all(b"0");
+        }
+        
+        Ok(())
+    }
+    
+    /// Show the mouse cursor (restore visibility)
+    pub fn show_cursor(&self) -> Result<(), String> {
+        use std::fs::File;
+        use std::io::Write;
+        
+        // Method 1: Show cursor via console escape sequence
+        print!("\x1b[?25h"); // ANSI escape sequence to show cursor
+        std::io::stdout().flush().map_err(|e| format!("Failed to flush stdout: {}", e))?;
+        
+        // Method 2: Try to show cursor via /dev/tty
+        if let Ok(mut tty) = File::options().write(true).open("/dev/tty") {
+            let _ = tty.write_all(b"\x1b[?25h");
+            let _ = tty.flush();
+        }
+        
+        // Method 3: Try to enable cursor via kernel parameter (best effort)
+        if let Ok(mut file) = File::options().write(true).open("/sys/class/graphics/fbcon/cursor_blink") {
+            let _ = file.write_all(b"1");
+        }
+        
+        Ok(())
+    }
 }
 
 impl Drop for GraphicsContext {
