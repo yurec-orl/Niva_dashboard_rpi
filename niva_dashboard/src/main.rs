@@ -44,7 +44,9 @@ fn main() {
         println!("✓ Mouse cursor hidden for dashboard mode");
     }
 
-    let mgr = PageManager::new(context);
-
-    println!("Dashboard initialized successfully!");
+    let mut mgr = PageManager::new(context);
+    match mgr.start() {
+        Ok(()) => println!("Dashboard finished successfully!"),
+        Err(e) => eprintln!("Failed to start dashboard: {}", e),
+    }
 }
