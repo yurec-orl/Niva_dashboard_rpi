@@ -2,6 +2,9 @@
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_uint, c_void};
 use std::ptr;
+use std::collections::HashMap;
+use freetype_sys as ft;
+use gl::types::*;
 
 // EGL types and constants
 type EGLDisplay = *mut c_void;
@@ -228,6 +231,36 @@ struct DrmModeModeInfo {
     name: [i8; 32],
 }
 
+/// Represents cached glyph data for efficient text rendering
+#[derive(Clone)]
+struct CachedGlyph {
+    texture_id: u32,
+    width: f32,
+    height: f32,
+    bearing_x: f32,
+    bearing_y: f32,
+    advance: f32,
+}
+
+/// OpenGL text renderer using FreeType with glyph caching
+pub struct OpenGLTextRenderer {
+    ft_library: ft::FT_Library,
+    ft_face: ft::FT_Face,
+    shader_program: u32,
+    vao: u32,
+    vbo: u32,
+    font_size: u32,
+    glyph_cache: HashMap<char, CachedGlyph>,
+    projection_width: f32,
+    projection_height: f32,
+    projection_matrix: [f32; 16],
+    // Cached uniform and attribute locations for performance
+    projection_uniform: i32,
+    color_uniform: i32,
+    texture_uniform: i32,
+    vertex_attr: i32,
+}
+
 /// Event structure for input handling
 #[derive(Debug, Clone)]
 pub struct InputEvent {
@@ -268,6 +301,9 @@ pub struct GraphicsContext {
     pub width: i32,
     pub height: i32,
     
+    // Text rendering
+    pub text_renderer: Option<OpenGLTextRenderer>,
+    
     // State
     initialized: bool,
     display_configured: bool,
@@ -292,6 +328,7 @@ impl GraphicsContext {
             previous_fb: 0,
             width,
             height,
+            text_renderer: None,
             initialized: false,
             display_configured: false,
         };
@@ -917,5 +954,426 @@ impl Drop for GraphicsContext {
             }
         }
         println!("Graphics context cleaned up");
+    }
+}
+
+impl GraphicsContext {
+    /// Initialize text renderer with the specified font
+    pub fn initialize_text_renderer(&mut self, font_path: &str, font_size: u32) -> Result<(), String> {
+        unsafe {
+            let renderer = OpenGLTextRenderer::new(font_path, font_size)?;
+            self.text_renderer = Some(renderer);
+            println!("Text renderer initialized successfully");
+            Ok(())
+        }
+    }
+    
+    /// Render text using the initialized text renderer
+    pub fn render_text(&mut self, text: &str, x: f32, y: f32, scale: f32, color: (f32, f32, f32)) -> Result<(), String> {
+        if let Some(ref mut renderer) = self.text_renderer {
+            unsafe {
+                renderer.render_text(text, x, y, scale, color, self.width as f32, self.height as f32)
+            }
+        } else {
+            Err("Text renderer not initialized. Call initialize_text_renderer() first.".to_string())
+        }
+    }
+    
+    /// Calculate text width using the initialized text renderer
+    pub fn calculate_text_width(&mut self, text: &str, scale: f32) -> Result<f32, String> {
+        if let Some(ref mut renderer) = self.text_renderer {
+            unsafe {
+                renderer.calculate_text_width(text, scale)
+            }
+        } else {
+            Err("Text renderer not initialized. Call initialize_text_renderer() first.".to_string())
+        }
+    }
+    
+    /// Calculate text height using the initialized text renderer
+    pub fn calculate_text_height(&mut self, text: &str, scale: f32) -> Result<f32, String> {
+        if let Some(ref mut renderer) = self.text_renderer {
+            unsafe {
+                renderer.calculate_text_height(text, scale)
+            }
+        } else {
+            Err("Text renderer not initialized. Call initialize_text_renderer() first.".to_string())
+        }
+    }
+    
+    /// Calculate text dimensions (width, height) using the initialized text renderer
+    pub fn calculate_text_dimensions(&mut self, text: &str, scale: f32) -> Result<(f32, f32), String> {
+        if let Some(ref mut renderer) = self.text_renderer {
+            unsafe {
+                renderer.calculate_text_dimensions(text, scale)
+            }
+        } else {
+            Err("Text renderer not initialized. Call initialize_text_renderer() first.".to_string())
+        }
+    }
+    
+    /// Get line height for the current font
+    pub fn get_line_height(&self, scale: f32) -> Result<f32, String> {
+        if let Some(ref renderer) = self.text_renderer {
+            Ok(renderer.get_line_height(scale))
+        } else {
+            Err("Text renderer not initialized. Call initialize_text_renderer() first.".to_string())
+        }
+    }
+    
+    /// Get line spacing for the current font
+    pub fn get_line_spacing(&self, scale: f32) -> Result<f32, String> {
+        if let Some(ref renderer) = self.text_renderer {
+            Ok(renderer.get_line_spacing(scale))
+        } else {
+            Err("Text renderer not initialized. Call initialize_text_renderer() first.".to_string())
+        }
+    }
+}
+
+impl OpenGLTextRenderer {
+    unsafe fn new(font_path: &str, font_size: u32) -> Result<Self, String> {
+        // Initialize FreeType
+        let mut ft_library: ft::FT_Library = std::ptr::null_mut();
+        if ft::FT_Init_FreeType(&mut ft_library) != 0 {
+            return Err("Failed to initialize FreeType library".to_string());
+        }
+        
+        // Load font face
+        let mut ft_face: ft::FT_Face = std::ptr::null_mut();
+        let font_path_cstr = std::ffi::CString::new(font_path).map_err(|_| "Invalid font path")?;
+        
+        if ft::FT_New_Face(ft_library, font_path_cstr.as_ptr(), 0, &mut ft_face) != 0 {
+            ft::FT_Done_FreeType(ft_library);
+            return Err(format!("Failed to load font: {}", font_path));
+        }
+        
+        // Set font size
+        if ft::FT_Set_Pixel_Sizes(ft_face, 0, font_size) != 0 {
+            ft::FT_Done_Face(ft_face);
+            ft::FT_Done_FreeType(ft_library);
+            return Err("Failed to set font size".to_string());
+        }
+        
+        // Create text rendering shader
+        let shader_program = Self::create_text_shader_program()?;
+        
+        // Cache uniform and attribute locations for performance
+        let projection_uniform = gl::GetUniformLocation(shader_program, b"projection\0".as_ptr());
+        let color_uniform = gl::GetUniformLocation(shader_program, b"text_color\0".as_ptr());
+        let texture_uniform = gl::GetUniformLocation(shader_program, b"text_texture\0".as_ptr());
+        let vertex_attr = gl::GetAttribLocation(shader_program, b"vertex\0".as_ptr());
+        
+        // Create VAO and VBO for text quads
+        let mut vao = 0u32;
+        let mut vbo = 0u32;
+        gl::GenBuffers(1, &mut vao);
+        gl::GenBuffers(1, &mut vbo);
+        
+        println!("OpenGL text renderer initialized with FreeType + glyph caching");
+        println!("Font: {}, Size: {}px", font_path, font_size);
+        
+        Ok(OpenGLTextRenderer {
+            ft_library,
+            ft_face,
+            shader_program,
+            vao,
+            vbo,
+            font_size,
+            glyph_cache: HashMap::new(),
+            projection_width: 0.0,
+            projection_height: 0.0,
+            projection_matrix: [0.0; 16],
+            projection_uniform,
+            color_uniform,
+            texture_uniform,
+            vertex_attr,
+        })
+    }
+    
+    unsafe fn create_text_shader_program() -> Result<u32, String> {
+        let vertex_shader_source = b"
+attribute vec4 vertex; // <vec2 pos, vec2 tex>
+varying vec2 tex_coords;
+uniform mat4 projection;
+
+void main() {
+    gl_Position = projection * vec4(vertex.xy, 0.0, 1.0);
+    tex_coords = vertex.zw;
+}
+\0";
+        
+        let fragment_shader_source = b"
+precision mediump float;
+varying vec2 tex_coords;
+uniform sampler2D text_texture;
+uniform vec3 text_color;
+
+void main() {
+    vec4 sampled = vec4(1.0, 1.0, 1.0, texture2D(text_texture, tex_coords).r);
+    gl_FragColor = vec4(text_color, 1.0) * sampled;
+}
+\0";
+        
+        // Create and compile vertex shader
+        let vertex_shader = gl::CreateShader(gl::VERTEX_SHADER);
+        if vertex_shader == 0 {
+            return Err("Failed to create text vertex shader".to_string());
+        }
+        
+        let vertex_src_ptr = vertex_shader_source.as_ptr();
+        gl::ShaderSource(vertex_shader, 1, &vertex_src_ptr, std::ptr::null());
+        gl::CompileShader(vertex_shader);
+        
+        let mut compile_status = 0i32;
+        gl::GetShaderiv(vertex_shader, gl::COMPILE_STATUS, &mut compile_status);
+        if compile_status == 0 {
+            return Err("Text vertex shader compilation failed".to_string());
+        }
+        
+        // Create and compile fragment shader
+        let fragment_shader = gl::CreateShader(gl::FRAGMENT_SHADER);
+        if fragment_shader == 0 {
+            return Err("Failed to create text fragment shader".to_string());
+        }
+        
+        let fragment_src_ptr = fragment_shader_source.as_ptr();
+        gl::ShaderSource(fragment_shader, 1, &fragment_src_ptr, std::ptr::null());
+        gl::CompileShader(fragment_shader);
+        
+        let mut compile_status = 0i32;
+        gl::GetShaderiv(fragment_shader, gl::COMPILE_STATUS, &mut compile_status);
+        if compile_status == 0 {
+            return Err("Text fragment shader compilation failed".to_string());
+        }
+        
+        // Create and link shader program
+        let program = gl::CreateProgram();
+        if program == 0 {
+            return Err("Failed to create text shader program".to_string());
+        }
+        
+        gl::AttachShader(program, vertex_shader);
+        gl::AttachShader(program, fragment_shader);
+        gl::LinkProgram(program);
+        
+        let mut link_status = 0i32;
+        gl::GetProgramiv(program, gl::LINK_STATUS, &mut link_status);
+        if link_status == 0 {
+            return Err("Text shader program linking failed".to_string());
+        }
+        
+        println!("Text rendering shader program created successfully!");
+        Ok(program)
+    }
+    
+    unsafe fn render_text(&mut self, text: &str, x: f32, y: f32, scale: f32, color: (f32, f32, f32), width: f32, height: f32) -> Result<(), String> {
+        // Use cached program state
+        gl::UseProgram(self.shader_program);
+        
+        // Only update projection matrix if dimensions changed
+        if self.projection_width != width || self.projection_height != height {
+            self.projection_width = width;
+            self.projection_height = height;
+            
+            // Calculate projection matrix once
+            self.projection_matrix = [
+                2.0/width, 0.0,         0.0, 0.0,
+                0.0,       -2.0/height, 0.0, 0.0,  // Negative Y scaling to flip coordinate system
+                0.0,       0.0,         -1.0, 0.0,
+                -1.0,      1.0,         0.0, 1.0,  // Y translation adjusted for flipped coordinates
+            ];
+            
+            // Upload to GPU using cached uniform location
+            gl::UniformMatrix4fv(self.projection_uniform, 1, 0, self.projection_matrix.as_ptr());
+        }
+        
+        // Set text color using cached uniform location
+        gl::Uniform3f(self.color_uniform, color.0, color.1, color.2);
+        
+        // Set up texture uniform using cached location
+        gl::Uniform1i(self.texture_uniform, 0);
+        
+        // Set up vertex attributes using cached location
+        gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
+        gl::EnableVertexAttribArray(self.vertex_attr as u32);
+        gl::VertexAttribPointer(self.vertex_attr as u32, 4, gl::FLOAT, 0, 0, std::ptr::null());
+        
+        // Render each character using cached glyphs
+        let mut cursor_x = x;
+        for ch in text.chars() {
+            cursor_x += self.render_cached_character(ch, cursor_x, y, scale)?;
+        }
+        
+        Ok(())
+    }
+    
+    unsafe fn get_or_cache_glyph(&mut self, ch: char) -> Result<CachedGlyph, String> {
+        // Check if glyph is already cached
+        if let Some(cached_glyph) = self.glyph_cache.get(&ch) {
+            return Ok(cached_glyph.clone());
+        }
+        
+        // Load character glyph
+        if ft::FT_Load_Char(self.ft_face, ch as u64, ft::FT_LOAD_RENDER as i32) != 0 {
+            return Err(format!("Failed to load character: {}", ch));
+        }
+        
+        // Get glyph slot
+        let glyph = (*self.ft_face).glyph;
+        
+        // Create a dedicated texture for this glyph
+        let mut texture_id = 0u32;
+        gl::GenTextures(1, &mut texture_id);
+        gl::BindTexture(gl::TEXTURE_2D, texture_id);
+        
+        // Set pixel alignment to 1 byte to handle FreeType's bitmap format
+        gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
+        
+        gl::TexImage2D(
+            gl::TEXTURE_2D,
+            0,
+            gl::RED as i32,
+            (*glyph).bitmap.width as i32,
+            (*glyph).bitmap.rows as i32,
+            0,
+            gl::RED,
+            gl::UNSIGNED_BYTE,
+            (*glyph).bitmap.buffer as *const std::ffi::c_void,
+        );
+        
+        // Reset pixel alignment to default
+        gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
+        
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+        
+        // Cache the glyph data
+        let cached_glyph = CachedGlyph {
+            texture_id,
+            width: (*glyph).bitmap.width as f32,
+            height: (*glyph).bitmap.rows as f32,
+            bearing_x: (*glyph).bitmap_left as f32,
+            bearing_y: (*glyph).bitmap_top as f32,
+            advance: ((*glyph).advance.x >> 6) as f32,
+        };
+        
+        self.glyph_cache.insert(ch, cached_glyph.clone());
+        Ok(cached_glyph)
+    }
+    
+    unsafe fn render_cached_character(&mut self, ch: char, x: f32, y: f32, scale: f32) -> Result<f32, String> {
+        // Get cached glyph (or create if not cached)
+        let glyph = self.get_or_cache_glyph(ch)?;
+        
+        // Bind the glyph's texture
+        gl::ActiveTexture(gl::TEXTURE0);
+        gl::BindTexture(gl::TEXTURE_2D, glyph.texture_id);
+        
+        // Calculate quad vertices
+        let w = glyph.width * scale;
+        let h = glyph.height * scale;
+        let xrel = x + glyph.bearing_x * scale;
+        let yrel = y - glyph.bearing_y * scale;
+        
+        // Create quad vertices (x, y, tex_x, tex_y)
+        let vertices: [f32; 24] = [
+            xrel,     yrel + h, 0.0, 1.0,  // Top-left corner, tex coords (0,1) - flipped V
+            xrel,     yrel,     0.0, 0.0,  // Bottom-left corner, tex coords (0,0) - flipped V
+            xrel + w, yrel,     1.0, 0.0,  // Bottom-right corner, tex coords (1,0) - flipped V
+            
+            xrel,     yrel + h, 0.0, 1.0,  // Top-left corner, tex coords (0,1) - flipped V
+            xrel + w, yrel,     1.0, 0.0,  // Bottom-right corner, tex coords (1,0) - flipped V
+            xrel + w, yrel + h, 1.0, 1.0,  // Top-right corner, tex coords (1,1) - flipped V
+        ];
+        
+        // Upload vertex data
+        gl::BufferData(
+            gl::ARRAY_BUFFER,
+            (vertices.len() * std::mem::size_of::<f32>()) as isize,
+            vertices.as_ptr() as *const std::ffi::c_void,
+            gl::STATIC_DRAW,
+        );
+        
+        // Render quad
+        gl::DrawArrays(gl::TRIANGLES, 0, 6);
+        
+        // Return advance for next character
+        Ok(glyph.advance * scale)
+    }
+    
+    /// Calculate the total width of a text string with the current font and scale
+    unsafe fn calculate_text_width(&mut self, text: &str, scale: f32) -> Result<f32, String> {
+        let mut total_width = 0.0;
+        
+        for ch in text.chars() {
+            let glyph = self.get_or_cache_glyph(ch)?;
+            total_width += glyph.advance * scale;
+        }
+        
+        Ok(total_width)
+    }
+    
+    /// Calculate the maximum height of a text string with the current font and scale
+    unsafe fn calculate_text_height(&mut self, text: &str, scale: f32) -> Result<f32, String> {
+        let mut max_height = 0.0;
+        let mut max_descent = 0.0;
+        
+        for ch in text.chars() {
+            let glyph = self.get_or_cache_glyph(ch)?;
+            let char_height = glyph.bearing_y * scale;
+            let char_descent = (glyph.height - glyph.bearing_y) * scale;
+            
+            if char_height > max_height {
+                max_height = char_height;
+            }
+            if char_descent > max_descent {
+                max_descent = char_descent;
+            }
+        }
+        
+        Ok(max_height + max_descent)
+    }
+    
+    /// Calculate both width and height of a text string (convenience function)
+    unsafe fn calculate_text_dimensions(&mut self, text: &str, scale: f32) -> Result<(f32, f32), String> {
+        let width = self.calculate_text_width(text, scale)?;
+        let height = self.calculate_text_height(text, scale)?;
+        Ok((width, height))
+    }
+    
+    /// Get the line height for the current font (useful for multi-line text)
+    fn get_line_height(&self, scale: f32) -> f32 {
+        unsafe {
+            let face_ref = &*self.ft_face;
+            (face_ref.size as *const ft::FT_SizeRec).as_ref().unwrap().metrics.height as f32 / 64.0 * scale
+        }
+    }
+    
+    /// Get the baseline-to-baseline distance for the current font
+    fn get_line_spacing(&self, scale: f32) -> f32 {
+        // Use line height as default line spacing
+        self.get_line_height(scale)
+    }
+}
+
+impl Drop for OpenGLTextRenderer {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.ft_face.is_null() {
+                ft::FT_Done_Face(self.ft_face);
+            }
+            if !self.ft_library.is_null() {
+                ft::FT_Done_FreeType(self.ft_library);
+            }
+            
+            // Clean up cached glyph textures
+            for cached_glyph in self.glyph_cache.values() {
+                gl::DeleteTextures(1, &cached_glyph.texture_id);
+            }
+            // Note: VAO/VBO cleanup would need proper OpenGL context
+        }
     }
 }
