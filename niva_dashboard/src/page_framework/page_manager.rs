@@ -74,7 +74,9 @@ pub struct PageBase {
 }
 
 pub trait Page {
-    fn render(&self, context: &mut GraphicsContext);
+    fn render(&self, context: &mut GraphicsContext) -> Result<(), String>;
+    fn on_enter(&mut self) -> Result<(), String>;
+    fn on_exit(&mut self) -> Result<(), String>;
 }
 
 pub struct PageManager {
