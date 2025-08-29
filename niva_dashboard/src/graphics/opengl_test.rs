@@ -1254,12 +1254,6 @@ pub fn run_rotating_needle_gauge_test(context: &mut GraphicsContext) -> Result<(
     println!("Circular gauge with numbered marks and animated triangular needle");
     
     unsafe {
-        // Load OpenGL function pointers
-        gl::load_with(|name| {
-            let c_str = std::ffi::CString::new(name).unwrap();
-            context.get_proc_address(c_str.as_ptr()) as *const _
-        });
-        
         // Set viewport
         gl::Viewport(0, 0, context.width, context.height);
         
@@ -1312,7 +1306,7 @@ pub fn run_rotating_needle_gauge_test(context: &mut GraphicsContext) -> Result<(
             render_gauge_circle_border(center_x, center_y, outer_radius, inner_radius, (0.8, 0.8, 0.9), context.width as f32, context.height as f32, shader_program);
             render_gauge_marks(center_x, center_y, inner_radius - 20.0, start_angle, end_angle, 11, (0.9, 0.9, 1.0), context.width as f32, context.height as f32, shader_program);
             render_gauge_numbers(&mut text_renderer, center_x, center_y, inner_radius - 40.0, start_angle, end_angle, min_value, max_value, 11, (1.0, 1.0, 1.0), context.width as f32, context.height as f32)?;
-            render_triangular_needle(center_x, center_y, needle_length, start_angle, end_angle, min_value, max_value, current_value, (1.0, 0.3, 0.3), context.width as f32, context.height as f32, shader_program);
+            render_triangular_needle(center_x, center_y, needle_length, start_angle, end_angle, min_value, max_value, current_value, (1.0, 0.1, 0.0), context.width as f32, context.height as f32, shader_program);
             
             // Render center circle
             render_gauge_center_circle(center_x, center_y, 12.0, (0.4, 0.4, 0.5), context.width as f32, context.height as f32, shader_program);
@@ -1474,6 +1468,7 @@ fn render_gauge_numbers(text_renderer: &mut OpenGLTextRenderer, center_x: f32, c
 }
 
 // Helper function to render triangular needle
+// Helper function to render triangular needle with glowing effect
 unsafe fn render_triangular_needle(center_x: f32, center_y: f32, length: f32, start_angle: f32, end_angle: f32, min_value: f32, max_value: f32, current_value: f32, color: (f32, f32, f32), screen_w: f32, screen_h: f32, shader_program: u32) {
     gl::UseProgram(shader_program);
     
@@ -1484,50 +1479,129 @@ unsafe fn render_triangular_needle(center_x: f32, center_y: f32, length: f32, st
     let cos_a = needle_angle.cos();
     let sin_a = needle_angle.sin();
     
-    // Needle triangle vertices (pointing outward)
-    let needle_width = 8.0;
+    // Base needle parameters
+    let base_needle_width = 16.0;
+    let tip_needle_width = 6.0;  // Separate tip width for tapered shape
     let tip_x = center_x + cos_a * length;
     let tip_y = center_y + sin_a * length;
     
-    // Base vertices (perpendicular to needle direction)
-    let perp_cos = (-sin_a) * needle_width * 0.5;
-    let perp_sin = cos_a * needle_width * 0.5;
-    
-    let base1_x = center_x + perp_cos;
-    let base1_y = center_y + perp_sin;
-    let base2_x = center_x - perp_cos;
-    let base2_y = center_y - perp_sin;
-    
-    // Convert to normalized coordinates
-    let tip_nx = tip_x / screen_w * 2.0 - 1.0;
-    let tip_ny = 1.0 - tip_y / screen_h * 2.0;
-    let base1_nx = base1_x / screen_w * 2.0 - 1.0;
-    let base1_ny = 1.0 - base1_y / screen_h * 2.0;
-    let base2_nx = base2_x / screen_w * 2.0 - 1.0;
-    let base2_ny = 1.0 - base2_y / screen_h * 2.0;
-    
-    let vertices = [
-        tip_nx, tip_ny, color.0, color.1, color.2,
-        base1_nx, base1_ny, color.0, color.1, color.2,
-        base2_nx, base2_ny, color.0, color.1, color.2,
+    // Render glow layers (from largest/faintest to smallest/brightest)
+    let glow_layers = [
+        (3.0, 0.15), // Outermost glow: 2.5x size, 15% opacity
+        (2.0, 0.25), // Middle glow: 2.0x size, 25% opacity  
+        (1.5, 0.40), // Inner glow: 1.5x size, 40% opacity
+        (0.75, 1.00), // Core needle: 15% narrower, full opacity
     ];
     
-    let mut vbo = 0;
-    gl::GenBuffers(1, &mut vbo);
-    gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
-    gl::BufferData(gl::ARRAY_BUFFER, (vertices.len() * 4) as isize, vertices.as_ptr() as *const _, gl::STATIC_DRAW);
+    for (size_multiplier, opacity) in glow_layers.iter() {
+        let base_width = base_needle_width * size_multiplier;
+        let tip_width = tip_needle_width * size_multiplier;
+        
+        // Base vertices (perpendicular to needle direction)
+        let base_perp_cos = (-sin_a) * base_width * 0.5;
+        let base_perp_sin = cos_a * base_width * 0.5;
+        
+        let base1_x = center_x + base_perp_cos;
+        let base1_y = center_y + base_perp_sin;
+        let base2_x = center_x - base_perp_cos;
+        let base2_y = center_y - base_perp_sin;
+        
+        // Tip vertices (perpendicular to needle direction at tip)
+        let tip_perp_cos = (-sin_a) * tip_width * 0.5;
+        let tip_perp_sin = cos_a * tip_width * 0.5;
+        
+        let tip1_x = tip_x + tip_perp_cos;
+        let tip1_y = tip_y + tip_perp_sin;
+        let tip2_x = tip_x - tip_perp_cos;
+        let tip2_y = tip_y - tip_perp_sin;
+        
+        // Convert to normalized coordinates
+        let base1_nx = base1_x / screen_w * 2.0 - 1.0;
+        let base1_ny = 1.0 - base1_y / screen_h * 2.0;
+        let base2_nx = base2_x / screen_w * 2.0 - 1.0;
+        let base2_ny = 1.0 - base2_y / screen_h * 2.0;
+        let tip1_nx = tip1_x / screen_w * 2.0 - 1.0;
+        let tip1_ny = 1.0 - tip1_y / screen_h * 2.0;
+        let tip2_nx = tip2_x / screen_w * 2.0 - 1.0;
+        let tip2_ny = 1.0 - tip2_y / screen_h * 2.0;
+        
+        // Apply progressive color brightness and temperature to match automotive red glow
+        let glow_color = match *size_multiplier {
+            s if s >= 2.5 => {
+                // Outermost: deep red glow
+                let brightness = 0.5;
+                (
+                    (color.0 * brightness * 1.0).min(1.0) * opacity,
+                    (color.1 * brightness * 0.3).min(1.0) * opacity,
+                    (color.2 * brightness * 0.1).min(1.0) * opacity,
+                )
+            },
+            s if s >= 2.0 => {
+                // Middle: bright red-orange
+                let brightness = 0.7;
+                (
+                    (color.0 * brightness * 1.0).min(1.0) * opacity,
+                    (color.1 * brightness * 0.5).min(1.0) * opacity,
+                    (color.2 * brightness * 0.2).min(1.0) * opacity,
+                )
+            },
+            s if s >= 1.5 => {
+                // Inner: intense red-white
+                let brightness = 1.0;
+                (
+                    (color.0 * brightness * 1.0).min(1.0) * opacity,
+                    (color.1 * brightness * 0.8).min(1.0) * opacity,
+                    (color.2 * brightness * 0.4).min(1.0) * opacity,
+                )
+            },
+            _ => {
+                // Core: brilliant white-hot center - override base color for true white
+                (
+                    1.0 * opacity,  // Pure white core
+                    1.0 * opacity,
+                    1.0 * opacity,
+                )
+            }
+        };
+        
+        let vertices = [
+            // First triangle: base1 -> base2 -> tip1
+            base1_nx, base1_ny, glow_color.0, glow_color.1, glow_color.2,
+            base2_nx, base2_ny, glow_color.0, glow_color.1, glow_color.2,
+            tip1_nx, tip1_ny, glow_color.0, glow_color.1, glow_color.2,
+            // Second triangle: base2 -> tip2 -> tip1
+            base2_nx, base2_ny, glow_color.0, glow_color.1, glow_color.2,
+            tip2_nx, tip2_ny, glow_color.0, glow_color.1, glow_color.2,
+            tip1_nx, tip1_ny, glow_color.0, glow_color.1, glow_color.2,
+        ];
+        
+        let mut vbo = 0;
+        gl::GenBuffers(1, &mut vbo);
+        gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+        gl::BufferData(gl::ARRAY_BUFFER, (vertices.len() * 4) as isize, vertices.as_ptr() as *const _, gl::STATIC_DRAW);
+        
+        let pos_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr());
+        let color_attr = gl::GetAttribLocation(shader_program, b"color\0".as_ptr());
+        
+        gl::EnableVertexAttribArray(pos_attr as u32);
+        gl::VertexAttribPointer(pos_attr as u32, 2, gl::FLOAT, gl::FALSE, 20, std::ptr::null());
+        gl::EnableVertexAttribArray(color_attr as u32);
+        gl::VertexAttribPointer(color_attr as u32, 3, gl::FLOAT, gl::FALSE, 20, (8) as *const _);
+        
+        // Enable additive blending for glow effect
+        if *size_multiplier > 1.0 {
+            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE); // Additive blending for glow
+        } else {
+            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA); // Normal blending for core
+        }
+        
+        gl::DrawArrays(gl::TRIANGLES, 0, 6);
+        
+        gl::DeleteBuffers(1, &vbo);
+    }
     
-    let pos_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr());
-    let color_attr = gl::GetAttribLocation(shader_program, b"color\0".as_ptr());
-    
-    gl::EnableVertexAttribArray(pos_attr as u32);
-    gl::VertexAttribPointer(pos_attr as u32, 2, gl::FLOAT, gl::FALSE, 20, std::ptr::null());
-    gl::EnableVertexAttribArray(color_attr as u32);
-    gl::VertexAttribPointer(color_attr as u32, 3, gl::FLOAT, gl::FALSE, 20, (8) as *const _);
-    
-    gl::DrawArrays(gl::TRIANGLES, 0, 3);
-    
-    gl::DeleteBuffers(1, &vbo);
+    // Restore normal blending mode
+    gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
 }
 
 // Helper function to render center circle
