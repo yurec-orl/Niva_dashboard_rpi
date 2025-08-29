@@ -19,12 +19,6 @@ pub fn run_basic_geometry_test(context: &mut GraphicsContext) -> Result<(), Stri
     println!("Rendering: Triangle, Rectangle, Hexagon, and Circle");
     
     unsafe {
-        // Load OpenGL function pointers
-        gl::load_with(|name| {
-            let c_str = std::ffi::CString::new(name).unwrap();
-            context.get_proc_address(c_str.as_ptr()) as *const _
-        });
-        
         // Set viewport
         gl::Viewport(0, 0, context.width, context.height);
         
@@ -710,12 +704,6 @@ pub fn run_opengl_text_rendering_test(context: &mut GraphicsContext) -> Result<(
     println!("Rendering high-quality text directly in OpenGL context");
     
     unsafe {
-        // Load OpenGL function pointers
-        gl::load_with(|name| {
-            let c_str = std::ffi::CString::new(name).unwrap();
-            context.get_proc_address(c_str.as_ptr()) as *const _
-        });
-        
         gl::Viewport(0, 0, context.width, context.height);
         
         // Enable blending for text transparency
@@ -804,4 +792,703 @@ pub fn run_opengl_text_rendering_test(context: &mut GraphicsContext) -> Result<(
     }
     
     Ok(())
+}
+
+/// Gauge data structure for dashboard performance test
+#[derive(Clone)]
+struct Gauge {
+    name: String,
+    x: f32,
+    y: f32,
+    radius: f32,
+    min_value: f32,
+    max_value: f32,
+    current_value: f32,
+    unit: String,
+    color: (f32, f32, f32),
+    animation_speed: f32,
+    target_value: f32,
+}
+
+/// Complex dashboard performance test with 9 animated gauges
+pub fn run_dashboard_performance_test(context: &mut GraphicsContext) -> Result<(), String> {
+    println!("=== Dashboard Performance Test ===");
+    println!("9 animated gauges with scale marks and numeric labels");
+    
+    unsafe {
+        // Set viewport
+        gl::Viewport(0, 0, context.width, context.height);
+        
+        // Enable blending for smooth text rendering
+        gl::Enable(gl::BLEND);
+        gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+    }
+    
+    // Initialize text renderer
+    let mut text_renderer = unsafe {
+        OpenGLTextRenderer::new(
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            16
+        )?
+    };
+    
+    // Create 9 different gauges arranged in a 3x3 grid
+    let mut gauges = vec![
+        // Top row
+        Gauge {
+            name: "Engine RPM".to_string(),
+            x: 130.0, y: 120.0, radius: 80.0,
+            min_value: 0.0, max_value: 8000.0, current_value: 1500.0,
+            unit: "RPM".to_string(),
+            color: (1.0, 0.2, 0.2), // Red
+            animation_speed: 150.0, target_value: 4500.0,
+        },
+        Gauge {
+            name: "Speed".to_string(),
+            x: 400.0, y: 120.0, radius: 80.0,
+            min_value: 0.0, max_value: 200.0, current_value: 45.0,
+            unit: "km/h".to_string(),
+            color: (0.2, 0.8, 0.2), // Green
+            animation_speed: 25.0, target_value: 120.0,
+        },
+        Gauge {
+            name: "Fuel".to_string(),
+            x: 670.0, y: 120.0, radius: 80.0,
+            min_value: 0.0, max_value: 100.0, current_value: 85.0,
+            unit: "%".to_string(),
+            color: (0.2, 0.5, 1.0), // Blue
+            animation_speed: 8.0, target_value: 15.0,
+        },
+        // Middle row
+        Gauge {
+            name: "Oil Temp".to_string(),
+            x: 130.0, y: 280.0, radius: 80.0,
+            min_value: 60.0, max_value: 120.0, current_value: 85.0,
+            unit: "°C".to_string(),
+            color: (1.0, 0.6, 0.0), // Orange
+            animation_speed: 12.0, target_value: 95.0,
+        },
+        Gauge {
+            name: "Boost".to_string(),
+            x: 400.0, y: 280.0, radius: 80.0,
+            min_value: -1.0, max_value: 2.0, current_value: 0.2,
+            unit: "bar".to_string(),
+            color: (0.8, 0.2, 0.8), // Purple
+            animation_speed: 0.4, target_value: 1.5,
+        },
+        Gauge {
+            name: "Voltage".to_string(),
+            x: 670.0, y: 280.0, radius: 80.0,
+            min_value: 11.0, max_value: 15.0, current_value: 12.6,
+            unit: "V".to_string(),
+            color: (0.0, 0.8, 0.8), // Cyan
+            animation_speed: 0.15, target_value: 14.2,
+        },
+        // Bottom row
+        Gauge {
+            name: "Coolant".to_string(),
+            x: 130.0, y: 440.0, radius: 80.0,
+            min_value: 70.0, max_value: 110.0, current_value: 88.0,
+            unit: "°C".to_string(),
+            color: (0.2, 0.9, 0.9), // Light Blue
+            animation_speed: 8.0, target_value: 102.0,
+        },
+        Gauge {
+            name: "Oil Press".to_string(),
+            x: 400.0, y: 440.0, radius: 80.0,
+            min_value: 0.0, max_value: 8.0, current_value: 3.2,
+            unit: "bar".to_string(),
+            color: (0.9, 0.9, 0.2), // Yellow
+            animation_speed: 0.8, target_value: 6.5,
+        },
+        Gauge {
+            name: "AFR".to_string(),
+            x: 670.0, y: 440.0, radius: 80.0,
+            min_value: 10.0, max_value: 18.0, current_value: 14.7,
+            unit: ":1".to_string(),
+            color: (0.9, 0.4, 0.6), // Pink
+            animation_speed: 1.2, target_value: 12.8,
+        },
+    ];
+    
+    let mut frame_count = 0;
+    let start_time = std::time::Instant::now();
+    
+    unsafe {
+        println!("Starting dashboard performance test...");
+        
+        loop {
+            frame_count += 1;
+            let elapsed = start_time.elapsed().as_secs_f32();
+            
+            // Exit after 30 seconds or on any input
+            if elapsed > 30.0 {
+                break;
+            }
+            
+            // Clear screen with dark background
+            gl::ClearColor(0.05, 0.05, 0.15, 1.0);
+            gl::Clear(gl::COLOR_BUFFER_BIT);
+            
+            // Update and render each gauge
+            for gauge in &mut gauges {
+                // Animate gauge values
+                let direction = if gauge.current_value < gauge.target_value { 1.0 } else { -1.0 };
+                gauge.current_value += direction * gauge.animation_speed * 0.016; // 16ms frame time
+                
+                // Clamp to min/max
+                gauge.current_value = gauge.current_value.clamp(gauge.min_value, gauge.max_value);
+                
+                // Reverse direction when target is reached
+                if (gauge.current_value - gauge.target_value).abs() < gauge.animation_speed * 0.032 {
+                    gauge.target_value = if gauge.target_value > (gauge.min_value + gauge.max_value) / 2.0 {
+                        gauge.min_value + (gauge.max_value - gauge.min_value) * 0.1
+                    } else {
+                        gauge.min_value + (gauge.max_value - gauge.min_value) * 0.9
+                    };
+                }
+                
+                // Render gauge using simple text rendering for now
+                render_gauge_simple(&mut text_renderer, gauge, context.width as f32, context.height as f32)?;
+            }
+            
+            // Render performance info
+            let fps = frame_count as f32 / elapsed;
+            let perf_text = format!("Dashboard Test - Frame: {} - FPS: {:.1}", frame_count, fps);
+            text_renderer.render_text(&perf_text, 10.0, 30.0, 0.7, (0.9, 0.9, 0.9), context.width as f32, context.height as f32)?;
+            
+            // Update display
+            context.swap_buffers();
+            
+            // Print progress every 60 frames
+            if frame_count % 60 == 0 {
+                println!("Frame {} - FPS: {:.1} - {} gauges rendering", frame_count, fps, gauges.len());
+            }
+            
+            // 60fps timing
+            std::thread::sleep(std::time::Duration::from_millis(16));
+        }
+        
+        let final_fps = frame_count as f32 / start_time.elapsed().as_secs_f32();
+        println!("Dashboard performance test completed!");
+        println!("Final statistics:");
+        println!("  Frames rendered: {}", frame_count);
+        println!("  Average FPS: {:.1}", final_fps);
+        println!("  Gauges: {}", gauges.len());
+        println!("  Performance: {} gauge renders/second", (gauges.len() as f32 * final_fps) as i32);
+    }
+    
+    Ok(())
+}
+
+/// Simplified gauge rendering using text only for performance testing
+unsafe fn render_gauge_simple(
+    text_renderer: &mut OpenGLTextRenderer,
+    gauge: &Gauge,
+    width: f32,
+    height: f32
+) -> Result<(), String> {
+    // Render gauge name
+    text_renderer.render_text(&gauge.name, gauge.x - 40.0, gauge.y - 30.0, 0.8, (0.9, 0.9, 0.9), width, height)?;
+    
+    // Render current value with large text
+    let value_text = format!("{:.1}", gauge.current_value);
+    text_renderer.render_text(&value_text, gauge.x - 25.0, gauge.y - 5.0, 1.2, gauge.color, width, height)?;
+    
+    // Render unit
+    text_renderer.render_text(&gauge.unit, gauge.x - 15.0, gauge.y + 25.0, 0.6, (0.7, 0.7, 0.7), width, height)?;
+    
+    // Render min/max range
+    let range_text = format!("{:.0}-{:.0}", gauge.min_value, gauge.max_value);
+    text_renderer.render_text(&range_text, gauge.x - 30.0, gauge.y + 45.0, 0.4, (0.5, 0.5, 0.5), width, height)?;
+    
+    // Create a simple progress bar using text characters
+    let progress = (gauge.current_value - gauge.min_value) / (gauge.max_value - gauge.min_value);
+    let bar_length = 20;
+    let filled_chars = (progress * bar_length as f32) as usize;
+    
+    let mut bar = String::new();
+    for i in 0..bar_length {
+        if i < filled_chars {
+            bar.push('█');
+        } else {
+            bar.push('░');
+        }
+    }
+    
+    text_renderer.render_text(&bar, gauge.x - 60.0, gauge.y + 65.0, 0.5, gauge.color, width, height)?;
+    
+    Ok(())
+}
+
+/// Render a circle outline using triangles (since we're in OpenGL ES 2.0)
+unsafe fn render_circle_outline(x: f32, y: f32, radius: f32, width: f32, color: (f32, f32, f32), screen_w: f32, screen_h: f32) {
+    // For now, use a simplified line-based approach with existing triangle renderer
+    let segments = 32;
+    let pi = std::f32::consts::PI;
+    
+    for i in 0..segments {
+        let angle1 = 2.0 * pi * i as f32 / segments as f32;
+        let angle2 = 2.0 * pi * (i + 1) as f32 / segments as f32;
+        
+        let x1 = x + radius * angle1.cos();
+        let y1 = y + radius * angle1.sin();
+        let x2 = x + radius * angle2.cos();
+        let y2 = y + radius * angle2.sin();
+        
+        render_line(x1, y1, x2, y2, width, color, screen_w, screen_h);
+    }
+}
+
+/// Render a filled circle using triangles
+unsafe fn render_circle_filled(x: f32, y: f32, radius: f32, color: (f32, f32, f32), screen_w: f32, screen_h: f32) {
+    let segments = 16;
+    let pi = std::f32::consts::PI;
+    
+    // Use our existing triangle renderer to create a circle
+    for i in 0..segments {
+        let angle1 = 2.0 * pi * i as f32 / segments as f32;
+        let angle2 = 2.0 * pi * (i + 1) as f32 / segments as f32;
+        
+        let x1 = x + radius * angle1.cos();
+        let y1 = y + radius * angle1.sin();
+        let x2 = x + radius * angle2.cos();
+        let y2 = y + radius * angle2.sin();
+        
+        // Create triangle from center to edge
+        render_triangle(x, y, x1, y1, x2, y2, color, screen_w, screen_h);
+    }
+}
+
+/// Render a line using a thin rectangle
+unsafe fn render_line(x1: f32, y1: f32, x2: f32, y2: f32, width: f32, color: (f32, f32, f32), screen_w: f32, screen_h: f32) {
+    // Calculate line direction and perpendicular
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    let length = (dx * dx + dy * dy).sqrt();
+    
+    if length < 0.001 {
+        return; // Avoid division by zero
+    }
+    
+    // Normalized perpendicular vector
+    let px = -dy / length * width * 0.5;
+    let py = dx / length * width * 0.5;
+    
+    // Create rectangle vertices
+    let v1x = x1 + px;
+    let v1y = y1 + py;
+    let v2x = x1 - px;
+    let v2y = y1 - py;
+    let v3x = x2 - px;
+    let v3y = y2 - py;
+    let v4x = x2 + px;
+    let v4y = y2 + py;
+    
+    // Render as two triangles
+    render_triangle(v1x, v1y, v2x, v2y, v3x, v3y, color, screen_w, screen_h);
+    render_triangle(v1x, v1y, v3x, v3y, v4x, v4y, color, screen_w, screen_h);
+}
+
+/// Render a single triangle using our basic geometry renderer
+unsafe fn render_triangle(x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32, color: (f32, f32, f32), screen_w: f32, screen_h: f32) {
+    // Convert to OpenGL coordinates
+    let vertices = [
+        (x1 / screen_w) * 2.0 - 1.0, 1.0 - (y1 / screen_h) * 2.0, // Vertex 1
+        (x2 / screen_w) * 2.0 - 1.0, 1.0 - (y2 / screen_h) * 2.0, // Vertex 2
+        (x3 / screen_w) * 2.0 - 1.0, 1.0 - (y3 / screen_h) * 2.0, // Vertex 3
+    ];
+    
+    // Use a simple colored triangle shader (we'll need to create this)
+    static mut TRIANGLE_SHADER: u32 = 0;
+    static mut TRIANGLE_VBO: u32 = 0;
+    static mut TRIANGLE_VAO: u32 = 0;
+    
+    // Initialize shader if needed
+    if TRIANGLE_SHADER == 0 {
+        TRIANGLE_SHADER = create_simple_color_shader();
+        
+        gl::GenVertexArrays(1, &mut TRIANGLE_VAO);
+        gl::GenBuffers(1, &mut TRIANGLE_VBO);
+        
+        gl::BindVertexArray(TRIANGLE_VAO);
+        gl::BindBuffer(gl::ARRAY_BUFFER, TRIANGLE_VBO);
+        
+        let pos_attrib = gl::GetAttribLocation(TRIANGLE_SHADER, b"position\0".as_ptr());
+        gl::EnableVertexAttribArray(pos_attrib as u32);
+        gl::VertexAttribPointer(pos_attrib as u32, 2, gl::FLOAT, 0, 0, std::ptr::null());
+    }
+    
+    // Use shader and upload triangle data
+    gl::UseProgram(TRIANGLE_SHADER);
+    gl::BindVertexArray(TRIANGLE_VAO);
+    gl::BindBuffer(gl::ARRAY_BUFFER, TRIANGLE_VBO);
+    
+    // Upload vertices
+    gl::BufferData(
+        gl::ARRAY_BUFFER,
+        (vertices.len() * std::mem::size_of::<f32>()) as isize,
+        vertices.as_ptr() as *const std::ffi::c_void,
+        gl::STATIC_DRAW,
+    );
+    
+    // Set color
+    let color_uniform = gl::GetUniformLocation(TRIANGLE_SHADER, b"color\0".as_ptr());
+    gl::Uniform3f(color_uniform, color.0, color.1, color.2);
+    
+    // Draw triangle
+    gl::DrawArrays(gl::TRIANGLES, 0, 3);
+}
+
+/// Create a simple color shader for basic shapes
+unsafe fn create_simple_color_shader() -> u32 {
+    let vertex_shader_source = b"
+attribute vec2 position;
+void main() {
+    gl_Position = vec4(position, 0.0, 1.0);
+}
+\0";
+
+    let fragment_shader_source = b"
+precision mediump float;
+uniform vec3 color;
+void main() {
+    gl_FragColor = vec4(color, 1.0);
+}
+\0";
+
+    // Create vertex shader
+    let vertex_shader = gl::CreateShader(gl::VERTEX_SHADER);
+    let vertex_src_ptr = vertex_shader_source.as_ptr();
+    gl::ShaderSource(vertex_shader, 1, &vertex_src_ptr, std::ptr::null());
+    gl::CompileShader(vertex_shader);
+
+    // Create fragment shader
+    let fragment_shader = gl::CreateShader(gl::FRAGMENT_SHADER);
+    let fragment_src_ptr = fragment_shader_source.as_ptr();
+    gl::ShaderSource(fragment_shader, 1, &fragment_src_ptr, std::ptr::null());
+    gl::CompileShader(fragment_shader);
+
+    // Create program
+    let program = gl::CreateProgram();
+    gl::AttachShader(program, vertex_shader);
+    gl::AttachShader(program, fragment_shader);
+    gl::LinkProgram(program);
+
+    // Clean up shaders
+    gl::DeleteShader(vertex_shader);
+    gl::DeleteShader(fragment_shader);
+
+    program
+}
+
+/// Run rotating needle gauge test with circular border, numbered marks, and triangular needle
+pub fn run_rotating_needle_gauge_test(context: &mut GraphicsContext) -> Result<(), String> {
+    println!("=== Rotating Needle Gauge Test ===");
+    println!("Circular gauge with numbered marks and animated triangular needle");
+    
+    unsafe {
+        // Load OpenGL function pointers
+        gl::load_with(|name| {
+            let c_str = std::ffi::CString::new(name).unwrap();
+            context.get_proc_address(c_str.as_ptr()) as *const _
+        });
+        
+        // Set viewport
+        gl::Viewport(0, 0, context.width, context.height);
+        
+        // Enable blending for smooth rendering
+        gl::Enable(gl::BLEND);
+        gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+    }
+    
+    // Initialize text renderer for numbers
+    let mut text_renderer = unsafe {
+        OpenGLTextRenderer::new(
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            20
+        )?
+    };
+    
+    // Gauge parameters
+    let center_x = 400.0;
+    let center_y = 240.0;
+    let outer_radius = 180.0;
+    let inner_radius = 150.0;
+    let needle_length = 140.0;
+    let min_value = 0.0;
+    let max_value = 100.0;
+    let start_angle = -225.0f32.to_radians(); // Start at bottom-left
+    let end_angle = 45.0f32.to_radians();     // End at bottom-right (270 degrees total)
+    
+    let mut current_value = 0.0;
+    let mut frame_count = 0;
+    let start_time = std::time::Instant::now();
+    
+    unsafe {
+        // Create shader program for shapes
+        let shader_program = create_simple_color_shader();
+        
+        println!("Starting rotating needle gauge animation...");
+        context.swap_buffers();
+        
+        loop {
+            let elapsed = start_time.elapsed().as_secs_f32();
+            
+            // Animate needle value (sine wave pattern)
+            current_value = 50.0 + 40.0 * (elapsed * 0.8).sin();
+            
+            // Clear screen
+            gl::ClearColor(0.05, 0.05, 0.1, 1.0);
+            gl::Clear(gl::COLOR_BUFFER_BIT);
+            
+            // Render gauge components
+            render_gauge_circle_border(center_x, center_y, outer_radius, inner_radius, (0.8, 0.8, 0.9), context.width as f32, context.height as f32, shader_program);
+            render_gauge_marks(center_x, center_y, inner_radius - 20.0, start_angle, end_angle, 11, (0.9, 0.9, 1.0), context.width as f32, context.height as f32, shader_program);
+            render_gauge_numbers(&mut text_renderer, center_x, center_y, inner_radius - 40.0, start_angle, end_angle, min_value, max_value, 11, (1.0, 1.0, 1.0), context.width as f32, context.height as f32)?;
+            render_triangular_needle(center_x, center_y, needle_length, start_angle, end_angle, min_value, max_value, current_value, (1.0, 0.3, 0.3), context.width as f32, context.height as f32, shader_program);
+            
+            // Render center circle
+            render_gauge_center_circle(center_x, center_y, 12.0, (0.4, 0.4, 0.5), context.width as f32, context.height as f32, shader_program);
+            
+            // Render current value text
+            let value_text = format!("{:.1}", current_value);
+            text_renderer.render_text(&value_text, center_x - 30.0, center_y + 60.0, 1.5, (1.0, 1.0, 0.3), context.width as f32, context.height as f32)?;
+            
+            context.swap_buffers();
+            frame_count += 1;
+            
+            // Print FPS every 60 frames
+            if frame_count % 60 == 0 {
+                let fps = frame_count as f32 / elapsed;
+                println!("Frame {} - FPS: {:.1} - Needle value: {:.1}", frame_count, fps, current_value);
+            }
+            
+            // Exit after 10 seconds
+            if elapsed > 10.0 {
+                break;
+            }
+            
+            std::thread::sleep(std::time::Duration::from_millis(16)); // ~60 FPS
+        }
+    }
+    
+    println!("Rotating needle gauge test completed!");
+    Ok(())
+}
+
+// Helper function to render circular border
+unsafe fn render_gauge_circle_border(center_x: f32, center_y: f32, outer_radius: f32, inner_radius: f32, color: (f32, f32, f32), screen_w: f32, screen_h: f32, shader_program: u32) {
+    gl::UseProgram(shader_program);
+    
+    let segments = 64;
+    let mut vertices = Vec::new();
+    
+    // Create ring geometry using triangle strip
+    for i in 0..=segments {
+        let angle = (i as f32 / segments as f32) * 2.0 * std::f32::consts::PI;
+        let cos_a = angle.cos();
+        let sin_a = angle.sin();
+        
+        // Outer vertex
+        let outer_x = (center_x + cos_a * outer_radius) / screen_w * 2.0 - 1.0;
+        let outer_y = 1.0 - (center_y + sin_a * outer_radius) / screen_h * 2.0;
+        vertices.extend_from_slice(&[outer_x, outer_y, color.0, color.1, color.2]);
+        
+        // Inner vertex
+        let inner_x = (center_x + cos_a * inner_radius) / screen_w * 2.0 - 1.0;
+        let inner_y = 1.0 - (center_y + sin_a * inner_radius) / screen_h * 2.0;
+        vertices.extend_from_slice(&[inner_x, inner_y, color.0, color.1, color.2]);
+    }
+    
+    let mut vbo = 0;
+    gl::GenBuffers(1, &mut vbo);
+    gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+    gl::BufferData(gl::ARRAY_BUFFER, (vertices.len() * 4) as isize, vertices.as_ptr() as *const _, gl::STATIC_DRAW);
+    
+    let pos_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr());
+    let color_attr = gl::GetAttribLocation(shader_program, b"color\0".as_ptr());
+    
+    gl::EnableVertexAttribArray(pos_attr as u32);
+    gl::VertexAttribPointer(pos_attr as u32, 2, gl::FLOAT, gl::FALSE, 20, std::ptr::null());
+    gl::EnableVertexAttribArray(color_attr as u32);
+    gl::VertexAttribPointer(color_attr as u32, 3, gl::FLOAT, gl::FALSE, 20, (8) as *const _);
+    
+    gl::DrawArrays(gl::TRIANGLE_STRIP, 0, vertices.len() as i32 / 5);
+    
+    gl::DeleteBuffers(1, &vbo);
+}
+
+// Helper function to render gauge marks
+unsafe fn render_gauge_marks(center_x: f32, center_y: f32, radius: f32, start_angle: f32, end_angle: f32, num_marks: i32, color: (f32, f32, f32), screen_w: f32, screen_h: f32, shader_program: u32) {
+    gl::UseProgram(shader_program);
+    
+    let angle_range = end_angle - start_angle;
+    let mark_length = 15.0;
+    
+    for i in 0..num_marks {
+        let t = i as f32 / (num_marks - 1) as f32;
+        let angle = start_angle + t * angle_range;
+        
+        let cos_a = angle.cos();
+        let sin_a = angle.sin();
+        
+        // Mark line from radius to radius + mark_length
+        let x1 = center_x + cos_a * radius;
+        let y1 = center_y + sin_a * radius;
+        let x2 = center_x + cos_a * (radius + mark_length);
+        let y2 = center_y + sin_a * (radius + mark_length);
+        
+        // Convert to normalized coordinates
+        let nx1 = x1 / screen_w * 2.0 - 1.0;
+        let ny1 = 1.0 - y1 / screen_h * 2.0;
+        let nx2 = x2 / screen_w * 2.0 - 1.0;
+        let ny2 = 1.0 - y2 / screen_h * 2.0;
+        
+        let vertices = [
+            nx1, ny1, color.0, color.1, color.2,
+            nx2, ny2, color.0, color.1, color.2,
+        ];
+        
+        let mut vbo = 0;
+        gl::GenBuffers(1, &mut vbo);
+        gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+        gl::BufferData(gl::ARRAY_BUFFER, (vertices.len() * 4) as isize, vertices.as_ptr() as *const _, gl::STATIC_DRAW);
+        
+        let pos_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr());
+        let color_attr = gl::GetAttribLocation(shader_program, b"color\0".as_ptr());
+        
+        gl::EnableVertexAttribArray(pos_attr as u32);
+        gl::VertexAttribPointer(pos_attr as u32, 2, gl::FLOAT, gl::FALSE, 20, std::ptr::null());
+        gl::EnableVertexAttribArray(color_attr as u32);
+        gl::VertexAttribPointer(color_attr as u32, 3, gl::FLOAT, gl::FALSE, 20, (8) as *const _);
+        
+        gl::LineWidth(3.0);
+        gl::DrawArrays(gl::LINES, 0, 2);
+        
+        gl::DeleteBuffers(1, &vbo);
+    }
+}
+
+// Helper function to render gauge numbers
+fn render_gauge_numbers(text_renderer: &mut OpenGLTextRenderer, center_x: f32, center_y: f32, radius: f32, start_angle: f32, end_angle: f32, min_value: f32, max_value: f32, num_marks: i32, color: (f32, f32, f32), screen_w: f32, screen_h: f32) -> Result<(), String> {
+    let angle_range = end_angle - start_angle;
+    let value_range = max_value - min_value;
+    
+    for i in 0..num_marks {
+        let t = i as f32 / (num_marks - 1) as f32;
+        let angle = start_angle + t * angle_range;
+        let value = min_value + t * value_range;
+        
+        let cos_a = angle.cos();
+        let sin_a = angle.sin();
+        
+        let text_x = center_x + cos_a * radius;
+        let text_y = center_y + sin_a * radius;
+        
+        let text = format!("{:.0}", value);
+        unsafe {
+            text_renderer.render_text(&text, text_x - 10.0, text_y - 10.0, 1.0, color, screen_w, screen_h)?;
+        }
+    }
+    
+    Ok(())
+}
+
+// Helper function to render triangular needle
+unsafe fn render_triangular_needle(center_x: f32, center_y: f32, length: f32, start_angle: f32, end_angle: f32, min_value: f32, max_value: f32, current_value: f32, color: (f32, f32, f32), screen_w: f32, screen_h: f32, shader_program: u32) {
+    gl::UseProgram(shader_program);
+    
+    // Calculate needle angle based on value
+    let value_ratio = (current_value - min_value) / (max_value - min_value);
+    let needle_angle = start_angle + value_ratio * (end_angle - start_angle);
+    
+    let cos_a = needle_angle.cos();
+    let sin_a = needle_angle.sin();
+    
+    // Needle triangle vertices (pointing outward)
+    let needle_width = 8.0;
+    let tip_x = center_x + cos_a * length;
+    let tip_y = center_y + sin_a * length;
+    
+    // Base vertices (perpendicular to needle direction)
+    let perp_cos = (-sin_a) * needle_width * 0.5;
+    let perp_sin = cos_a * needle_width * 0.5;
+    
+    let base1_x = center_x + perp_cos;
+    let base1_y = center_y + perp_sin;
+    let base2_x = center_x - perp_cos;
+    let base2_y = center_y - perp_sin;
+    
+    // Convert to normalized coordinates
+    let tip_nx = tip_x / screen_w * 2.0 - 1.0;
+    let tip_ny = 1.0 - tip_y / screen_h * 2.0;
+    let base1_nx = base1_x / screen_w * 2.0 - 1.0;
+    let base1_ny = 1.0 - base1_y / screen_h * 2.0;
+    let base2_nx = base2_x / screen_w * 2.0 - 1.0;
+    let base2_ny = 1.0 - base2_y / screen_h * 2.0;
+    
+    let vertices = [
+        tip_nx, tip_ny, color.0, color.1, color.2,
+        base1_nx, base1_ny, color.0, color.1, color.2,
+        base2_nx, base2_ny, color.0, color.1, color.2,
+    ];
+    
+    let mut vbo = 0;
+    gl::GenBuffers(1, &mut vbo);
+    gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+    gl::BufferData(gl::ARRAY_BUFFER, (vertices.len() * 4) as isize, vertices.as_ptr() as *const _, gl::STATIC_DRAW);
+    
+    let pos_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr());
+    let color_attr = gl::GetAttribLocation(shader_program, b"color\0".as_ptr());
+    
+    gl::EnableVertexAttribArray(pos_attr as u32);
+    gl::VertexAttribPointer(pos_attr as u32, 2, gl::FLOAT, gl::FALSE, 20, std::ptr::null());
+    gl::EnableVertexAttribArray(color_attr as u32);
+    gl::VertexAttribPointer(color_attr as u32, 3, gl::FLOAT, gl::FALSE, 20, (8) as *const _);
+    
+    gl::DrawArrays(gl::TRIANGLES, 0, 3);
+    
+    gl::DeleteBuffers(1, &vbo);
+}
+
+// Helper function to render center circle
+unsafe fn render_gauge_center_circle(center_x: f32, center_y: f32, radius: f32, color: (f32, f32, f32), screen_w: f32, screen_h: f32, shader_program: u32) {
+    gl::UseProgram(shader_program);
+    
+    let segments = 32;
+    let mut vertices = Vec::new();
+    
+    // Center vertex
+    let center_nx = center_x / screen_w * 2.0 - 1.0;
+    let center_ny = 1.0 - center_y / screen_h * 2.0;
+    vertices.extend_from_slice(&[center_nx, center_ny, color.0, color.1, color.2]);
+    
+    // Circle vertices
+    for i in 0..=segments {
+        let angle = (i as f32 / segments as f32) * 2.0 * std::f32::consts::PI;
+        let x = center_x + angle.cos() * radius;
+        let y = center_y + angle.sin() * radius;
+        
+        let nx = x / screen_w * 2.0 - 1.0;
+        let ny = 1.0 - y / screen_h * 2.0;
+        vertices.extend_from_slice(&[nx, ny, color.0, color.1, color.2]);
+    }
+    
+    let mut vbo = 0;
+    gl::GenBuffers(1, &mut vbo);
+    gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+    gl::BufferData(gl::ARRAY_BUFFER, (vertices.len() * 4) as isize, vertices.as_ptr() as *const _, gl::STATIC_DRAW);
+    
+    let pos_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr());
+    let color_attr = gl::GetAttribLocation(shader_program, b"color\0".as_ptr());
+    
+    gl::EnableVertexAttribArray(pos_attr as u32);
+    gl::VertexAttribPointer(pos_attr as u32, 2, gl::FLOAT, gl::FALSE, 20, std::ptr::null());
+    gl::EnableVertexAttribArray(color_attr as u32);
+    gl::VertexAttribPointer(color_attr as u32, 3, gl::FLOAT, gl::FALSE, 20, (8) as *const _);
+    
+    gl::DrawArrays(gl::TRIANGLE_FAN, 0, vertices.len() as i32 / 5);
+    
+    gl::DeleteBuffers(1, &vbo);
 }

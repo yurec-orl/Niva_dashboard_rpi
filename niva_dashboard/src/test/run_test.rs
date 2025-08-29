@@ -2,7 +2,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::graphics::context::GraphicsContext;
-use crate::graphics::opengl_test::{run_basic_geometry_test, run_opengl_text_rendering_test};
+use crate::graphics::opengl_test::{run_basic_geometry_test, run_opengl_text_rendering_test, run_dashboard_performance_test, run_rotating_needle_gauge_test};
 use crate::hardware::GpioInput;
 
 pub fn run_test(name: &str) {
@@ -15,6 +15,14 @@ pub fn run_test(name: &str) {
             println!("\n=== OpenGL Text Rendering Test ===");
             run_graphics_test("Niva Dashboard - Text Test", run_opengl_text_rendering_test);
         }
+        "dashboard" => {
+            println!("\n=== Dashboard Performance Test ===");
+            run_graphics_test("Niva Dashboard - Performance Test", run_dashboard_performance_test);
+        }
+        "needle" => {
+            println!("\n=== Rotating Needle Gauge Test ===");
+            run_graphics_test("Niva Dashboard - Needle Gauge Test", run_rotating_needle_gauge_test);
+        }
         "gpio" => {
             println!("\n=== GPIO Input Test ===");
             match test_single_gpio_input() {
@@ -24,7 +32,7 @@ pub fn run_test(name: &str) {
         }
         _ => {
             eprintln!("Unknown test: {}", name);
-            eprintln!("Valid options: basic, gltext, gpio");
+            eprintln!("Valid options: basic, gltext, dashboard, needle, gpio");
             eprintln!("Note: SDL2-based tests (sdl2, advanced, etc.) are disabled after KMS/DRM migration");
             std::process::exit(1);
         }

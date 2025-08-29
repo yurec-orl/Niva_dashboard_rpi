@@ -295,6 +295,12 @@ impl GraphicsContext {
             initialized: false,
             display_configured: false,
         };
+
+        // Load OpenGL function pointers
+        gl::load_with(|name| {
+            let c_str = std::ffi::CString::new(name).unwrap();
+            context.get_proc_address(c_str.as_ptr()) as *const _
+        });
         
         println!("Initializing KMS/DRM graphics context: {} ({}x{})", title, width, height);
         println!("Setting up direct display output...");
