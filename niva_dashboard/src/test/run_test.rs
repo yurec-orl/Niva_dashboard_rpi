@@ -24,7 +24,8 @@ pub fn run_test(name: &str) {
         }
         _ => {
             eprintln!("Unknown test: {}", name);
-            eprintln!("Valid options: basic, needle, gauges, text, sdl2, advanced, rotating, gpio, all");
+            eprintln!("Valid options: basic, gltext, gpio");
+            eprintln!("Note: SDL2-based tests (sdl2, advanced, etc.) are disabled after KMS/DRM migration");
             std::process::exit(1);
         }
     }
@@ -33,11 +34,11 @@ pub fn run_test(name: &str) {
 // Helper function to run graphics tests with shared context
 fn run_graphics_test<F>(title: &str, test_func: F) 
 where
-    F: FnOnce(&GraphicsContext) -> Result<(), String>,
+    F: FnOnce(&mut GraphicsContext) -> Result<(), String>,
 {
     match GraphicsContext::new_dashboard(title) {
-        Ok(context) => {
-            match test_func(&context) {
+        Ok(mut context) => {
+            match test_func(&mut context) {
                 Ok(()) => println!("Graphics test completed successfully!"),
                 Err(e) => eprintln!("Graphics test failed: {}", e),
             }

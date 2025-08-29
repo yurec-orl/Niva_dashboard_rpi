@@ -1,9 +1,20 @@
 use crate::graphics::context::GraphicsContext;
 use gl::types::*;
 use freetype_sys as ft;
+use std::collections::HashMap;
+
+#[derive(Clone)]
+struct CachedGlyph {
+    texture_id: u32,
+    width: f32,
+    height: f32,
+    bearing_x: f32,
+    bearing_y: f32,
+    advance: f32,
+}
 
 /// Run basic geometry rendering test with triangle, rectangle, hexagon, and circle
-pub fn run_basic_geometry_test(context: &GraphicsContext) -> Result<(), String> {
+pub fn run_basic_geometry_test(context: &mut GraphicsContext) -> Result<(), String> {
     println!("Starting Basic Geometry Test with gl crate...");
     println!("Rendering: Triangle, Rectangle, Hexagon, and Circle");
     
@@ -392,15 +403,18 @@ unsafe fn render_shape(
     gl::DisableVertexAttribArray(color_attr as u32);
 }
 
-// Text rendering system using FreeType
+// Text rendering system using FreeType with glyph caching
 struct OpenGLTextRenderer {
     ft_library: ft::FT_Library,
     ft_face: ft::FT_Face,
     shader_program: u32,
     vao: u32,
     vbo: u32,
-    texture: u32,
     font_size: u32,
+    glyph_cache: HashMap<char, CachedGlyph>,
+    projection_width: f32,
+    projection_height: f32,
+    projection_matrix: [f32; 16],
 }
 
 impl OpenGLTextRenderer {
@@ -436,11 +450,7 @@ impl OpenGLTextRenderer {
         gl::GenBuffers(1, &mut vao);
         gl::GenBuffers(1, &mut vbo);
         
-        // Create texture for glyph rendering
-        let mut texture = 0u32;
-        gl::GenTextures(1, &mut texture);
-        
-        println!("OpenGL text renderer initialized with FreeType");
+        println!("OpenGL text renderer initialized with FreeType + glyph caching");
         println!("Font: {}, Size: {}px", font_path, font_size);
         
         Ok(OpenGLTextRenderer {
@@ -449,8 +459,11 @@ impl OpenGLTextRenderer {
             shader_program,
             vao,
             vbo,
-            texture,
             font_size,
+            glyph_cache: HashMap::new(),
+            projection_width: 0.0,
+            projection_height: 0.0,
+            projection_matrix: [0.0; 16],
         })
     }
     
@@ -531,49 +544,56 @@ void main() {
     }
     
     unsafe fn render_text(&mut self, text: &str, x: f32, y: f32, scale: f32, color: (f32, f32, f32), width: f32, height: f32) -> Result<(), String> {
+        // Use cached program state
         gl::UseProgram(self.shader_program);
         
-        // Set text color
+        // Only update projection matrix if dimensions changed
+        if self.projection_width != width || self.projection_height != height {
+            self.projection_width = width;
+            self.projection_height = height;
+            
+            // Calculate projection matrix once
+            self.projection_matrix = [
+                2.0/width, 0.0,         0.0, 0.0,
+                0.0,       -2.0/height, 0.0, 0.0,  // Negative Y scaling to flip coordinate system
+                0.0,       0.0,         -1.0, 0.0,
+                -1.0,      1.0,         0.0, 1.0,  // Y translation adjusted for flipped coordinates
+            ];
+            
+            // Upload to GPU
+            let projection_uniform = gl::GetUniformLocation(self.shader_program, b"projection\0".as_ptr());
+            gl::UniformMatrix4fv(projection_uniform, 1, 0, self.projection_matrix.as_ptr());
+        }
+        
+        // Set text color (this changes per text string)
         let color_uniform = gl::GetUniformLocation(self.shader_program, b"text_color\0".as_ptr());
         gl::Uniform3f(color_uniform, color.0, color.1, color.2);
         
-        // Set up projection matrix (orthographic for 2D text) - use actual dimensions
-        // Standard screen coordinates: (0,0) at top-left, Y increases downward
-        let projection_uniform = gl::GetUniformLocation(self.shader_program, b"projection\0".as_ptr());
-        let projection_matrix: [f32; 16] = [
-            2.0/width, 0.0,         0.0, 0.0,
-            0.0,       -2.0/height, 0.0, 0.0,  // Negative Y scaling to flip coordinate system
-            0.0,       0.0,         -1.0, 0.0,
-            -1.0,      1.0,         0.0, 1.0,  // Y translation adjusted for flipped coordinates
-        ];
-        gl::UniformMatrix4fv(projection_uniform, 1, 0, projection_matrix.as_ptr());
-        
-        // Set up texture
-        gl::ActiveTexture(gl::TEXTURE0);
-        gl::BindTexture(gl::TEXTURE_2D, self.texture);
+        // Set up texture uniform (will be updated per character)
         let texture_uniform = gl::GetUniformLocation(self.shader_program, b"text_texture\0".as_ptr());
         gl::Uniform1i(texture_uniform, 0);
         
-        // Get vertex attribute location
+        // Set up vertex attributes (cached)
         let vertex_attr = gl::GetAttribLocation(self.shader_program, b"vertex\0".as_ptr());
-        
         gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
         gl::EnableVertexAttribArray(vertex_attr as u32);
         gl::VertexAttribPointer(vertex_attr as u32, 4, gl::FLOAT, 0, 0, std::ptr::null());
         
-        // Render each character
+        // Render each character using cached glyphs
         let mut cursor_x = x;
         for ch in text.chars() {
-            cursor_x += self.render_character(ch, cursor_x, y, scale)?;
+            cursor_x += self.render_cached_character(ch, cursor_x, y, scale)?;
         }
-        
-        gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-        gl::BindTexture(gl::TEXTURE_2D, 0);
         
         Ok(())
     }
     
-    unsafe fn render_character(&mut self, ch: char, x: f32, y: f32, scale: f32) -> Result<f32, String> {
+    unsafe fn get_or_cache_glyph(&mut self, ch: char) -> Result<CachedGlyph, String> {
+        // Check if glyph is already cached
+        if let Some(cached_glyph) = self.glyph_cache.get(&ch) {
+            return Ok(cached_glyph.clone());
+        }
+        
         // Load character glyph
         if ft::FT_Load_Char(self.ft_face, ch as u64, ft::FT_LOAD_RENDER as i32) != 0 {
             return Err(format!("Failed to load character: {}", ch));
@@ -582,8 +602,10 @@ void main() {
         // Get glyph slot
         let glyph = (*self.ft_face).glyph;
         
-        // Configure texture with proper alignment for FreeType bitmaps
-        gl::BindTexture(gl::TEXTURE_2D, self.texture);
+        // Create a dedicated texture for this glyph
+        let mut texture_id = 0u32;
+        gl::GenTextures(1, &mut texture_id);
+        gl::BindTexture(gl::TEXTURE_2D, texture_id);
         
         // Set pixel alignment to 1 byte to handle FreeType's bitmap format
         gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
@@ -608,16 +630,35 @@ void main() {
         gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
         gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
         
+        // Cache the glyph data
+        let cached_glyph = CachedGlyph {
+            texture_id,
+            width: (*glyph).bitmap.width as f32,
+            height: (*glyph).bitmap.rows as f32,
+            bearing_x: (*glyph).bitmap_left as f32,
+            bearing_y: (*glyph).bitmap_top as f32,
+            advance: ((*glyph).advance.x >> 6) as f32,
+        };
+        
+        self.glyph_cache.insert(ch, cached_glyph.clone());
+        Ok(cached_glyph)
+    }
+    
+    unsafe fn render_cached_character(&mut self, ch: char, x: f32, y: f32, scale: f32) -> Result<f32, String> {
+        // Get cached glyph (or create if not cached)
+        let glyph = self.get_or_cache_glyph(ch)?;
+        
+        // Bind the glyph's texture
+        gl::ActiveTexture(gl::TEXTURE0);
+        gl::BindTexture(gl::TEXTURE_2D, glyph.texture_id);
+        
         // Calculate quad vertices
-        let w = (*glyph).bitmap.width as f32 * scale;
-        let h = (*glyph).bitmap.rows as f32 * scale;
-        let xrel = x + (*glyph).bitmap_left as f32 * scale;
-        // For screen coordinates (Y=0 at top): position glyph relative to baseline
-        // y is the baseline position, bitmap_top is distance from baseline to top of glyph
-        let yrel = y - (*glyph).bitmap_top as f32 * scale;
+        let w = glyph.width * scale;
+        let h = glyph.height * scale;
+        let xrel = x + glyph.bearing_x * scale;
+        let yrel = y - glyph.bearing_y * scale;
         
         // Create quad vertices (x, y, tex_x, tex_y)
-        // Note: Texture coordinates are flipped in V (Y) to compensate for flipped projection matrix
         let vertices: [f32; 24] = [
             xrel,     yrel + h, 0.0, 1.0,  // Top-left corner, tex coords (0,1) - flipped V
             xrel,     yrel,     0.0, 0.0,  // Bottom-left corner, tex coords (0,0) - flipped V
@@ -640,7 +681,7 @@ void main() {
         gl::DrawArrays(gl::TRIANGLES, 0, 6);
         
         // Return advance for next character
-        Ok(((*glyph).advance.x >> 6) as f32 * scale)
+        Ok(glyph.advance * scale)
     }
 }
 
@@ -654,14 +695,17 @@ impl Drop for OpenGLTextRenderer {
                 ft::FT_Done_FreeType(self.ft_library);
             }
             
-            gl::DeleteTextures(1, &self.texture);
+            // Clean up cached glyph textures
+            for cached_glyph in self.glyph_cache.values() {
+                gl::DeleteTextures(1, &cached_glyph.texture_id);
+            }
             // Note: VAO/VBO cleanup would need proper OpenGL context
         }
     }
 }
 
 /// OpenGL text rendering test using FreeType
-pub fn run_opengl_text_rendering_test(context: &GraphicsContext) -> Result<(), String> {
+pub fn run_opengl_text_rendering_test(context: &mut GraphicsContext) -> Result<(), String> {
     println!("Starting OpenGL Text Rendering Test with FreeType...");
     println!("Rendering high-quality text directly in OpenGL context");
     
@@ -725,7 +769,7 @@ pub fn run_opengl_text_rendering_test(context: &GraphicsContext) -> Result<(), S
             gl::ClearColor(0.02, 0.02, 0.08, 1.0);
             gl::Clear(gl::COLOR_BUFFER_BIT);
             
-            // Render all dashboard text
+            // Render all dashboard text efficiently (glyph caching handles texture binding)
             for (text, x, y, scale, color) in &dashboard_texts {
                 text_renderer.render_text(text, *x, *y, *scale, *color, context.width as f32, context.height as f32)?;
             }
@@ -739,6 +783,11 @@ pub fn run_opengl_text_rendering_test(context: &GraphicsContext) -> Result<(), S
             // Add FPS counter
             let fps_text = format!("FPS: {:.1}", 1.0 / 0.016);
             text_renderer.render_text(&fps_text, 600.0, 50.0, 0.8, (0.8, 0.8, 0.8), context.width as f32, context.height as f32)?;
+            
+            // Clean up OpenGL state
+            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
+            gl::BindTexture(gl::TEXTURE_2D, 0);
+            gl::UseProgram(0);
             
             context.swap_buffers();
             frame_count += 1;

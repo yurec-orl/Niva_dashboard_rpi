@@ -5,6 +5,9 @@ edition = "2021"
 
 [dependencies]
 rppal = "0.22.1"
-sdl2 = { version = "0.35", features = ["ttf"] }
 freetype-sys = "0.13"
 gl = "0.14"
+libc = "0.2"
+gbm-rs = "0.2"
+drm = "0.11"
+image = "0.24"
