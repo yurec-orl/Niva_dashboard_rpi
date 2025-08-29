@@ -409,6 +409,11 @@ struct OpenGLTextRenderer {
     projection_width: f32,
     projection_height: f32,
     projection_matrix: [f32; 16],
+    // Cached uniform and attribute locations for performance
+    projection_uniform: i32,
+    color_uniform: i32,
+    texture_uniform: i32,
+    vertex_attr: i32,
 }
 
 impl OpenGLTextRenderer {
@@ -438,6 +443,12 @@ impl OpenGLTextRenderer {
         // Create text rendering shader
         let shader_program = Self::create_text_shader_program()?;
         
+        // Cache uniform and attribute locations for performance
+        let projection_uniform = gl::GetUniformLocation(shader_program, b"projection\0".as_ptr());
+        let color_uniform = gl::GetUniformLocation(shader_program, b"text_color\0".as_ptr());
+        let texture_uniform = gl::GetUniformLocation(shader_program, b"text_texture\0".as_ptr());
+        let vertex_attr = gl::GetAttribLocation(shader_program, b"vertex\0".as_ptr());
+        
         // Create VAO and VBO for text quads
         let mut vao = 0u32;
         let mut vbo = 0u32;
@@ -458,6 +469,10 @@ impl OpenGLTextRenderer {
             projection_width: 0.0,
             projection_height: 0.0,
             projection_matrix: [0.0; 16],
+            projection_uniform,
+            color_uniform,
+            texture_uniform,
+            vertex_attr,
         })
     }
     
@@ -554,24 +569,20 @@ void main() {
                 -1.0,      1.0,         0.0, 1.0,  // Y translation adjusted for flipped coordinates
             ];
             
-            // Upload to GPU
-            let projection_uniform = gl::GetUniformLocation(self.shader_program, b"projection\0".as_ptr());
-            gl::UniformMatrix4fv(projection_uniform, 1, 0, self.projection_matrix.as_ptr());
+            // Upload to GPU using cached uniform location
+            gl::UniformMatrix4fv(self.projection_uniform, 1, 0, self.projection_matrix.as_ptr());
         }
         
-        // Set text color (this changes per text string)
-        let color_uniform = gl::GetUniformLocation(self.shader_program, b"text_color\0".as_ptr());
-        gl::Uniform3f(color_uniform, color.0, color.1, color.2);
+        // Set text color using cached uniform location
+        gl::Uniform3f(self.color_uniform, color.0, color.1, color.2);
         
-        // Set up texture uniform (will be updated per character)
-        let texture_uniform = gl::GetUniformLocation(self.shader_program, b"text_texture\0".as_ptr());
-        gl::Uniform1i(texture_uniform, 0);
+        // Set up texture uniform using cached location
+        gl::Uniform1i(self.texture_uniform, 0);
         
-        // Set up vertex attributes (cached)
-        let vertex_attr = gl::GetAttribLocation(self.shader_program, b"vertex\0".as_ptr());
+        // Set up vertex attributes using cached location
         gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
-        gl::EnableVertexAttribArray(vertex_attr as u32);
-        gl::VertexAttribPointer(vertex_attr as u32, 4, gl::FLOAT, 0, 0, std::ptr::null());
+        gl::EnableVertexAttribArray(self.vertex_attr as u32);
+        gl::VertexAttribPointer(self.vertex_attr as u32, 4, gl::FLOAT, 0, 0, std::ptr::null());
         
         // Render each character using cached glyphs
         let mut cursor_x = x;
@@ -1006,17 +1017,18 @@ pub fn run_dashboard_performance_test(context: &mut GraphicsContext) -> Result<(
                 render_gauge_simple(&mut text_renderer, gauge, context.width as f32, context.height as f32)?;
             }
             
-            // Render performance info
+            // Render performance info with glyph cache stats
             let fps = frame_count as f32 / elapsed;
-            let perf_text = format!("Dashboard Test - Frame: {} - FPS: {:.1}", frame_count, fps);
+            let cache_size = text_renderer.glyph_cache.len();
+            let perf_text = format!("Frame: {} FPS: {:.1} Glyphs: {}", frame_count, fps, cache_size);
             text_renderer.render_text(&perf_text, 10.0, 30.0, 0.7, (0.9, 0.9, 0.9), context.width as f32, context.height as f32)?;
             
             // Update display
             context.swap_buffers();
             
-            // Print progress every 60 frames
+            // Print progress every 60 frames with detailed stats
             if frame_count % 60 == 0 {
-                println!("Frame {} - FPS: {:.1} - {} gauges rendering", frame_count, fps, gauges.len());
+                println!("Frame {} - FPS: {:.1} - Glyph cache size: {} - {} gauges", frame_count, fps, cache_size, gauges.len());
             }
             
             // 60fps timing
@@ -1035,42 +1047,39 @@ pub fn run_dashboard_performance_test(context: &mut GraphicsContext) -> Result<(
     Ok(())
 }
 
-/// Simplified gauge rendering using text only for performance testing
+/// Optimized gauge rendering with reduced text calls and pre-computed strings
 unsafe fn render_gauge_simple(
     text_renderer: &mut OpenGLTextRenderer,
     gauge: &Gauge,
     width: f32,
     height: f32
 ) -> Result<(), String> {
-    // Render gauge name
-    text_renderer.render_text(&gauge.name, gauge.x - 40.0, gauge.y - 30.0, 0.8, (0.9, 0.9, 0.9), width, height)?;
+    // Combine multiple text elements into fewer render calls for better performance
+    
+    // Render gauge name and unit in one call
+    let name_unit = format!("{} ({})", gauge.name, gauge.unit);
+    text_renderer.render_text(&name_unit, gauge.x - 40.0, gauge.y - 30.0, 0.7, (0.8, 0.8, 0.8), width, height)?;
     
     // Render current value with large text
     let value_text = format!("{:.1}", gauge.current_value);
     text_renderer.render_text(&value_text, gauge.x - 25.0, gauge.y - 5.0, 1.2, gauge.color, width, height)?;
     
-    // Render unit
-    text_renderer.render_text(&gauge.unit, gauge.x - 15.0, gauge.y + 25.0, 0.6, (0.7, 0.7, 0.7), width, height)?;
-    
-    // Render min/max range
+    // Render range info compactly
     let range_text = format!("{:.0}-{:.0}", gauge.min_value, gauge.max_value);
-    text_renderer.render_text(&range_text, gauge.x - 30.0, gauge.y + 45.0, 0.4, (0.5, 0.5, 0.5), width, height)?;
+    text_renderer.render_text(&range_text, gauge.x - 30.0, gauge.y + 30.0, 0.4, (0.5, 0.5, 0.5), width, height)?;
     
-    // Create a simple progress bar using text characters
-    let progress = (gauge.current_value - gauge.min_value) / (gauge.max_value - gauge.min_value);
-    let bar_length = 20;
+    // Simplified progress indicator using fewer characters for better performance
+    let progress = ((gauge.current_value - gauge.min_value) / (gauge.max_value - gauge.min_value)).clamp(0.0, 1.0);
+    let bar_length = 10; // Reduced from 20 for better performance
     let filled_chars = (progress * bar_length as f32) as usize;
     
-    let mut bar = String::new();
+    // Pre-allocate string with known capacity
+    let mut bar = String::with_capacity(bar_length);
     for i in 0..bar_length {
-        if i < filled_chars {
-            bar.push('█');
-        } else {
-            bar.push('░');
-        }
+        bar.push(if i < filled_chars { '█' } else { '░' });
     }
     
-    text_renderer.render_text(&bar, gauge.x - 60.0, gauge.y + 65.0, 0.5, gauge.color, width, height)?;
+    text_renderer.render_text(&bar, gauge.x - 35.0, gauge.y + 50.0, 0.6, gauge.color, width, height)?;
     
     Ok(())
 }
