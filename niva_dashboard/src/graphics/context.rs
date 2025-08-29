@@ -9,6 +9,7 @@ extern "C" {
     fn SDL_GL_CreateContext(window: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
     fn SDL_GL_SetAttribute(attr: i32, value: i32) -> i32;
     fn SDL_GL_SwapWindow(window: *mut std::ffi::c_void);
+    fn SDL_GL_GetProcAddress(proc: *const std::ffi::c_char) -> *mut std::ffi::c_void;
     fn SDL_PollEvent(event: *mut SDL_Event) -> i32;
     fn SDL_Quit();
     fn SDL_DestroyWindow(window: *mut std::ffi::c_void);
@@ -128,6 +129,11 @@ impl GraphicsContext {
     pub fn should_quit(&self) -> bool {
         let events = self.poll_events();
         events.iter().any(|event| event.type_ == SDL_QUIT)
+    }
+
+    /// Get OpenGL function pointer (needed for gl::load_with)
+    pub fn get_proc_address(&self, proc: *const std::ffi::c_char) -> *mut std::ffi::c_void {
+        unsafe { SDL_GL_GetProcAddress(proc) }
     }
 
 }

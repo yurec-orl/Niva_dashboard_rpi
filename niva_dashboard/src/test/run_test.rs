@@ -2,84 +2,24 @@ use std::thread;
 use std::time::Duration;
 
 use crate::graphics::context::GraphicsContext;
-use crate::graphics::opengl_test::{run_opengl_test, run_dashboard_gauges_test, run_moving_needle_test, run_text_rendering_test, run_opengl_rotating_needles_demo};
-use crate::graphics::sdl2_gauges::{run_sdl2_gauges_test, run_sdl2_advanced_needles_test};
-use crate::graphics::opengl_test::run_opengl_text_rendering_test;
+use crate::graphics::opengl_test::{run_basic_geometry_test, run_opengl_text_rendering_test};
 use crate::hardware::GpioInput;
 
 pub fn run_test(name: &str) {
     match name {
         "basic" => {
             println!("\n=== Basic OpenGL Triangle Test ===");
-            run_graphics_test("Niva Dashboard - Basic Test", run_opengl_test);
-        }
-        "needle" => {
-            println!("\n=== Simple Moving Needle Test ===");
-            run_graphics_test("Niva Dashboard - Needle Test", run_moving_needle_test);
-        }
-        "gauges" => {
-            println!("\n=== Multi-Gauge Dashboard Test ===");
-            run_graphics_test("Niva Dashboard - Gauges Test", run_dashboard_gauges_test);
-        }
-        "text" => {
-            println!("\n=== Text Rendering Test ===");
-            run_graphics_test("Niva Dashboard - Text Test", run_text_rendering_test);
-        }
-        "sdl2" => {
-            println!("\n=== SDL2 High-Level Gauge Rendering Test ===");
-            run_graphics_test("Niva Dashboard - SDL2 Gauges", run_sdl2_gauges_test);
-        }
-        "advanced" => {
-            println!("\n=== SDL2 Advanced Needle Rendering Methods ===");
-            run_graphics_test("Niva Dashboard - Advanced Needles", run_sdl2_advanced_needles_test);
-        }
-        "rotating" => {
-            println!("\n=== OpenGL Rotating Needles Demo with Antialiasing ===");
-            run_graphics_test("Niva Dashboard - Rotating Needles", run_opengl_rotating_needles_demo);
+            run_graphics_test("Niva Dashboard - Basic Test", run_basic_geometry_test);
         }
         "gltext" => {
             println!("\n=== OpenGL Text Rendering Test ===");
-            run_graphics_test("Niva Dashboard - OpenGL Text Test", run_opengl_text_rendering_test);
+            run_graphics_test("Niva Dashboard - Text Test", run_opengl_text_rendering_test);
         }
         "gpio" => {
-            println!("\n=== Single GPIO Input Example ===");
+            println!("\n=== GPIO Input Test ===");
             match test_single_gpio_input() {
-                Ok(_) => println!("Single GPIO test completed successfully"),
-                Err(e) => println!("Single GPIO test failed: {}", e),
-            }
-        }
-        "all" => {
-            // Run all tests in sequence
-            println!("\n=== Running All Tests ===");
-            
-            println!("\n=== Basic OpenGL Triangle Test ===");
-            run_graphics_test("Niva Dashboard - Basic Test", run_opengl_test);
-            
-            println!("\n=== Simple Moving Needle Test ===");
-            run_graphics_test("Niva Dashboard - Needle Test", run_moving_needle_test);
-            
-            println!("\n=== Multi-Gauge Dashboard Test ===");
-            run_graphics_test("Niva Dashboard - Gauges Test", run_dashboard_gauges_test);
-            
-            println!("\n=== Text Rendering Test ===");
-            run_graphics_test("Niva Dashboard - Text Test", run_text_rendering_test);
-            
-            println!("\n=== SDL2 High-Level Gauge Rendering Test ===");
-            run_graphics_test("Niva Dashboard - SDL2 Gauges", run_sdl2_gauges_test);
-            
-            println!("\n=== SDL2 Advanced Needle Rendering Methods ===");
-            run_graphics_test("Niva Dashboard - Advanced Needles", run_sdl2_advanced_needles_test);
-            
-            println!("\n=== OpenGL Rotating Needles Demo with Antialiasing ===");
-            run_graphics_test("Niva Dashboard - Rotating Needles", run_opengl_rotating_needles_demo);
-            
-            println!("\n=== OpenGL Text Rendering Test ===");
-            run_graphics_test("Niva Dashboard - OpenGL Text Test", run_opengl_text_rendering_test);
-            
-            println!("\n=== Single GPIO Input Example ===");
-            match test_single_gpio_input() {
-                Ok(_) => println!("Single GPIO test completed successfully"),
-                Err(e) => println!("Single GPIO test failed: {}", e),
+                Ok(()) => println!("GPIO test completed successfully!"),
+                Err(e) => eprintln!("GPIO test failed: {}", e),
             }
         }
         _ => {
