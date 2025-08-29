@@ -1,5 +1,4 @@
 use crate::graphics::context::GraphicsContext;
-use crate::graphics::opengl_test::OpenGLTextRenderer;
 use std::time::{Duration, Instant};
 
 #[derive(Debug)]
@@ -81,7 +80,6 @@ pub trait Page {
 pub struct PageManager {
     context: GraphicsContext,
     pages: Vec<Box<dyn Page>>,
-    text_renderer: Option<OpenGLTextRenderer>,
     fps_counter: FpsCounter,
     start_time: Instant,
     running: bool,
@@ -92,7 +90,6 @@ impl PageManager {
         PageManager { 
             context, 
             pages: Vec::new(),
-            text_renderer: None,
             fps_counter: FpsCounter::new(),
             start_time: Instant::now(),
             running: false,
@@ -109,10 +106,8 @@ impl PageManager {
             eprintln!("Warning: Failed to hide cursor: {}", e);
         }
         
-        // Initialize text renderer
-        unsafe {
-            self.text_renderer = Some(OpenGLTextRenderer::new("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)?);
-        }
+        // Initialize text renderer in the graphics context
+        self.context.initialize_text_renderer("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)?;
         
         println!("Dashboard initialized successfully!");
         self.running = true;
@@ -165,51 +160,40 @@ impl PageManager {
         
         println!("Event loop finished");
         
-        // Clean up text renderer before context cleanup
-        self.text_renderer.take();
-        
         Ok(())
     }
     
     fn render_status_line(&mut self) -> Result<(), String> {
-        if let Some(text_renderer) = &mut self.text_renderer {
-            let elapsed = self.start_time.elapsed();
-            let fps = self.fps_counter.get_fps();
-            let frame_count = self.fps_counter.get_frame_count();
-            
-            // Format status information
-            let status_text = format!(
-                "Time: {:.1}s | FPS: {:.1} | Frame: {} | Resolution: {}x{}",
-                elapsed.as_secs_f32(),
-                fps,
-                frame_count,
-                self.context.width,
-                self.context.height
-            );
-            
-            // Render status line at bottom of screen
-            let status_y = self.context.height as f32 - 25.0; // 25 pixels from bottom
-            let status_x = 10.0; // 10 pixels from left
-            
-            unsafe {
-                text_renderer.render_text(
-                    &status_text,
-                    status_x,
-                    status_y,
-                    1.0, // scale
-                    (0.7, 0.7, 0.7), // gray color
-                    self.context.width as f32,
-                    self.context.height as f32,
-                )?;
-            }
-        }
+        let elapsed = self.start_time.elapsed();
+        let fps = self.fps_counter.get_fps();
+        let frame_count = self.fps_counter.get_frame_count();
+        
+        // Format status information
+        let status_text = format!(
+            "Time: {:.1}s | FPS: {:.1} | Frame: {} | Resolution: {}x{}",
+            elapsed.as_secs_f32(),
+            fps,
+            frame_count,
+            self.context.width,
+            self.context.height
+        );
+        
+        // Render status line at bottom of screen
+        let status_y = self.context.height as f32 - 25.0; // 25 pixels from bottom
+        let status_x = 10.0; // 10 pixels from left
+        
+        self.context.render_text(
+            &status_text,
+            status_x,
+            status_y,
+            1.0, // scale
+            (0.7, 0.7, 0.7), // gray color
+        )?;
         
         Ok(())
     }
     
     pub fn stop(&mut self) {
         self.running = false;
-        // Clean up text renderer before context is dropped
-        self.text_renderer.take();
     }
 }
