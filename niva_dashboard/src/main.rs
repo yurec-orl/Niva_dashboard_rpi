@@ -1,8 +1,11 @@
 mod hardware;
 mod graphics;
+mod page_framework;
 mod test;
 
 use crate::test::run_test::run_test;
+use crate::graphics::context::GraphicsContext;
+use crate::page_framework::page_manager::PageManager;
 use std::env;
 
 fn main() {
@@ -15,7 +18,6 @@ fn main() {
     println!("3. Dashboard performance test (9 animated gauges)");
     println!("4. Rotating needle gauge test (circular gauge with numbers)");
     println!("5. GPIO input test");
-    println!("Note: SDL2-based tests are disabled after migration to KMS/DRM backend");
     println!("Usage: cargo run -- [test={{basic|gltext|dashboard|needle|gpio}}]");
 
     for arg in args {
@@ -24,6 +26,7 @@ fn main() {
             match parm[0] {
                 "test" => {
                     run_test(parm[1]);
+                    return;
                 }
                 _ => {
                     eprintln!("Unknown argument: {}", parm[0]);
@@ -32,4 +35,16 @@ fn main() {
         }
     }
 
+    let context = GraphicsContext::new_dashboard("Niva Dashboard").expect("Failed to create graphics context");
+    
+    // Hide mouse cursor for dashboard application
+    if let Err(e) = context.hide_cursor() {
+        eprintln!("Warning: Failed to hide cursor: {}", e);
+    } else {
+        println!("✓ Mouse cursor hidden for dashboard mode");
+    }
+
+    let mgr = PageManager::new(context);
+
+    println!("Dashboard initialized successfully!");
 }
