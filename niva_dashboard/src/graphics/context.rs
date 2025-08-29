@@ -921,6 +921,9 @@ impl Drop for GraphicsContext {
     fn drop(&mut self) {
         unsafe {
             if self.initialized {
+                // Clean up text renderer FIRST while OpenGL context is still valid
+                self.cleanup_text_renderer();
+                
                 // Restore previous CRTC configuration
                 if !self.previous_crtc.is_null() {
                     // This would restore the original display state
@@ -1027,6 +1030,14 @@ impl GraphicsContext {
             Ok(renderer.get_line_spacing(scale))
         } else {
             Err("Text renderer not initialized. Call initialize_text_renderer() first.".to_string())
+        }
+    }
+    
+    /// Cleanup text renderer before destroying OpenGL context
+    fn cleanup_text_renderer(&mut self) {
+        if self.text_renderer.is_some() {
+            println!("Cleaning up text renderer...");
+            self.text_renderer = None; // This will trigger Drop for OpenGLTextRenderer
         }
     }
 }
