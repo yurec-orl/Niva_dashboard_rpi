@@ -1144,16 +1144,19 @@ unsafe fn render_triangle(x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32, 
 unsafe fn create_simple_color_shader() -> u32 {
     let vertex_shader_source = b"
 attribute vec2 position;
+attribute vec3 color;
+varying vec3 v_color;
 void main() {
     gl_Position = vec4(position, 0.0, 1.0);
+    v_color = color;
 }
 \0";
 
     let fragment_shader_source = b"
 precision mediump float;
-uniform vec3 color;
+varying vec3 v_color;
 void main() {
-    gl_FragColor = vec4(color, 1.0);
+    gl_FragColor = vec4(v_color, 1.0);
 }
 \0";
 
@@ -1214,7 +1217,7 @@ pub fn run_rotating_needle_gauge_test(context: &mut GraphicsContext) -> Result<(
     let center_x = 400.0;
     let center_y = 240.0;
     let outer_radius = 180.0;
-    let inner_radius = 150.0;
+    let inner_radius = 170.0;
     let needle_length = 140.0;
     let min_value = 0.0;
     let max_value = 100.0;
