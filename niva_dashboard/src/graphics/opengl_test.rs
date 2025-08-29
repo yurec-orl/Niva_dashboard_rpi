@@ -677,6 +677,60 @@ void main() {
         // Return advance for next character
         Ok(glyph.advance * scale)
     }
+    
+    /// Calculate the total width of a text string with the current font and scale
+    unsafe fn calculate_text_width(&mut self, text: &str, scale: f32) -> Result<f32, String> {
+        let mut total_width = 0.0;
+        
+        for ch in text.chars() {
+            let glyph = self.get_or_cache_glyph(ch)?;
+            total_width += glyph.advance * scale;
+        }
+        
+        Ok(total_width)
+    }
+    
+    /// Calculate the maximum height of a text string with the current font and scale
+    unsafe fn calculate_text_height(&mut self, text: &str, scale: f32) -> Result<f32, String> {
+        let mut max_height = 0.0;
+        let mut max_descent = 0.0;
+        
+        for ch in text.chars() {
+            let glyph = self.get_or_cache_glyph(ch)?;
+            let char_height = glyph.bearing_y * scale;
+            let char_descent = (glyph.height - glyph.bearing_y) * scale;
+            
+            if char_height > max_height {
+                max_height = char_height;
+            }
+            if char_descent > max_descent {
+                max_descent = char_descent;
+            }
+        }
+        
+        Ok(max_height + max_descent)
+    }
+    
+    /// Calculate both width and height of a text string (convenience function)
+    unsafe fn calculate_text_dimensions(&mut self, text: &str, scale: f32) -> Result<(f32, f32), String> {
+        let width = self.calculate_text_width(text, scale)?;
+        let height = self.calculate_text_height(text, scale)?;
+        Ok((width, height))
+    }
+    
+    /// Get the line height for the current font (useful for multi-line text)
+    fn get_line_height(&self, scale: f32) -> f32 {
+        unsafe {
+            let face_ref = &*self.ft_face;
+            (face_ref.size as *const ft::FT_SizeRec).as_ref().unwrap().metrics.height as f32 / 64.0 * scale
+        }
+    }
+    
+    /// Get the baseline-to-baseline distance for the current font
+    fn get_line_spacing(&self, scale: f32) -> f32 {
+        // Use line height as default line spacing
+        self.get_line_height(scale)
+    }
 }
 
 impl Drop for OpenGLTextRenderer {
@@ -1218,7 +1272,7 @@ pub fn run_rotating_needle_gauge_test(context: &mut GraphicsContext) -> Result<(
     let center_y = 240.0;
     let outer_radius = 180.0;
     let inner_radius = 170.0;
-    let needle_length = 140.0;
+    let needle_length = 150.0;
     let min_value = 0.0;
     let max_value = 100.0;
     let start_angle = -225.0f32.to_radians(); // Start at bottom-left
@@ -1254,9 +1308,19 @@ pub fn run_rotating_needle_gauge_test(context: &mut GraphicsContext) -> Result<(
             // Render center circle
             render_gauge_center_circle(center_x, center_y, 12.0, (0.4, 0.4, 0.5), context.width as f32, context.height as f32, shader_program);
             
-            // Render current value text
+            // Render current value text (centered using text measurement)
             let value_text = format!("{:.1}", current_value);
-            text_renderer.render_text(&value_text, center_x - 30.0, center_y + 60.0, 1.5, (1.0, 1.0, 0.3), context.width as f32, context.height as f32)?;
+            let scale = 1.5;
+            let (text_width, text_height) = text_renderer.calculate_text_dimensions(&value_text, scale)?;
+            let text_x = center_x - text_width / 2.0;  // Center horizontally
+            let text_y = center_y + 60.0;  // Position below gauge
+            text_renderer.render_text(&value_text, text_x, text_y, scale, (1.0, 1.0, 0.3), context.width as f32, context.height as f32)?;
+            
+            // Print text dimensions on first frame for demonstration
+            if frame_count == 1 {
+                println!("Text '{}' dimensions: {:.1}x{:.1} pixels at scale {:.1}", value_text, text_width, text_height, scale);
+                println!("Line height: {:.1} pixels", text_renderer.get_line_height(scale));
+            }
             
             context.swap_buffers();
             frame_count += 1;
@@ -1385,13 +1449,15 @@ fn render_gauge_numbers(text_renderer: &mut OpenGLTextRenderer, center_x: f32, c
         
         let cos_a = angle.cos();
         let sin_a = angle.sin();
-        
-        let text_x = center_x + cos_a * radius;
-        let text_y = center_y + sin_a * radius;
-        
+
         let text = format!("{:.0}", value);
         unsafe {
-            text_renderer.render_text(&text, text_x - 10.0, text_y - 10.0, 1.0, color, screen_w, screen_h)?;
+            let (text_width, text_height) = text_renderer.calculate_text_dimensions(&text, 1.0)?;
+        
+            let text_x = center_x + cos_a * radius - text_width / 2.0;
+            let text_y = center_y + sin_a * radius + text_height / 2.0;
+
+            text_renderer.render_text(&text, text_x, text_y, 1.0, color, screen_w, screen_h)?;
         }
     }
     
