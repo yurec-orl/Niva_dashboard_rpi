@@ -1287,7 +1287,13 @@ void main() {
         let w = glyph.width * scale;
         let h = glyph.height * scale;
         let xrel = x + glyph.bearing_x * scale;
-        let yrel = y - glyph.bearing_y * scale;
+        
+        // Get font ascender to convert from top-of-line to baseline coordinates
+        let face_ref = &*self.ft_face;
+        let ascender = face_ref.size.as_ref().unwrap().metrics.ascender as f32 / 64.0 * scale;
+        
+        // Calculate y position: y is top of line, so add ascender to get baseline, then subtract bearing_y
+        let yrel = y + ascender - glyph.bearing_y * scale;
         
         // Create quad vertices (x, y, tex_x, tex_y)
         let vertices: [f32; 24] = [
