@@ -2,6 +2,9 @@
 
 ## General constraints
 When answering the question, ask before generating demos or examples first.
+Write meaningful, descriptive comments where appropriate. Avoid obvious comments which repeat the code, like:
+// Add new page
+self.add_new_page()
 
 ## Project Overview
 A software dashboard for automotive use, written in Rust and designed to run on Raspberry Pi 4. The system mimics a multi-functional display (MFD) commonly found in aircraft, featuring a central screen with one row of configurable buttons on the left and right sides.
@@ -88,6 +91,12 @@ niva_dashboard/
 - **Page Framework**: Completed page manager implementation with 60 FPS event loop, status line rendering, and FPS tracking
 - **Testing**: Verified clean shutdown sequence and bus error elimination through proper resource cleanup timing
 
+## Coding Session (August 30, 2025)
+- **Text Rendering Fix**: Modified OpenGL text rendering to treat y-coordinate as top of text line instead of baseline, using font ascender metrics for proper positioning
+- **Page Management Architecture**: Transitioned from copying page structures to using shared references with Rc<RefCell<dyn Page>> pattern for efficient memory management
+- **Button System Implementation**: 
+  - Created comprehensive button label rendering system with left/right alignment
+
 ## Target Use Cases
 - Engine monitoring (RPM, temperature, pressure)
 - Vehicle diagnostics and alerts
@@ -103,4 +112,4 @@ niva_dashboard/
 
 ---
 *Created: August 26, 2025*
-*Last Updated: August 29, 2025*
+*Last Updated: August 30, 2025*
