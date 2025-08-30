@@ -1,5 +1,6 @@
 use crate::graphics::context::GraphicsContext;
 use crate::page_framework::input::{InputHandler, ButtonState};
+use crate::page_framework::main_page::MainPage;
 use std::time::{Duration, Instant};
 
 struct PageButton<CB> {
@@ -28,6 +29,20 @@ pub struct PageBase {
     buttons: Vec<PageButton<Box<dyn FnMut()>>>,
 }
 
+impl PageBase {
+    pub fn new(id: u32, name: String) -> Self {
+        PageBase {
+            id,
+            name,
+            buttons: Vec::new(),
+        }
+    }
+
+    pub fn set_buttons(&mut self, buttons: Vec<PageButton<Box<dyn FnMut()>>>) {
+        self.buttons = buttons;
+    }
+}
+
 pub trait Page {
     fn render(&self, context: &mut GraphicsContext) -> Result<(), String>;
     fn on_enter(&mut self) -> Result<(), String>;
@@ -37,6 +52,7 @@ pub trait Page {
 
 pub struct PageManager {
     context: GraphicsContext,
+    pg_id: u32,
     pages: Vec<Box<dyn Page>>,
     input_handler: InputHandler,
     fps_counter: FpsCounter,
@@ -46,16 +62,28 @@ pub struct PageManager {
 
 impl PageManager {
     pub fn new(context: GraphicsContext) -> Self {
-        //let mut main_page = MainPage::new();
-
         PageManager {
             context,
+            pg_id: 0,
             pages: Vec::new(),
             input_handler: InputHandler::new(),
             fps_counter: FpsCounter::new(),
             start_time: Instant::now(),
             running: false,
         }
+    }
+
+    pub fn setup(&mut self) -> Result<(), String> {
+        let mut main_page = MainPage::new(self.get_page_id(), "Main".into());
+        self.add_page(Box::new(main_page));
+
+        Ok(())
+    }
+
+    fn get_page_id(&mut self) -> u32 {
+        let id = self.pg_id;
+        self.pg_id += 1;
+        id
     }
 
     pub fn add_page(&mut self, page: Box<dyn Page>) {

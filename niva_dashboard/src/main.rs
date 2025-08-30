@@ -45,6 +45,9 @@ fn main() {
     }
 
     let mut mgr = PageManager::new(context);
+
+    mgr.setup().expect("Failed to setup page manager");
+
     match mgr.start() {
         Ok(()) => print!("Dashboard finished successfully!\r\n"),
         Err(e) => eprintln!("Failed to start dashboard: {}", e),
