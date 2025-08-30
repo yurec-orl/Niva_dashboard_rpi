@@ -1,5 +1,5 @@
 use crate::graphics::context::GraphicsContext;
-use crate::page_framework::page_manager::{PageManager, Page, PageBase};
+use crate::page_framework::page_manager::{Page, PageBase, PageButton};
 
 pub struct MainPage {
     base: PageBase,
@@ -27,7 +27,11 @@ impl Page for MainPage {
         Ok(())
     }
 
-    fn on_button(&mut self, button: char) -> Result<(), String> {
+    fn on_button(&mut self, _button: char) -> Result<(), String> {
         Ok(())
+    }
+
+    fn buttons(&self) -> &Vec<PageButton<Box<dyn FnMut()>>> {
+        self.base.buttons()
     }
 }

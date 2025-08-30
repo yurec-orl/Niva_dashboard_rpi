@@ -1,12 +1,29 @@
 use crate::graphics::context::GraphicsContext;
 use crate::page_framework::input::{InputHandler, ButtonState};
 use crate::page_framework::main_page::MainPage;
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
+use std::rc::Rc;
+use std::cell::RefCell;
 
-struct PageButton<CB> {
-    id: u32,
+// ButtonPosition correspond to physical 2x4 buttons layout.
+#[derive(Debug, PartialEq, Eq, Hash)]
+enum ButtonPosition {
+    Left1,
+    Left2,
+    Left3,
+    Left4,
+    Right1,
+    Right2,
+    Right3,
+    Right4,
+}
+
+// PageButton represents UI button element on MFI page.
+// It does not handle actual input.
+pub struct PageButton<CB> {
+    pos: ButtonPosition,
     label: String,
-    button: char,
     callback: CB,
 }
 
@@ -14,12 +31,16 @@ impl<CB> PageButton<CB>
 where
     CB: FnMut(),
 {
-    pub fn new(id: u32, label: String, button: char, callback: CB) -> Self {
-        PageButton { id, label, button, callback }
+    pub fn new(pos: ButtonPosition, label: String, callback: CB) -> Self {
+        PageButton { pos, label, callback }
     }
 
     pub fn trigger(&mut self) {
         (self.callback)();
+    }
+
+    pub fn position(&self) -> &ButtonPosition {
+        &self.pos
     }
 }
 
@@ -41,6 +62,10 @@ impl PageBase {
     pub fn set_buttons(&mut self, buttons: Vec<PageButton<Box<dyn FnMut()>>>) {
         self.buttons = buttons;
     }
+
+    pub fn buttons(&self) -> &Vec<PageButton<Box<dyn FnMut()>>> {
+        &self.buttons
+    }
 }
 
 pub trait Page {
@@ -48,12 +73,15 @@ pub trait Page {
     fn on_enter(&mut self) -> Result<(), String>;
     fn on_exit(&mut self) -> Result<(), String>;
     fn on_button(&mut self, button: char) -> Result<(), String>;
+    fn buttons(&self) -> &Vec<PageButton<Box<dyn FnMut()>>>;
 }
 
 pub struct PageManager {
     context: GraphicsContext,
     pg_id: u32,
-    pages: Vec<Box<dyn Page>>,
+    current_page: Option<Rc<RefCell<dyn Page>>>, // Shared reference to current page
+    pages: Vec<Rc<RefCell<dyn Page>>>, // Store shared references
+    button_keymap: HashMap<char, usize>,
     input_handler: InputHandler,
     fps_counter: FpsCounter,
     start_time: Instant,
@@ -65,7 +93,9 @@ impl PageManager {
         PageManager {
             context,
             pg_id: 0,
+            current_page: None,
             pages: Vec::new(),
+            button_keymap: HashMap::new(),
             input_handler: InputHandler::new(),
             fps_counter: FpsCounter::new(),
             start_time: Instant::now(),
@@ -74,8 +104,21 @@ impl PageManager {
     }
 
     pub fn setup(&mut self) -> Result<(), String> {
-        let mut main_page = MainPage::new(self.get_page_id(), "Main".into());
-        self.add_page(Box::new(main_page));
+        let main_page = MainPage::new(self.get_page_id(), "Main".into());
+        let _main_buttons = {
+            vec![
+                PageButton::new(ButtonPosition::Left1, "Button 1".into(), Box::new(|| {
+                    print!("Button 1 pressed\r\n");
+                }) as Box<dyn FnMut()>),
+                PageButton::new(ButtonPosition::Left4, "Button 2".into(), Box::new(|| {
+                    print!("Button 2 pressed\r\n");
+                }) as Box<dyn FnMut()>),
+            ]
+        };
+        
+        // Add the page and switch to it using shared reference
+        let main_page_ref = self.add_page(main_page);
+        self.switch_page(main_page_ref)?;
 
         Ok(())
     }
@@ -86,8 +129,27 @@ impl PageManager {
         id
     }
 
-    pub fn add_page(&mut self, page: Box<dyn Page>) {
-        self.pages.push(page);
+    pub fn add_page<T: Page + 'static>(&mut self, page: T) -> Rc<RefCell<dyn Page>> {
+        let shared_page = Rc::new(RefCell::new(page));
+        self.pages.push(shared_page.clone());
+        shared_page // Return the shared reference
+    }
+
+    /// Add a page from an already created Rc<RefCell<dyn Page>>
+    pub fn add_shared_page(&mut self, page: Rc<RefCell<dyn Page>>) -> Rc<RefCell<dyn Page>> {
+        self.pages.push(page.clone());
+        page
+    }
+
+    pub fn switch_page(&mut self, page: Rc<RefCell<dyn Page>>) -> Result<(), String> {
+        self.current_page = Some(page);
+        self.button_keymap = self.create_button_keymap();
+        Ok(())
+    }
+
+    /// Get the current page reference
+    pub fn current_page(&self) -> Option<Rc<RefCell<dyn Page>>> {
+        self.current_page.clone()
     }
 
     pub fn start(&mut self) -> Result<(), String> {
@@ -105,10 +167,38 @@ impl PageManager {
         self.event_loop()
     }
 
+    fn create_button_keymap(&self) -> HashMap<char, usize> {
+        let mut button_map = HashMap::new();
+
+        let mut key_position_map = HashMap::new();
+        key_position_map.insert(ButtonPosition::Left1, '1');
+        key_position_map.insert(ButtonPosition::Left2, '2');
+        key_position_map.insert(ButtonPosition::Left3, '3');
+        key_position_map.insert(ButtonPosition::Left4, '4');
+        key_position_map.insert(ButtonPosition::Right1, '5');
+        key_position_map.insert(ButtonPosition::Right2, '6');
+        key_position_map.insert(ButtonPosition::Right3, '7');
+        key_position_map.insert(ButtonPosition::Right4, '8');
+
+        if let Some(current_page) = &self.current_page {
+            let page_ref = current_page.borrow();
+            let buttons = page_ref.buttons();
+            for (index, button) in buttons.iter().enumerate() {
+                if let Some(key) = key_position_map.get(button.position()) {
+                    button_map.insert(*key, index);
+                }
+            }
+        }
+
+        button_map
+    }
+
     fn event_loop(&mut self) -> Result<(), String> {
         const TARGET_FPS: u64 = 60;
         const FRAME_DURATION: Duration = Duration::from_micros(1_000_000 / TARGET_FPS);
-        
+
+        let button_keymap = self.create_button_keymap();
+
         print!("Starting event loop (target: {} FPS)\r\n", TARGET_FPS);
         
         while self.running {
@@ -125,9 +215,10 @@ impl PageManager {
                 gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
             }
             
-            // Render all pages
-            for page in &self.pages {
-                page.render(&mut self.context);
+            // Render current page
+            if let Some(current_page) = &self.current_page {
+                let page_ref = current_page.borrow();
+                let _ = page_ref.render(&mut self.context);
             }
             
             // Render status line

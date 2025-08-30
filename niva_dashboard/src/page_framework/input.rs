@@ -1,6 +1,6 @@
 use std::time::Duration;
 use crossterm::terminal::{enable_raw_mode, disable_raw_mode};
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode};
 
 // Page manager input is very simple: user can press one of the physical buttons
 // on the MFI, which selects a new page or delegated to the page-specific input handler.
