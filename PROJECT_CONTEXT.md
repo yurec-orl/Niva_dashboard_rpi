@@ -52,7 +52,7 @@ A software dashboard for automotive use, written in Rust and designed to run on 
 
 ### Technology Stack
 - **Language**: Rust
-- **Graphics**: Raspberry Pi OpenGL
+- **Graphics**: Raspberry Pi OpenGL/KMS/DRM, freetype library for text rendering
 - **Hardware Interface**: GPIO libraries
 - **Build System**: Cargo
 
@@ -80,6 +80,13 @@ niva_dashboard/
 3. Develop flexible visualization components for various data types
 4. Ensure smooth real-time performance on Raspberry Pi 4
 5. Design intuitive navigation similar to aircraft MFD systems
+6. Enhance text renderer to support multiple fonts
+
+## Recent Progress (August 29, 2025)
+- **Text Rendering Architecture**: Successfully migrated OpenGLTextRenderer from opengl_test.rs to context.rs, integrating it as a core GraphicsContext capability
+- **Resource Management**: Fixed critical bus error by implementing proper cleanup order - text renderer resources are now cleaned up before OpenGL context destruction
+- **Page Framework**: Completed page manager implementation with 60 FPS event loop, status line rendering, and FPS tracking
+- **Testing**: Verified clean shutdown sequence and bus error elimination through proper resource cleanup timing
 
 ## Target Use Cases
 - Engine monitoring (RPM, temperature, pressure)
@@ -96,4 +103,4 @@ niva_dashboard/
 
 ---
 *Created: August 26, 2025*
-*Last Updated: August 26, 2025*
+*Last Updated: August 29, 2025*
