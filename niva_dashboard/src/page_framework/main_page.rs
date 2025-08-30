@@ -1,5 +1,7 @@
 use crate::graphics::context::GraphicsContext;
 use crate::page_framework::page_manager::{Page, PageBase, PageButton};
+use std::rc::Rc;
+use std::cell::RefCell;
 
 pub struct MainPage {
     base: PageBase,
@@ -11,11 +13,15 @@ impl MainPage {
             base: PageBase::new(id, name),
         }
     }
+    
+    pub fn set_buttons(&mut self, buttons: Vec<Rc<RefCell<PageButton<Box<dyn FnMut()>>>>>) {
+        self.base.set_buttons(buttons);
+    }
 }
 
 impl Page for MainPage {
     fn render(&self, context: &mut GraphicsContext) -> Result<(), String> {
-        context.render_text("Main Page", 10.0, 10.0, 1.0, (1.0, 1.0, 1.0))?;
+        context.render_text("Main Page", 100.0, 100.0, 1.0, (1.0, 1.0, 1.0))?;
         Ok(())
     }
 
@@ -31,7 +37,7 @@ impl Page for MainPage {
         Ok(())
     }
 
-    fn buttons(&self) -> &Vec<PageButton<Box<dyn FnMut()>>> {
+    fn buttons(&self) -> &Vec<Rc<RefCell<PageButton<Box<dyn FnMut()>>>>> {
         self.base.buttons()
     }
 }

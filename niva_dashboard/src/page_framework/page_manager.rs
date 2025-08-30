@@ -6,8 +6,10 @@ use std::time::{Duration, Instant};
 use std::rc::Rc;
 use std::cell::RefCell;
 
+const STATUS_LINE_MARGIN: f32 = 25.0;
+
 // ButtonPosition correspond to physical 2x4 buttons layout.
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum ButtonPosition {
     Left1,
     Left2,
@@ -23,7 +25,7 @@ enum ButtonPosition {
 // It does not handle actual input.
 pub struct PageButton<CB> {
     pos: ButtonPosition,
-    label: String,
+    pub label: String,
     callback: CB,
 }
 
@@ -35,19 +37,22 @@ where
         PageButton { pos, label, callback }
     }
 
+    // Invokes button-specific callback.
     pub fn trigger(&mut self) {
         (self.callback)();
     }
 
+    // Used to match buttons with hardware input.
     pub fn position(&self) -> &ButtonPosition {
         &self.pos
     }
 }
 
+// Shared data for MFI pages.
 pub struct PageBase {
-    id: u32,
+    id: u32,            // Incremental id, depends on page creation order.
     name: String,
-    buttons: Vec<PageButton<Box<dyn FnMut()>>>,
+    buttons: Vec<Rc<RefCell<PageButton<Box<dyn FnMut()>>>>>,
 }
 
 impl PageBase {
@@ -59,32 +64,60 @@ impl PageBase {
         }
     }
 
-    pub fn set_buttons(&mut self, buttons: Vec<PageButton<Box<dyn FnMut()>>>) {
+    pub fn set_buttons(&mut self, mut buttons: Vec<Rc<RefCell<PageButton<Box<dyn FnMut()>>>>>) {
+        // Sort buttons by position to ensure correct order
+        buttons.sort_by_key(|button| {
+            let button_ref = button.borrow();
+            match button_ref.position() {
+                ButtonPosition::Left1 => 0,
+                ButtonPosition::Left2 => 1,
+                ButtonPosition::Left3 => 2,
+                ButtonPosition::Left4 => 3,
+                ButtonPosition::Right1 => 4,
+                ButtonPosition::Right2 => 5,
+                ButtonPosition::Right3 => 6,
+                ButtonPosition::Right4 => 7,
+            }
+        });
         self.buttons = buttons;
     }
 
-    pub fn buttons(&self) -> &Vec<PageButton<Box<dyn FnMut()>>> {
+    pub fn buttons(&self) -> &Vec<Rc<RefCell<PageButton<Box<dyn FnMut()>>>>> {
         &self.buttons
     }
 }
 
 pub trait Page {
+    // Render page-specific stuff (except button labels, which are PageManager responsibility).
     fn render(&self, context: &mut GraphicsContext) -> Result<(), String>;
+    // Trigger once on switching to this page.
     fn on_enter(&mut self) -> Result<(), String>;
+    // Trigger once on switching from this page.
     fn on_exit(&mut self) -> Result<(), String>;
+    // If PageManager does not handle button press, this will be called.
     fn on_button(&mut self, button: char) -> Result<(), String>;
-    fn buttons(&self) -> &Vec<PageButton<Box<dyn FnMut()>>>;
+
+    fn buttons(&self) -> &Vec<Rc<RefCell<PageButton<Box<dyn FnMut()>>>>>;
 }
 
+// PageManager is responsible for managing multiple pages and their transitions,
+// as well as rendering button labels.
 pub struct PageManager {
     context: GraphicsContext,
-    pg_id: u32,
+    pg_id: u32,             // Page incremental id, depends on page creation order.
     current_page: Option<Rc<RefCell<dyn Page>>>, // Shared reference to current page
-    pages: Vec<Rc<RefCell<dyn Page>>>, // Store shared references
-    button_keymap: HashMap<char, usize>,
+    pages: Vec<Rc<RefCell<dyn Page>>>,           // Store shared references
+
+    // Mapping between current page buttons and input.
+    button_keymap: HashMap<char, Rc<RefCell<PageButton<Box<dyn FnMut()>>>>>,
+
+    // Input handling from gpio buttons, external keyboard, etc.
     input_handler: InputHandler,
+
     fps_counter: FpsCounter,
     start_time: Instant,
+
+    // If set to false, main loop will exit.
     running: bool,
 }
 
@@ -103,20 +136,20 @@ impl PageManager {
         }
     }
 
+    // Set up pages and buttons.
     pub fn setup(&mut self) -> Result<(), String> {
-        let main_page = MainPage::new(self.get_page_id(), "Main".into());
-        let _main_buttons = {
-            vec![
-                PageButton::new(ButtonPosition::Left1, "Button 1".into(), Box::new(|| {
-                    print!("Button 1 pressed\r\n");
-                }) as Box<dyn FnMut()>),
-                PageButton::new(ButtonPosition::Left4, "Button 2".into(), Box::new(|| {
-                    print!("Button 2 pressed\r\n");
-                }) as Box<dyn FnMut()>),
-            ]
-        };
+        let mut main_page = MainPage::new(self.get_page_id(), "Main".into());
+        let main_buttons = vec![
+            Rc::new(RefCell::new(PageButton::new(ButtonPosition::Left1, "Button 1".into(), Box::new(|| {
+                print!("Button 1 pressed\r\n");
+            }) as Box<dyn FnMut()>))),
+            Rc::new(RefCell::new(PageButton::new(ButtonPosition::Left4, "Button 2".into(), Box::new(|| {
+                print!("Button 2 pressed\r\n");
+            }) as Box<dyn FnMut()>))),
+        ];
         
-        // Add the page and switch to it using shared reference
+        main_page.set_buttons(main_buttons);
+        
         let main_page_ref = self.add_page(main_page);
         self.switch_page(main_page_ref)?;
 
@@ -141,8 +174,21 @@ impl PageManager {
         page
     }
 
+    // Switch to a new page - usually happens when corresponding button is pressed.
     pub fn switch_page(&mut self, page: Rc<RefCell<dyn Page>>) -> Result<(), String> {
+        // Call on_exit for old page first.
+        if let Some(current_page) = &self.current_page {
+            let _ = current_page.borrow_mut().on_exit();
+        }
+
         self.current_page = Some(page);
+        
+        // Call on_enter for new page.
+        if let Some(current_page) = &self.current_page {
+            let _ = current_page.borrow_mut().on_enter();
+        }
+
+        // Update button keymap since new page has different buttons.
         self.button_keymap = self.create_button_keymap();
         Ok(())
     }
@@ -152,13 +198,14 @@ impl PageManager {
         self.current_page.clone()
     }
 
+    // Do first-time initialization and start main loop.
+    // Normally, main loop should not exit until device shutdown on external power loss.
     pub fn start(&mut self) -> Result<(), String> {
         // Hide mouse cursor for dashboard
         if let Err(e) = self.context.hide_cursor() {
             eprintln!("Warning: Failed to hide cursor: {}", e);
         }
         
-        // Initialize text renderer in the graphics context
         self.context.initialize_text_renderer("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)?;
         
         print!("Dashboard initialized successfully!\r\n");
@@ -167,7 +214,8 @@ impl PageManager {
         self.event_loop()
     }
 
-    fn create_button_keymap(&self) -> HashMap<char, usize> {
+    // This will map page buttons with hardware input.
+    fn create_button_keymap(&self) -> HashMap<char, Rc<RefCell<PageButton<Box<dyn FnMut()>>>>> {
         let mut button_map = HashMap::new();
 
         let mut key_position_map = HashMap::new();
@@ -183,9 +231,10 @@ impl PageManager {
         if let Some(current_page) = &self.current_page {
             let page_ref = current_page.borrow();
             let buttons = page_ref.buttons();
-            for (index, button) in buttons.iter().enumerate() {
-                if let Some(key) = key_position_map.get(button.position()) {
-                    button_map.insert(*key, index);
+            for button in buttons {
+                let button_ref = button.borrow();
+                if let Some(key) = key_position_map.get(button_ref.position()) {
+                    button_map.insert(*key, button.clone());
                 }
             }
         }
@@ -196,8 +245,6 @@ impl PageManager {
     fn event_loop(&mut self) -> Result<(), String> {
         const TARGET_FPS: u64 = 60;
         const FRAME_DURATION: Duration = Duration::from_micros(1_000_000 / TARGET_FPS);
-
-        let button_keymap = self.create_button_keymap();
 
         print!("Starting event loop (target: {} FPS)\r\n", TARGET_FPS);
         
@@ -221,6 +268,9 @@ impl PageManager {
                 let _ = page_ref.render(&mut self.context);
             }
             
+            // Render button labels on left and right sides
+            self.render_button_labels()?;
+            
             // Render status line
             self.render_status_line()?;
             
@@ -241,6 +291,10 @@ impl PageManager {
                     }
                     ButtonState::Released(key) => {
                         print!("Button released: {}\r\n", key);
+                        if let Some(button) = self.button_keymap.get(&key) {
+                            let mut button_mut = button.borrow_mut();
+                            button_mut.trigger();
+                        }
                     }
                 }
             }
@@ -252,6 +306,80 @@ impl PageManager {
         }
         
         print!("Event loop finished\r\n");
+        
+        Ok(())
+    }
+    
+    fn get_button_position(&self, pos: &ButtonPosition) -> (f32, f32) {
+        let screen_width = self.context.width as f32;
+        let screen_height = self.context.height as f32 - STATUS_LINE_MARGIN;
+        let x_margin = 0.0;   // No horizontal margin
+        let y_margin = 30.0;  // Small vertical margin from screen edges
+        
+        // Define fixed Y positions for each button row (1-4)
+        // First button near top, last button near bottom, middle two evenly spaced
+        let available_height = screen_height - 2.0 * y_margin;
+        let y_positions = [
+            y_margin,                                    // Row 1 - near top
+            y_margin + available_height / 3.0,           // Row 2 - 1/3 down
+            y_margin + 2.0 * available_height / 3.0,     // Row 3 - 2/3 down
+            screen_height - y_margin,                    // Row 4 - near bottom
+        ];
+        
+        match pos {
+            ButtonPosition::Left1 => (x_margin, y_positions[0]),
+            ButtonPosition::Left2 => (x_margin, y_positions[1]),
+            ButtonPosition::Left3 => (x_margin, y_positions[2]),
+            ButtonPosition::Left4 => (x_margin, y_positions[3]),
+            ButtonPosition::Right1 => (screen_width - x_margin, y_positions[0]),
+            ButtonPosition::Right2 => (screen_width - x_margin, y_positions[1]),
+            ButtonPosition::Right3 => (screen_width - x_margin, y_positions[2]),
+            ButtonPosition::Right4 => (screen_width - x_margin, y_positions[3]),
+        }
+    }
+    
+    fn render_button_at_position(&mut self, pos: &ButtonPosition, label: &str, label_scale: f32, label_color: (f32, f32, f32)) -> Result<(), String> {
+        let (x, y) = self.get_button_position(pos);
+        
+        let render_x = match pos {
+            // Right side buttons are right-aligned
+            ButtonPosition::Right1 | ButtonPosition::Right2 | 
+            ButtonPosition::Right3 | ButtonPosition::Right4 => {
+                let text_width = self.context.calculate_text_width(label, label_scale)?;
+                x - text_width
+            }
+            // Left side buttons are left-aligned
+            _ => x,
+        };
+        
+        self.context.render_text(label, render_x, y, label_scale, label_color)?;
+        Ok(())
+    }
+    
+    fn render_button_labels(&mut self) -> Result<(), String> {
+        let Some(current_page) = &self.current_page else {
+            return Ok(());
+        };
+
+        // Extract button data and render each at its fixed position
+        let button_data: Vec<_> = current_page
+            .borrow()
+            .buttons()
+            .iter()
+            .map(|button| {
+                let b = button.borrow();
+                (b.position().clone(), b.label.clone())
+            })
+            .collect();
+        
+        // Render settings
+        let label_scale = 1.2;
+        let label_color = (1.0, 1.0, 1.0);
+        
+        // Render each button at its fixed position
+        for (position, label) in button_data {
+            self.render_button_at_position(&position, &label, label_scale, label_color)?;
+        }
         
         Ok(())
     }
@@ -272,7 +400,7 @@ impl PageManager {
         );
         
         // Render status line at bottom of screen
-        let status_y = self.context.height as f32 - 25.0; // 25 pixels from bottom
+        let status_y = self.context.height as f32 - STATUS_LINE_MARGIN; // 25 pixels from bottom
         let status_x = 10.0; // 10 pixels from left
         
         self.context.render_text(
