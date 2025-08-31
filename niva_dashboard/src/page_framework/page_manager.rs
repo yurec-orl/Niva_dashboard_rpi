@@ -3,14 +3,12 @@ use crate::page_framework::input::{InputHandler, ButtonState};
 use crate::page_framework::main_page::MainPage;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use std::rc::Rc;
-use std::cell::RefCell;
 
 const STATUS_LINE_MARGIN: f32 = 25.0;
 
 // ButtonPosition correspond to physical 2x4 buttons layout.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum ButtonPosition {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub enum ButtonPosition {
     Left1,
     Left2,
     Left3,
@@ -46,13 +44,17 @@ where
     pub fn position(&self) -> &ButtonPosition {
         &self.pos
     }
+
+    pub fn label(&self) -> &str {
+        &self.label
+    }
 }
 
 // Shared data for MFI pages.
 pub struct PageBase {
     id: u32,            // Incremental id, depends on page creation order.
     name: String,
-    buttons: Vec<Rc<RefCell<PageButton<Box<dyn FnMut()>>>>>,
+    buttons: Vec<PageButton<Box<dyn FnMut()>>>,
 }
 
 impl PageBase {
@@ -64,30 +66,31 @@ impl PageBase {
         }
     }
 
-    pub fn set_buttons(&mut self, mut buttons: Vec<Rc<RefCell<PageButton<Box<dyn FnMut()>>>>>) {
+    pub fn id(&self) -> u32 {
+        self.id
+    }
+
+    pub fn set_buttons(&mut self, mut buttons: Vec<PageButton<Box<dyn FnMut()>>>) {
         // Sort buttons by position to ensure correct order
-        buttons.sort_by_key(|button| {
-            let button_ref = button.borrow();
-            match button_ref.position() {
-                ButtonPosition::Left1 => 0,
-                ButtonPosition::Left2 => 1,
-                ButtonPosition::Left3 => 2,
-                ButtonPosition::Left4 => 3,
-                ButtonPosition::Right1 => 4,
-                ButtonPosition::Right2 => 5,
-                ButtonPosition::Right3 => 6,
-                ButtonPosition::Right4 => 7,
-            }
-        });
+        buttons.sort_by_key(|button| button.position().clone());
         self.buttons = buttons;
     }
 
-    pub fn buttons(&self) -> &Vec<Rc<RefCell<PageButton<Box<dyn FnMut()>>>>> {
+    pub fn buttons(&self) -> &Vec<PageButton<Box<dyn FnMut()>>> {
         &self.buttons
+    }
+
+    pub fn button_by_position(&self, pos: ButtonPosition) -> Option<&PageButton<Box<dyn FnMut()>>> {
+        self.buttons.iter().find(|button| button.position() == &pos)
+    }
+
+    pub fn button_by_position_mut(&mut self, pos: ButtonPosition) -> Option<&mut PageButton<Box<dyn FnMut()>>> {
+        self.buttons.iter_mut().find(|button| button.position() == &pos)
     }
 }
 
 pub trait Page {
+    fn id(&self) -> u32;
     // Render page-specific stuff (except button labels, which are PageManager responsibility).
     fn render(&self, context: &mut GraphicsContext) -> Result<(), String>;
     // Trigger once on switching to this page.
@@ -97,7 +100,11 @@ pub trait Page {
     // If PageManager does not handle button press, this will be called.
     fn on_button(&mut self, button: char) -> Result<(), String>;
 
-    fn buttons(&self) -> &Vec<Rc<RefCell<PageButton<Box<dyn FnMut()>>>>>;
+    fn buttons(&self) -> &Vec<PageButton<Box<dyn FnMut()>>>;
+
+    fn button_by_position(&self, pos: ButtonPosition) -> Option<&PageButton<Box<dyn FnMut()>>>;
+    
+    fn button_by_position_mut(&mut self, pos: ButtonPosition) -> Option<&mut PageButton<Box<dyn FnMut()>>>;
 }
 
 // PageManager is responsible for managing multiple pages and their transitions,
@@ -105,14 +112,14 @@ pub trait Page {
 pub struct PageManager {
     context: GraphicsContext,
     pg_id: u32,             // Page incremental id, depends on page creation order.
-    current_page: Option<Rc<RefCell<dyn Page>>>, // Shared reference to current page
-    pages: Vec<Rc<RefCell<dyn Page>>>,           // Store shared references
-
-    // Mapping between current page buttons and input.
-    button_keymap: HashMap<char, Rc<RefCell<PageButton<Box<dyn FnMut()>>>>>,
+    current_page: Option<usize>,
+    pages: Vec<Box<dyn Page>>,
 
     // Input handling from gpio buttons, external keyboard, etc.
     input_handler: InputHandler,
+
+    // Map hardware keys with UI buttons positions.
+    buttons_map: HashMap<char, ButtonPosition>,
 
     fps_counter: FpsCounter,
     start_time: Instant,
@@ -123,13 +130,23 @@ pub struct PageManager {
 
 impl PageManager {
     pub fn new(context: GraphicsContext) -> Self {
+        let mut buttons_map = HashMap::new();
+        buttons_map.insert('1', ButtonPosition::Left1);
+        buttons_map.insert('2', ButtonPosition::Left2);
+        buttons_map.insert('3', ButtonPosition::Left3);
+        buttons_map.insert('4', ButtonPosition::Left4);
+        buttons_map.insert('5', ButtonPosition::Right1);
+        buttons_map.insert('6', ButtonPosition::Right2);
+        buttons_map.insert('7', ButtonPosition::Right3);
+        buttons_map.insert('8', ButtonPosition::Right4);
+
         PageManager {
             context,
             pg_id: 0,
             current_page: None,
             pages: Vec::new(),
-            button_keymap: HashMap::new(),
             input_handler: InputHandler::new(),
+            buttons_map,
             fps_counter: FpsCounter::new(),
             start_time: Instant::now(),
             running: false,
@@ -138,64 +155,71 @@ impl PageManager {
 
     // Set up pages and buttons.
     pub fn setup(&mut self) -> Result<(), String> {
-        let mut main_page = MainPage::new(self.get_page_id(), "Main".into());
+        let mut main_page = Box::new(MainPage::new(self.get_page_mut_id(), "Main".into()));
         let main_buttons = vec![
-            Rc::new(RefCell::new(PageButton::new(ButtonPosition::Left1, "Button 1".into(), Box::new(|| {
+            PageButton::new(ButtonPosition::Left1, "Button 1".into(), Box::new(|| {
                 print!("Button 1 pressed\r\n");
-            }) as Box<dyn FnMut()>))),
-            Rc::new(RefCell::new(PageButton::new(ButtonPosition::Left4, "Button 2".into(), Box::new(|| {
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Left4, "Button 2".into(), Box::new(|| {
                 print!("Button 2 pressed\r\n");
-            }) as Box<dyn FnMut()>))),
+            }) as Box<dyn FnMut()>),
         ];
         
         main_page.set_buttons(main_buttons);
         
-        let main_page_ref = self.add_page(main_page);
-        self.switch_page(main_page_ref)?;
+        let main_page_idx = self.add_page(main_page);
+        self.switch_page(main_page_idx)?;
 
         Ok(())
     }
 
-    fn get_page_id(&mut self) -> u32 {
+    fn get_page_mut_id(&mut self) -> u32 {
         let id = self.pg_id;
         self.pg_id += 1;
         id
     }
 
-    pub fn add_page<T: Page + 'static>(&mut self, page: T) -> Rc<RefCell<dyn Page>> {
-        let shared_page = Rc::new(RefCell::new(page));
-        self.pages.push(shared_page.clone());
-        shared_page // Return the shared reference
+    fn get_page(&self, index: Option<usize>) -> Option<&Box<dyn Page>> {
+        index.and_then(|i| self.pages.get(i))
     }
 
-    /// Add a page from an already created Rc<RefCell<dyn Page>>
-    pub fn add_shared_page(&mut self, page: Rc<RefCell<dyn Page>>) -> Rc<RefCell<dyn Page>> {
-        self.pages.push(page.clone());
-        page
+    fn get_page_mut(&mut self, index: Option<usize>) -> Option<&mut Box<dyn Page>> {
+        index.and_then(|i| self.pages.get_mut(i))
     }
 
-    // Switch to a new page - usually happens when corresponding button is pressed.
-    pub fn switch_page(&mut self, page: Rc<RefCell<dyn Page>>) -> Result<(), String> {
+    fn get_current_page(&self) -> Option<&Box<dyn Page>> {
+        self.get_page(self.current_page)
+    }
+
+    fn get_current_page_mut(&mut self) -> Option<&mut Box<dyn Page>> {
+        self.get_page_mut(self.current_page)
+    }
+
+    pub fn add_page(&mut self, page: Box<dyn Page>) -> usize {
+        self.pages.push(page);
+        self.pages.len() - 1
+    }
+
+    // Switch to a page by index
+    pub fn switch_page(&mut self, page_index: usize) -> Result<(), String> {
         // Call on_exit for old page first.
-        if let Some(current_page) = &self.current_page {
-            let _ = current_page.borrow_mut().on_exit();
+        if let Some(current) = self.get_current_page_mut() {
+            current.on_exit()?;
         }
 
-        self.current_page = Some(page);
-        
+        self.current_page = Some(page_index);
+
         // Call on_enter for new page.
-        if let Some(current_page) = &self.current_page {
-            let _ = current_page.borrow_mut().on_enter();
+        if let Some(current) = self.get_current_page_mut() {
+            current.on_enter()?;
         }
 
-        // Update button keymap since new page has different buttons.
-        self.button_keymap = self.create_button_keymap();
         Ok(())
     }
 
-    /// Get the current page reference
-    pub fn current_page(&self) -> Option<Rc<RefCell<dyn Page>>> {
-        self.current_page.clone()
+    fn button_by_key(&mut self, key: &char) -> Option<&mut PageButton<Box<dyn FnMut()>>> {
+        let pos = self.buttons_map.get(key).copied()?;
+        self.get_current_page_mut()?.button_by_position_mut(pos)
     }
 
     // Do first-time initialization and start main loop.
@@ -212,34 +236,6 @@ impl PageManager {
         self.running = true;
         self.start_time = Instant::now();
         self.event_loop()
-    }
-
-    // This will map page buttons with hardware input.
-    fn create_button_keymap(&self) -> HashMap<char, Rc<RefCell<PageButton<Box<dyn FnMut()>>>>> {
-        let mut button_map = HashMap::new();
-
-        let mut key_position_map = HashMap::new();
-        key_position_map.insert(ButtonPosition::Left1, '1');
-        key_position_map.insert(ButtonPosition::Left2, '2');
-        key_position_map.insert(ButtonPosition::Left3, '3');
-        key_position_map.insert(ButtonPosition::Left4, '4');
-        key_position_map.insert(ButtonPosition::Right1, '5');
-        key_position_map.insert(ButtonPosition::Right2, '6');
-        key_position_map.insert(ButtonPosition::Right3, '7');
-        key_position_map.insert(ButtonPosition::Right4, '8');
-
-        if let Some(current_page) = &self.current_page {
-            let page_ref = current_page.borrow();
-            let buttons = page_ref.buttons();
-            for button in buttons {
-                let button_ref = button.borrow();
-                if let Some(key) = key_position_map.get(button_ref.position()) {
-                    button_map.insert(*key, button.clone());
-                }
-            }
-        }
-
-        button_map
     }
 
     fn event_loop(&mut self) -> Result<(), String> {
@@ -263,11 +259,14 @@ impl PageManager {
             }
             
             // Render current page
-            if let Some(current_page) = &self.current_page {
-                let page_ref = current_page.borrow();
-                let _ = page_ref.render(&mut self.context);
+            if let Some(page_idx) = self.current_page {
+                // Create a temporary borrow to avoid conflicts
+                let page = &mut self.pages[page_idx];
+                page.render(&mut self.context)?;
+            } else {
+                return Err("No current page to render".into());
             }
-            
+
             // Render button labels on left and right sides
             self.render_button_labels()?;
             
@@ -291,9 +290,8 @@ impl PageManager {
                     }
                     ButtonState::Released(key) => {
                         print!("Button released: {}\r\n", key);
-                        if let Some(button) = self.button_keymap.get(&key) {
-                            let mut button_mut = button.borrow_mut();
-                            button_mut.trigger();
+                        if let Some(button) = self.button_by_key(&key) {
+                            button.trigger();
                         }
                     }
                 }
@@ -357,30 +355,29 @@ impl PageManager {
     }
     
     fn render_button_labels(&mut self) -> Result<(), String> {
-        let Some(current_page) = &self.current_page else {
+        // Check if there's a current page
+        if self.current_page.is_none() {
             return Ok(());
-        };
+        }
 
-        // Extract button data and render each at its fixed position
-        let button_data: Vec<_> = current_page
-            .borrow()
-            .buttons()
-            .iter()
-            .map(|button| {
-                let b = button.borrow();
-                (b.position().clone(), b.label.clone())
-            })
-            .collect();
-        
         // Render settings
         let label_scale = 1.2;
         let label_color = (1.0, 1.0, 1.0);
-        
-        // Render each button at its fixed position
+
+        // Collect button data first to avoid borrowing conflicts
+        let button_data: Vec<(ButtonPosition, String)> = {
+            let current_page = self.get_current_page().unwrap();
+            current_page.buttons()
+                .iter()
+                .map(|button| (*button.position(), button.label().to_string()))
+                .collect()
+        };
+
+        // Now render each button at its fixed position
         for (position, label) in button_data {
             self.render_button_at_position(&position, &label, label_scale, label_color)?;
         }
-        
+
         Ok(())
     }
     

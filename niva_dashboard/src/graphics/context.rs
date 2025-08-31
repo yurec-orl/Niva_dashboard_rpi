@@ -4,7 +4,6 @@ use std::os::raw::{c_char, c_int, c_uint, c_void};
 use std::ptr;
 use std::collections::HashMap;
 use freetype_sys as ft;
-use gl::types::*;
 
 // EGL types and constants
 type EGLDisplay = *mut c_void;

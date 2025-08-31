@@ -1295,7 +1295,7 @@ pub fn run_rotating_needle_gauge_test(context: &mut GraphicsContext) -> Result<(
             let elapsed = start_time.elapsed().as_secs_f32();
             
             // Animate needle value (sine wave pattern)
-            let mut current_value = 50.0 + 40.0 * (elapsed * 0.8).sin();
+            let current_value = 50.0 + 40.0 * (elapsed * 0.8).sin();
             
             // Clear screen
             gl::ClearColor(0.05, 0.05, 0.1, 1.0);
