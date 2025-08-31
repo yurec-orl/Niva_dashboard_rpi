@@ -398,7 +398,7 @@ unsafe fn render_shape(
 }
 
 // Text rendering system using FreeType with glyph caching
-struct OpenGLTextRenderer {
+pub struct OpenGLTextRenderer {
     ft_library: ft::FT_Library,
     ft_face: ft::FT_Face,
     shader_program: u32,
@@ -417,7 +417,7 @@ struct OpenGLTextRenderer {
 }
 
 impl OpenGLTextRenderer {
-    unsafe fn new(font_path: &str, font_size: u32) -> Result<Self, String> {
+    pub unsafe fn new(font_path: &str, font_size: u32) -> Result<Self, String> {
         // Initialize FreeType
         let mut ft_library: ft::FT_Library = std::ptr::null_mut();
         if ft::FT_Init_FreeType(&mut ft_library) != 0 {
@@ -552,7 +552,7 @@ void main() {
         Ok(program)
     }
     
-    unsafe fn render_text(&mut self, text: &str, x: f32, y: f32, scale: f32, color: (f32, f32, f32), width: f32, height: f32) -> Result<(), String> {
+    pub unsafe fn render_text(&mut self, text: &str, x: f32, y: f32, scale: f32, color: (f32, f32, f32), width: f32, height: f32) -> Result<(), String> {
         // Use cached program state
         gl::UseProgram(self.shader_program);
         
@@ -1171,8 +1171,8 @@ unsafe fn render_triangle(x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32, 
     if TRIANGLE_SHADER == 0 {
         TRIANGLE_SHADER = create_simple_color_shader();
         
-        gl::GenVertexArrays(1, &mut TRIANGLE_VAO);
-        gl::GenBuffers(1, &mut TRIANGLE_VBO);
+        gl::GenVertexArrays(1, &raw mut TRIANGLE_VAO);
+        gl::GenBuffers(1, &raw mut TRIANGLE_VBO);
         
         gl::BindVertexArray(TRIANGLE_VAO);
         gl::BindBuffer(gl::ARRAY_BUFFER, TRIANGLE_VBO);
@@ -1281,7 +1281,6 @@ pub fn run_rotating_needle_gauge_test(context: &mut GraphicsContext) -> Result<(
     let start_angle = -225.0f32.to_radians(); // Start at bottom-left
     let end_angle = 45.0f32.to_radians();     // End at bottom-right (270 degrees total)
     
-    let mut current_value = 0.0;
     let mut frame_count = 0;
     let start_time = std::time::Instant::now();
     
@@ -1296,7 +1295,7 @@ pub fn run_rotating_needle_gauge_test(context: &mut GraphicsContext) -> Result<(
             let elapsed = start_time.elapsed().as_secs_f32();
             
             // Animate needle value (sine wave pattern)
-            current_value = 50.0 + 40.0 * (elapsed * 0.8).sin();
+            let current_value = 50.0 + 40.0 * (elapsed * 0.8).sin();
             
             // Clear screen
             gl::ClearColor(0.05, 0.05, 0.1, 1.0);
