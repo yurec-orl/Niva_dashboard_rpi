@@ -4,6 +4,7 @@ use std::os::raw::{c_char, c_int, c_uint, c_void};
 use std::ptr;
 use std::collections::HashMap;
 use freetype_sys as ft;
+use crate::graphics::colors::ColorManager;
 
 // EGL types and constants
 type EGLDisplay = *mut c_void;
@@ -303,6 +304,9 @@ pub struct GraphicsContext {
     // Text rendering
     pub text_renderer: Option<OpenGLTextRenderer>,
     
+    // Color management with brightness control
+    pub color_manager: ColorManager,
+    
     // State
     initialized: bool,
     display_configured: bool,
@@ -328,6 +332,7 @@ impl GraphicsContext {
             width,
             height,
             text_renderer: None,
+            color_manager: ColorManager::new(),
             initialized: false,
             display_configured: false,
         };
@@ -914,6 +919,38 @@ impl GraphicsContext {
         
         Ok(())
     }
+
+    // =============================================================================
+    // Brightness Control Methods
+    // =============================================================================
+
+    /// Set display brightness (0.0 to 1.0)
+    pub fn set_brightness(&mut self, brightness: f32) {
+        self.color_manager.set_brightness(brightness);
+    }
+
+    /// Get current brightness level
+    pub fn get_brightness(&self) -> f32 {
+        self.color_manager.get_brightness()
+    }
+
+    /// Increase brightness by a step
+    pub fn increase_brightness(&mut self, step: f32) {
+        self.color_manager.increase_brightness(step);
+    }
+
+    /// Decrease brightness by a step
+    pub fn decrease_brightness(&mut self, step: f32) {
+        self.color_manager.decrease_brightness(step);
+    }
+
+    /// Clear the screen with black
+    pub fn clear_screen(&mut self) {
+        unsafe {
+            gl::ClearColor(0.0, 0.0, 0.0, 1.0);
+            gl::Clear(gl::COLOR_BUFFER_BIT);
+        }
+    }
 }
 
 impl Drop for GraphicsContext {
@@ -973,8 +1010,10 @@ impl GraphicsContext {
     /// Render text using the initialized text renderer
     pub fn render_text(&mut self, text: &str, x: f32, y: f32, scale: f32, color: (f32, f32, f32)) -> Result<(), String> {
         if let Some(ref mut renderer) = self.text_renderer {
+            // Apply brightness adjustment to the color
+            let adjusted_color = self.color_manager.apply_brightness(color);
             unsafe {
-                renderer.render_text(text, x, y, scale, color, self.width as f32, self.height as f32)
+                renderer.render_text(text, x, y, scale, adjusted_color, self.width as f32, self.height as f32)
             }
         } else {
             Err("Text renderer not initialized. Call initialize_text_renderer() first.".to_string())

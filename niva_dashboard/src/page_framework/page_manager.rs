@@ -1,6 +1,7 @@
 use crate::graphics::context::GraphicsContext;
 use crate::page_framework::input::{InputHandler, ButtonState};
 use crate::page_framework::main_page::MainPage;
+use crate::page_framework::events::{UIEvent, EventSender, EventReceiver, create_event_channel};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -121,6 +122,10 @@ pub struct PageManager {
     // Map hardware keys with UI buttons positions.
     buttons_map: HashMap<char, ButtonPosition>,
 
+    // Event system for UI communication
+    event_receiver: EventReceiver,
+    event_sender: EventSender,
+
     fps_counter: FpsCounter,
     start_time: Instant,
 
@@ -140,6 +145,9 @@ impl PageManager {
         buttons_map.insert('7', ButtonPosition::Right3);
         buttons_map.insert('8', ButtonPosition::Right4);
 
+        // Create event channel
+        let (event_sender, event_receiver) = create_event_channel();
+
         PageManager {
             context,
             pg_id: 0,
@@ -147,30 +155,12 @@ impl PageManager {
             pages: Vec::new(),
             input_handler: InputHandler::new(),
             buttons_map,
+            event_receiver,
+            event_sender,
             fps_counter: FpsCounter::new(),
             start_time: Instant::now(),
             running: false,
         }
-    }
-
-    // Set up pages and buttons.
-    pub fn setup(&mut self) -> Result<(), String> {
-        let mut main_page = Box::new(MainPage::new(self.get_page_mut_id(), "Main".into()));
-        let main_buttons = vec![
-            PageButton::new(ButtonPosition::Left1, "Button 1".into(), Box::new(|| {
-                print!("Button 1 pressed\r\n");
-            }) as Box<dyn FnMut()>),
-            PageButton::new(ButtonPosition::Left4, "Button 2".into(), Box::new(|| {
-                print!("Button 2 pressed\r\n");
-            }) as Box<dyn FnMut()>),
-        ];
-        
-        main_page.set_buttons(main_buttons);
-        
-        let main_page_idx = self.add_page(main_page);
-        self.switch_page(main_page_idx)?;
-
-        Ok(())
     }
 
     fn get_page_mut_id(&mut self) -> u32 {
@@ -222,6 +212,46 @@ impl PageManager {
         self.get_current_page_mut()?.button_by_position_mut(pos)
     }
 
+    // Set up pages and buttons.
+    pub fn setup(&mut self) -> Result<(), String> {
+        // Get event sender for button callbacks
+        let event_sender = self.event_sender.clone();
+        
+        let mut main_page = Box::new(MainPage::new(self.get_page_mut_id(), "Main".into()));
+        
+        // Create buttons that send events instead of direct function calls
+        let view_up_sender = event_sender.clone();
+        let view_down_sender = event_sender.clone();
+        let brightness_up_sender = event_sender.clone();
+        let brightness_down_sender = event_sender.clone();
+        let diag_sender = event_sender.clone();
+        
+        let main_buttons = vec![
+            PageButton::new(ButtonPosition::Left1, "ВИД+".into(), Box::new(move || {
+                view_up_sender.send(UIEvent::ButtonPressed("view_up".into()));
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Left2, "ВИД-".into(), Box::new(move || {
+                view_down_sender.send(UIEvent::ButtonPressed("view_down".into()));
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Right1, "ЯРК+".into(), Box::new(move || {
+                brightness_up_sender.send(UIEvent::BrightnessUp);
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Right2, "ЯРК-".into(), Box::new(move || {
+                brightness_down_sender.send(UIEvent::BrightnessDown);
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Right4, "ДИАГ".into(), Box::new(move || {
+                diag_sender.send(UIEvent::ShowDiagnostics);
+            }) as Box<dyn FnMut()>),
+        ];
+        
+        main_page.set_buttons(main_buttons);
+        
+        let main_page_idx = self.add_page(main_page);
+        self.switch_page(main_page_idx)?;
+
+        Ok(())
+    }
+
     // Do first-time initialization and start main loop.
     // Normally, main loop should not exit until device shutdown on external power loss.
     pub fn start(&mut self) -> Result<(), String> {
@@ -250,10 +280,9 @@ impl PageManager {
             // Update FPS counter
             self.fps_counter.update();
             
-            // Clear screen
+            // Clear screen with brightness-adjusted black
+            self.context.clear_screen();
             unsafe {
-                gl::ClearColor(0.0, 0.0, 0.0, 1.0);
-                gl::Clear(gl::COLOR_BUFFER_BIT);
                 gl::Enable(gl::BLEND);
                 gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
             }
@@ -297,6 +326,11 @@ impl PageManager {
                 }
             }
 
+            // Process UI events from buttons and other sources
+            while let Ok(event) = self.event_receiver.try_recv() {
+                self.handle_ui_event(event);
+            }
+
             // Exit condition (for now, run for 30 seconds)
             if self.start_time.elapsed() > Duration::from_secs(10) {
                 self.running = false;
@@ -306,6 +340,68 @@ impl PageManager {
         print!("Event loop finished\r\n");
         
         Ok(())
+    }
+
+    /// Handle UI events sent by buttons and other components
+    fn handle_ui_event(&mut self, event: UIEvent) {
+        print!("Processing UI event: {:?}\r\n", event);
+        
+        match event {
+            UIEvent::BrightnessUp => {
+                self.brightness_up();
+            }
+            UIEvent::BrightnessDown => {
+                self.brightness_down();
+            }
+            UIEvent::SetBrightness(level) => {
+                self.set_brightness(level);
+            }
+            UIEvent::SwitchToPage(page_index) => {
+                if let Err(e) = self.switch_page(page_index) {
+                    print!("Failed to switch to page {}: {}\r\n", page_index, e);
+                }
+            }
+            UIEvent::NextPage => {
+                if let Some(current) = self.current_page {
+                    let next_page = (current + 1) % self.pages.len();
+                    if let Err(e) = self.switch_page(next_page) {
+                        print!("Failed to switch to next page: {}\r\n", e);
+                    }
+                }
+            }
+            UIEvent::PreviousPage => {
+                if let Some(current) = self.current_page {
+                    let prev_page = if current == 0 { self.pages.len() - 1 } else { current - 1 };
+                    if let Err(e) = self.switch_page(prev_page) {
+                        print!("Failed to switch to previous page: {}\r\n", e);
+                    }
+                }
+            }
+            UIEvent::Shutdown => {
+                print!("Shutdown event received\r\n");
+                self.running = false;
+            }
+            UIEvent::Restart => {
+                print!("Restart event received (not implemented)\r\n");
+            }
+            UIEvent::ButtonPressed(action) => {
+                print!("Custom button action: {}\r\n", action);
+                // Handle custom button actions here
+                match action.as_str() {
+                    "view_up" => print!("View up action\r\n"),
+                    "view_down" => print!("View down action\r\n"),
+                    _ => print!("Unknown action: {}\r\n", action),
+                }
+            }
+            UIEvent::ShowDiagnostics => {
+                print!("Showing diagnostics...\r\n");
+                // Implement diagnostics display
+            }
+            UIEvent::RunSelfTest => {
+                print!("Running self test...\r\n");
+                // Implement self test
+            }
+        }
     }
     
     fn get_button_position(&self, pos: &ButtonPosition) -> (f32, f32) {
@@ -413,6 +509,40 @@ impl PageManager {
     
     pub fn stop(&mut self) {
         self.running = false;
+    }
+
+    // =============================================================================
+    // Brightness Control for UI
+    // =============================================================================
+
+    /// Set display brightness (0.0 to 1.0)
+    pub fn set_brightness(&mut self, brightness: f32) {
+        self.context.set_brightness(brightness);
+        print!("Display brightness set to: {:.1}%\r\n", brightness * 100.0);
+    }
+
+    /// Get current brightness level
+    pub fn get_brightness(&self) -> f32 {
+        self.context.get_brightness()
+    }
+
+    /// Increase brightness by 10%
+    pub fn brightness_up(&mut self) {
+        self.context.increase_brightness(0.1);
+        let current = self.get_brightness();
+        print!("Brightness increased to: {:.1}%\r\n", current * 100.0);
+    }
+
+    /// Decrease brightness by 10%
+    pub fn brightness_down(&mut self) {
+        self.context.decrease_brightness(0.1);
+        let current = self.get_brightness();
+        print!("Brightness decreased to: {:.1}%\r\n", current * 100.0);
+    }
+
+    /// Get a clone of the event sender for external components
+    pub fn get_event_sender(&self) -> EventSender {
+        self.event_sender.clone()
     }
 }
 
