@@ -2,15 +2,15 @@ use crate::graphics::context::GraphicsContext;
 use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition};
 use crate::page_framework::events::{EventSender, EventReceiver};
 
-pub struct MainPage {
+pub struct DiagPage {
     base: PageBase,
     event_receiver: EventReceiver,
     event_sender: EventSender,
 }
 
-impl MainPage {
+impl DiagPage {
     pub fn new(id: u32, name: String, event_sender: EventSender, event_receiver: EventReceiver) -> Self {
-        MainPage {
+        DiagPage {
             base: PageBase::new(id, name),
             event_sender,
             event_receiver,
@@ -22,13 +22,13 @@ impl MainPage {
     }
 }
 
-impl Page for MainPage {
+impl Page for DiagPage {
     fn id(&self) -> u32 {
         self.base.id()
     }
 
     fn render(&self, context: &mut GraphicsContext) -> Result<(), String> {
-        context.render_text("Главная", 200.0, 100.0, 1.0, (1.0, 1.0, 1.0))?;
+        context.render_text("Диагностика", 200.0, 100.0, 1.0, (1.0, 1.0, 1.0))?;
         Ok(())
     }
 

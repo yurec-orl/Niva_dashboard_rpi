@@ -1,7 +1,9 @@
 use crate::graphics::context::GraphicsContext;
 use crate::page_framework::input::{InputHandler, ButtonState};
 use crate::page_framework::main_page::MainPage;
-use crate::page_framework::events::{UIEvent, EventSender, EventReceiver, create_event_channel};
+use crate::page_framework::diag_page::DiagPage;
+use crate::page_framework::osc_page::OscPage;
+use crate::page_framework::events::{UIEvent, EventSender, EventReceiver, EventBus, create_event_bus};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -100,6 +102,8 @@ pub trait Page {
     fn on_exit(&mut self) -> Result<(), String>;
     // If PageManager does not handle button press, this will be called.
     fn on_button(&mut self, button: char) -> Result<(), String>;
+    // Process events specific to this page (MPMC allows each page to have its own receiver)
+    fn process_events(&mut self) {}
 
     fn buttons(&self) -> &Vec<PageButton<Box<dyn FnMut()>>>;
 
@@ -122,7 +126,8 @@ pub struct PageManager {
     // Map hardware keys with UI buttons positions.
     buttons_map: HashMap<char, ButtonPosition>,
 
-    // Event system for UI communication
+    // Event system for UI communication (MPMC)
+    event_bus: EventBus,
     event_receiver: EventReceiver,
     event_sender: EventSender,
 
@@ -145,8 +150,10 @@ impl PageManager {
         buttons_map.insert('7', ButtonPosition::Right3);
         buttons_map.insert('8', ButtonPosition::Right4);
 
-        // Create event channel
-        let (event_sender, event_receiver) = create_event_channel();
+        // Create event bus and get sender/receiver
+        let event_bus = create_event_bus();
+        let event_sender = event_bus.sender();
+        let event_receiver = event_bus.receiver();
 
         PageManager {
             context,
@@ -155,6 +162,7 @@ impl PageManager {
             pages: Vec::new(),
             input_handler: InputHandler::new(),
             buttons_map,
+            event_bus,
             event_receiver,
             event_sender,
             fps_counter: FpsCounter::new(),
@@ -167,6 +175,22 @@ impl PageManager {
         let id = self.pg_id;
         self.pg_id += 1;
         id
+    }
+
+    /// Get a new event receiver for pages (MPMC allows multiple receivers)
+    pub fn get_event_receiver(&self) -> EventReceiver {
+        self.event_bus.receiver()
+    }
+
+    /// Get the event sender for UI components
+    pub fn get_event_sender(&self) -> EventSender {
+        self.event_sender.clone()
+    }
+
+    /// Add a page with event processing capability
+    pub fn add_page_with_events(&mut self, page: Box<dyn Page>) -> usize {
+        // Pages can process their own events using their receivers
+        self.add_page(page)
     }
 
     fn get_page(&self, index: Option<usize>) -> Option<&Box<dyn Page>> {
@@ -216,38 +240,87 @@ impl PageManager {
     pub fn setup(&mut self) -> Result<(), String> {
         // Get event sender for button callbacks
         let event_sender = self.event_sender.clone();
+
+        // Create pages with their own event receivers (MPMC allows this)
+        let mut main_page = Box::new(MainPage::new(
+            self.get_page_mut_id(), 
+            "Main".into(),
+            event_sender.clone(), 
+            self.get_event_receiver()
+        ));
+        let diag_page = Box::new(DiagPage::new(
+            self.get_page_mut_id(), 
+            "Diagnostics".into(),
+            event_sender.clone(), 
+            self.get_event_receiver()
+        ));
+        let mut osc_page = Box::new(OscPage::new(
+            self.get_page_mut_id(), 
+            "Oscilloscope".into(),
+            event_sender.clone(), 
+            self.get_event_receiver()
+        ));
+
+        // Create diagnostic page buttons before adding to page manager
+        let mut diag_page_mut = diag_page;
         
-        let mut main_page = Box::new(MainPage::new(self.get_page_mut_id(), "Main".into()));
-        
-        // Create buttons that send events instead of direct function calls
-        let view_up_sender = event_sender.clone();
-        let view_down_sender = event_sender.clone();
-        let brightness_up_sender = event_sender.clone();
-        let brightness_down_sender = event_sender.clone();
-        let diag_sender = event_sender.clone();
-        
-        let main_buttons = vec![
-            PageButton::new(ButtonPosition::Left1, "ВИД+".into(), Box::new(move || {
-                view_up_sender.send(UIEvent::ButtonPressed("view_up".into()));
+        let diag_buttons = vec![
+            PageButton::new(ButtonPosition::Left1, "ДАТЧ".into(), Box::new({
+                let sender = event_sender.clone();
+                move || sender.send(UIEvent::ShowSensorInfo)
             }) as Box<dyn FnMut()>),
-            PageButton::new(ButtonPosition::Left2, "ВИД-".into(), Box::new(move || {
-                view_down_sender.send(UIEvent::ButtonPressed("view_down".into()));
+            PageButton::new(ButtonPosition::Left2, "ЭБУ".into(), Box::new({
+                let sender = event_sender.clone();
+                move || sender.send(UIEvent::ShowECUInfo)
             }) as Box<dyn FnMut()>),
-            PageButton::new(ButtonPosition::Right1, "ЯРК+".into(), Box::new(move || {
-                brightness_up_sender.send(UIEvent::BrightnessUp);
+            PageButton::new(ButtonPosition::Right1, "ОСЦ".into(), Box::new({
+                let sender = event_sender.clone();
+                move || sender.send(UIEvent::ShowOSCInfo)
             }) as Box<dyn FnMut()>),
-            PageButton::new(ButtonPosition::Right2, "ЯРК-".into(), Box::new(move || {
-                brightness_down_sender.send(UIEvent::BrightnessDown);
-            }) as Box<dyn FnMut()>),
-            PageButton::new(ButtonPosition::Right4, "ДИАГ".into(), Box::new(move || {
-                diag_sender.send(UIEvent::ShowDiagnostics);
+            PageButton::new(ButtonPosition::Right4, "НАЗАД".into(), Box::new({
+                let sender = event_sender.clone();
+                move || sender.send(UIEvent::SwitchToPage(0))
             }) as Box<dyn FnMut()>),
         ];
         
+        diag_page_mut.set_buttons(diag_buttons);
+
+        // Create buttons for main page 
+        let main_buttons = vec![
+            PageButton::new(ButtonPosition::Left1, "ВИД+".into(), Box::new({
+                let sender = event_sender.clone();
+                move || sender.send(UIEvent::ButtonPressed("view_up".into()))
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Left2, "ВИД-".into(), Box::new({
+                let sender = event_sender.clone();
+                move || sender.send(UIEvent::ButtonPressed("view_down".into()))
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Left4, "ВЫХ".into(), Box::new({
+                let sender = event_sender.clone();
+                move || sender.send(UIEvent::Shutdown)
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Right1, "ЯРК+".into(), Box::new({
+                let sender = event_sender.clone();
+                move || sender.send(UIEvent::BrightnessUp)
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Right2, "ЯРК-".into(), Box::new({
+                let sender = event_sender.clone();
+                move || sender.send(UIEvent::BrightnessDown)
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Right4, "ДИАГ".into(), Box::new({
+                let sender = event_sender.clone();
+                move || sender.send(UIEvent::SwitchToPage(1))
+            }) as Box<dyn FnMut()>),
+        ];
+
         main_page.set_buttons(main_buttons);
+
+        // Add pages to manager in order: main(0), diag(1), osc(2)
+        let actual_main_page_idx = self.add_page(main_page);
+        let actual_diag_page_idx = self.add_page(diag_page_mut);
+        let actual_osc_page_idx = self.add_page(osc_page);
         
-        let main_page_idx = self.add_page(main_page);
-        self.switch_page(main_page_idx)?;
+        self.switch_page(actual_main_page_idx)?;
 
         Ok(())
     }
@@ -280,7 +353,7 @@ impl PageManager {
             // Update FPS counter
             self.fps_counter.update();
             
-            // Clear screen with brightness-adjusted black
+            // Clear screen with black
             self.context.clear_screen();
             unsafe {
                 gl::Enable(gl::BLEND);
@@ -326,9 +399,14 @@ impl PageManager {
                 }
             }
 
-            // Process UI events from buttons and other sources
+            // Process UI events from buttons and other sources (PageManager events)
             while let Ok(event) = self.event_receiver.try_recv() {
                 self.handle_ui_event(event);
+            }
+
+            // Let the current page process its own events
+            if let Some(current_page) = self.get_current_page_mut() {
+                current_page.process_events();
             }
 
             // Exit condition (for now, run for 30 seconds)
@@ -361,22 +439,6 @@ impl PageManager {
                     print!("Failed to switch to page {}: {}\r\n", page_index, e);
                 }
             }
-            UIEvent::NextPage => {
-                if let Some(current) = self.current_page {
-                    let next_page = (current + 1) % self.pages.len();
-                    if let Err(e) = self.switch_page(next_page) {
-                        print!("Failed to switch to next page: {}\r\n", e);
-                    }
-                }
-            }
-            UIEvent::PreviousPage => {
-                if let Some(current) = self.current_page {
-                    let prev_page = if current == 0 { self.pages.len() - 1 } else { current - 1 };
-                    if let Err(e) = self.switch_page(prev_page) {
-                        print!("Failed to switch to previous page: {}\r\n", e);
-                    }
-                }
-            }
             UIEvent::Shutdown => {
                 print!("Shutdown event received\r\n");
                 self.running = false;
@@ -390,16 +452,42 @@ impl PageManager {
                 match action.as_str() {
                     "view_up" => print!("View up action\r\n"),
                     "view_down" => print!("View down action\r\n"),
+                    "engine_data" => print!("Engine data diagnostic action\r\n"),
+                    "clear_codes" => print!("Clear diagnostic codes action\r\n"),
                     _ => print!("Unknown action: {}\r\n", action),
                 }
             }
-            UIEvent::ShowDiagnostics => {
-                print!("Showing diagnostics...\r\n");
-                // Implement diagnostics display
+            // Page-specific events are handled by individual pages automatically
+            UIEvent::ShowSensorInfo => {
+                print!("Sensor info event (handled by DiagPage)\r\n");
             }
-            UIEvent::RunSelfTest => {
-                print!("Running self test...\r\n");
-                // Implement self test
+            UIEvent::ShowECUInfo => {
+                print!("ECU info event (handled by DiagPage)\r\n");
+            }
+            UIEvent::ShowOSCInfo => {
+                print!("ECU info event (handled by DiagPage)\r\n");
+            }
+            // Oscilloscope events (for future use)
+            UIEvent::OscStart => {
+                print!("Oscilloscope start event\r\n");
+            }
+            UIEvent::OscStop => {
+                print!("Oscilloscope stop event\r\n");
+            }
+            UIEvent::OscSetSampleRate(rate) => {
+                print!("Oscilloscope sample rate: {} Hz\r\n", rate);
+            }
+            UIEvent::OscSetTimeScale(scale) => {
+                print!("Oscilloscope time scale: {}\r\n", scale);
+            }
+            UIEvent::OscSetVoltageScale(scale) => {
+                print!("Oscilloscope voltage scale: {}\r\n", scale);
+            }
+            UIEvent::OscSetTriggerLevel(level) => {
+                print!("Oscilloscope trigger level: {}\r\n", level);
+            }
+            UIEvent::OscToggleChannel(channel) => {
+                print!("Oscilloscope toggle channel: {}\r\n", channel);
             }
         }
     }
@@ -540,10 +628,6 @@ impl PageManager {
         print!("Brightness decreased to: {:.1}%\r\n", current * 100.0);
     }
 
-    /// Get a clone of the event sender for external components
-    pub fn get_event_sender(&self) -> EventSender {
-        self.event_sender.clone()
-    }
 }
 
 #[derive(Debug)]
