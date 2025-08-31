@@ -214,13 +214,15 @@ impl PageManager {
         self.pages.len() - 1
     }
 
-    // Switch to a page by index
-    pub fn switch_page(&mut self, page_index: usize) -> Result<(), String> {
+    // Switch to a page by ID
+    pub fn switch_page(&mut self, page_id: u32) -> Result<(), String> {
         // Call on_exit for old page first.
         if let Some(current) = self.get_current_page_mut() {
             current.on_exit()?;
         }
 
+        let page_index = self.pages.iter().position(|p| p.id() as u32 == page_id)
+            .ok_or_else(|| format!("Page with ID {} not found", page_id))?; 
         self.current_page = Some(page_index);
 
         // Call on_enter for new page.
@@ -248,12 +250,16 @@ impl PageManager {
             event_sender.clone(), 
             self.get_event_receiver()
         ));
+        let main_id = main_page.id().clone();
+
         let diag_page = Box::new(DiagPage::new(
             self.get_page_mut_id(), 
             "Diagnostics".into(),
             event_sender.clone(), 
             self.get_event_receiver()
         ));
+        let diag_id = diag_page.id().clone();
+
         let mut osc_page = Box::new(OscPage::new(
             self.get_page_mut_id(), 
             "Oscilloscope".into(),
@@ -279,7 +285,7 @@ impl PageManager {
             }) as Box<dyn FnMut()>),
             PageButton::new(ButtonPosition::Right4, "НАЗАД".into(), Box::new({
                 let sender = event_sender.clone();
-                move || sender.send(UIEvent::SwitchToPage(0))
+                move || sender.send(UIEvent::SwitchToPage(main_id.clone()))
             }) as Box<dyn FnMut()>),
         ];
         
@@ -309,7 +315,7 @@ impl PageManager {
             }) as Box<dyn FnMut()>),
             PageButton::new(ButtonPosition::Right4, "ДИАГ".into(), Box::new({
                 let sender = event_sender.clone();
-                move || sender.send(UIEvent::SwitchToPage(1))
+                move || sender.send(UIEvent::SwitchToPage(diag_id))
             }) as Box<dyn FnMut()>),
         ];
 
@@ -320,7 +326,7 @@ impl PageManager {
         let actual_diag_page_idx = self.add_page(diag_page_mut);
         let actual_osc_page_idx = self.add_page(osc_page);
         
-        self.switch_page(actual_main_page_idx)?;
+        self.switch_page(main_id)?;
 
         Ok(())
     }
@@ -434,9 +440,9 @@ impl PageManager {
             UIEvent::SetBrightness(level) => {
                 self.set_brightness(level);
             }
-            UIEvent::SwitchToPage(page_index) => {
-                if let Err(e) = self.switch_page(page_index) {
-                    print!("Failed to switch to page {}: {}\r\n", page_index, e);
+            UIEvent::SwitchToPage(page_id) => {
+                if let Err(e) = self.switch_page(page_id) {
+                    print!("Failed to switch to page {}: {}\r\n", page_id, e);
                 }
             }
             UIEvent::Shutdown => {

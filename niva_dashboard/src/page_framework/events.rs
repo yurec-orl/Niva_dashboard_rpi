@@ -9,7 +9,7 @@ pub enum UIEvent {
     SetBrightness(f32),
     
     // Page navigation
-    SwitchToPage(usize),
+    SwitchToPage(u32),
     
     // System events
     Shutdown,
@@ -104,8 +104,8 @@ impl EventSender {
     }
     
     /// Send page switch event
-    pub fn switch_to_page(&self, page_index: usize) {
-        self.send(UIEvent::SwitchToPage(page_index));
+    pub fn switch_to_page(&self, page_id: u32) {
+        self.send(UIEvent::SwitchToPage(page_id));
     }
 }
 
