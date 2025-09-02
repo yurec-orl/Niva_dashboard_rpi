@@ -36,14 +36,15 @@ A software dashboard for automotive use, written in Rust and designed to run on 
   - Context-sensitive UI layouts
 
 #### 2. Hardware Interface Layer
+- **Sensor Reading Framework**:
+  - Hardware provider abstraction (GPIO, I2C, Test providers)
+  - Digital signal processing (debouncing, pulse counting, frequency calculation)
+  - Analog signal processing (moving average filtering)
+  - Automotive sensor support (speed, temperature, pressure, etc.)
 - **GPIO Button Handler**:
   - Physical button press detection
   - Debouncing algorithms
   - Button state management
-- **Sensor Data Reader**:
-  - Car sensor data acquisition
-  - Signal smoothing and filtering
-  - Real-time data processing
 
 #### 3. Visualization System
 - **Data Presentation Classes**:
@@ -66,15 +67,21 @@ niva_dashboard/
 │   ├── main.rs                 # Application entry point
 │   ├── page_manager/           # Page management system
 │   ├── hardware/               # GPIO and sensor interfaces
-│   │   ├── buttons.rs          # Button handling and debouncing
-│   │   └── sensors.rs          # Car sensor data reading
-│   ├── visualization/          # Data display components
-│   │   ├── bar_indicator.rs    # Bar-style displays
-│   │   ├── digital_display.rs  # Segmented digital displays
-│   │   └── gauge.rs            # Analog-style gauges
-│   └── utils/                  # Signal processing utilities
-│       ├── smoothing.rs        # Signal smoothing algorithms
-│       └── debounce.rs         # Debouncing utilities
+│   │   ├── hw_providers.rs     # Hardware abstraction layer (GPIO, I2C, Test providers)
+│   │   ├── digital_signal_processing.rs  # Digital signal processing (debouncing, pulse counting)
+│   │   ├── gpio_input.rs       # GPIO button handling and debouncing
+│   │   └── sensors.rs          # Legacy sensor definitions (being refactored)
+│   ├── graphics/               # Graphics rendering system
+│   │   ├── context.rs          # OpenGL graphics context and text rendering
+│   │   ├── colors.rs           # Color definitions and utilities
+│   │   └── opengl_test.rs      # OpenGL testing utilities
+│   ├── page_framework/         # Page management framework
+│   │   ├── page_manager.rs     # Central page management system
+│   │   ├── main_page.rs        # Main dashboard page implementation
+│   │   ├── events.rs           # Event handling system
+│   │   └── input.rs            # Input processing
+│   └── test/                   # Testing utilities
+│       └── run_test.rs         # Test execution framework
 ```
 
 ## Development Goals
@@ -97,6 +104,22 @@ niva_dashboard/
 - **Button System Implementation**: 
   - Created comprehensive button label rendering system with left/right alignment
 
+## Coding Session (September 2, 2025)
+- **Sensor Reading Framework**: Developed comprehensive hardware abstraction layer for automotive sensors
+  - **Hardware Provider Traits**: Created HWAnalogProvider and HWDigitalProvider traits for hardware abstraction
+  - **Multiple Implementations**: 
+    - GPIOProvider: Direct Raspberry Pi GPIO digital input reading
+    - I2CProvider: External ADC/controller interface via I2C protocol
+    - TestDataProvider: Time-based test data generation with realistic patterns
+    - TestPulseDataProvider: Simulates speed sensor pulses (0-83.3 Hz representing 0-100 km/h)
+  - **Signal Processing Layer**:
+    - DigitalSignalDebouncer: Configurable debouncing with stable count and time requirements
+    - DigitalSignalProcessorPulseCounter: Counts signal transitions for frequency measurement
+    - DigitalSignalProcessorPulsePerSecond: Calculates pulses per second with smart update intervals
+    - AnalogSignalProcessorMovingAverage: Smooths analog signals using configurable window size
+  - **Automotive Calculations**: Speed sensor analysis showing 6 pulses/revolution produces 17-83 pulses/second at 20-100 km/h
+  - **Architecture**: Clean separation between hardware providers, signal processing, and logical sensor conversion
+
 ## Target Use Cases
 - Engine monitoring (RPM, temperature, pressure)
 - Vehicle diagnostics and alerts
@@ -112,4 +135,4 @@ niva_dashboard/
 
 ---
 *Created: August 26, 2025*
-*Last Updated: August 30, 2025*
+*Last Updated: September 2, 2025*
