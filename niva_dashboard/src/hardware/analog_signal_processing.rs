@@ -7,7 +7,7 @@ pub trait AnalogSignalProcessor {
     fn read(&mut self, input: u16) -> Result<u16, String>;
 }
 
-struct AnalogSignalProcessorMovingAverage {
+pub struct AnalogSignalProcessorMovingAverage {
     window_size: usize,
     values: Vec<u16>,
 }

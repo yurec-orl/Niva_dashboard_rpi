@@ -14,6 +14,19 @@ use crate::hardware::hw_providers::TestDigitalDataProvider;
 use rppal::gpio::Level;
 use std::env;
 
+fn setup_context() -> GraphicsContext {
+    let context = GraphicsContext::new_dashboard("Niva Dashboard").expect("Failed to create graphics context");
+
+    // Hide mouse cursor for dashboard application
+    if let Err(e) = context.hide_cursor() {
+        eprintln!("Warning: Failed to hide cursor: {}", e);
+    } else {
+        print!("✓ Mouse cursor hidden for dashboard mode\r\n");
+    }
+
+    context
+}
+
 fn setup_sensors() -> SensorManager {
     let mut mgr = SensorManager::new();
 
@@ -37,7 +50,8 @@ fn main() {
     print!("3. Dashboard performance test (9 animated gauges)\r\n");
     print!("4. Rotating needle gauge test (circular gauge with numbers)\r\n");
     print!("5. GPIO input test\r\n");
-    print!("Usage: cargo run -- [test={{basic|gltext|dashboard|needle|gpio}}]\r\n");
+    print!("6. Sensor manager test\r\n");
+    print!("Usage: cargo run -- [test={{basic|gltext|dashboard|needle|gpio|sensors}}]\r\n");
 
     for arg in args {
         let parm = arg.split("=").collect::<Vec<&str>>();
@@ -54,15 +68,8 @@ fn main() {
         }
     }
 
-    let context = GraphicsContext::new_dashboard("Niva Dashboard").expect("Failed to create graphics context");
+    let context = setup_context();
     let sensors = setup_sensors();
-
-    // Hide mouse cursor for dashboard application
-    if let Err(e) = context.hide_cursor() {
-        eprintln!("Warning: Failed to hide cursor: {}", e);
-    } else {
-        print!("✓ Mouse cursor hidden for dashboard mode\r\n");
-    }
 
     let mut mgr = PageManager::new(context, sensors);
 

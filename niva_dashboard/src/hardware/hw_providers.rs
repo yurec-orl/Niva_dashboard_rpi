@@ -175,9 +175,18 @@ impl HWDigitalProvider for TestDigitalDataProvider {
     }
 }
 
-struct TestAnalogDataProvider {
+pub struct TestAnalogDataProvider {
     input: HWAnalogInput,
     start_time: Instant,
+}
+
+impl TestAnalogDataProvider {
+    pub fn new(input: HWAnalogInput) -> Self {
+        TestAnalogDataProvider {
+            input,
+            start_time: Instant::now(),
+        }
+    }
 }
 
 impl HWAnalogProvider for TestAnalogDataProvider {

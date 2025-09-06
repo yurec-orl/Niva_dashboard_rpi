@@ -165,3 +165,207 @@ impl SensorManager {
         Err("Analog sensor chain not found".to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hardware::hw_providers::{TestDigitalDataProvider, TestAnalogDataProvider};
+    use crate::hardware::digital_signal_processing::DigitalSignalDebouncer;
+    use crate::hardware::analog_signal_processing::AnalogSignalProcessorMovingAverage;
+    use crate::hardware::sensors::GenericDigitalSensor;
+    use std::time::Duration;
+    use std::thread;
+
+    // Test analog sensor implementation
+    struct TestFuelSensor;
+    impl AnalogSensor for TestFuelSensor {
+        fn value(&self, input: u16) -> Result<f32, String> {
+            // Convert ADC value (0-1023) to fuel percentage (0-100%)
+            let percentage = (input as f32 / 1023.0) * 100.0;
+            Ok(percentage.clamp(0.0, 100.0))
+        }
+        
+        fn min_value(&self) -> f32 { 0.0 }
+        fn max_value(&self) -> f32 { 100.0 }
+    }
+
+    // Test analog sensor for temperature
+    struct TestTemperatureSensor;
+    impl AnalogSensor for TestTemperatureSensor {
+        fn value(&self, input: u16) -> Result<f32, String> {
+            // Convert ADC value to temperature: assume 0V = -40°C, 5V = 120°C
+            // ADC range 0-1023 maps to -40 to 120°C
+            let temperature = -40.0 + (input as f32 / 1023.0) * 160.0;
+            Ok(temperature)
+        }
+        
+        fn min_value(&self) -> f32 { -40.0 }
+        fn max_value(&self) -> f32 { 120.0 }
+    }
+
+    #[test]
+    fn test_sensor_manager_digital_chain() {
+        println!("=== Testing Digital Sensor Chain ===");
+        
+        let mut manager = SensorManager::new();
+        
+        // Create test digital input for park brake (active low)
+        let park_brake_input = HWDigitalInput::HwParkBrake(Level::Low);
+        
+        // Create digital sensor chain components
+        let hw_provider = Box::new(TestDigitalDataProvider::new(park_brake_input.clone()));
+        let debouncer = Box::new(DigitalSignalDebouncer::new(3, Duration::from_millis(50)));
+        let sensor = Box::new(GenericDigitalSensor::new(Level::Low)); // Active low sensor
+        
+        // Create and add the chain
+        let chain = SensorDigitalInputChain::new(
+            hw_provider,
+            vec![debouncer],
+            sensor,
+        );
+        manager.add_digital_sensor_chain(chain);
+        
+        // Test reading the sensor during active period (first 4 seconds)
+        let result = manager.read_digital_sensor(park_brake_input.clone());
+        assert!(result.is_ok(), "Digital sensor read should succeed");
+        
+        let is_active = result.unwrap();
+        println!("Park brake active (during active period): {}", is_active);
+        
+        // In TestDigitalDataProvider, the first 4 seconds return the active level (Low)
+        // Since our sensor is active-low, it should read as true (active)
+        assert!(is_active, "Park brake should be active during test period");
+        
+        println!("✓ Digital sensor chain test passed");
+    }
+
+    #[test]
+    fn test_sensor_manager_analog_chain() {
+        println!("=== Testing Analog Sensor Chain ===");
+        
+        let mut manager = SensorManager::new();
+        
+        // Create test analog input for fuel level
+        let fuel_input = HWAnalogInput::HwFuelLvl;
+        
+        // Create analog sensor chain components
+        let hw_provider = Box::new(TestAnalogDataProvider::new(fuel_input.clone()));
+        let moving_avg = Box::new(AnalogSignalProcessorMovingAverage::new(3));
+        let sensor = Box::new(TestFuelSensor);
+        
+        // Create and add the chain
+        let chain = SensorAnalogInputChain::new(
+            hw_provider,
+            vec![moving_avg],
+            sensor,
+        );
+        manager.add_analog_sensor_chain(chain);
+        
+        // Test reading the sensor
+        let result = manager.read_analog_sensor(fuel_input.clone());
+        assert!(result.is_ok(), "Analog sensor read should succeed");
+        
+        let fuel_percentage = result.unwrap();
+        println!("Fuel level: {:.1}%", fuel_percentage);
+        
+        // Fuel percentage should be between 0 and 100
+        assert!(fuel_percentage >= 0.0 && fuel_percentage <= 100.0, 
+               "Fuel percentage should be between 0 and 100");
+        
+        println!("✓ Analog sensor chain test passed");
+    }
+
+    #[test]
+    fn test_sensor_manager_multiple_chains() {
+        println!("=== Testing Multiple Sensor Chains ===");
+        
+        let mut manager = SensorManager::new();
+        
+        // Add digital chain for high beam indicator (active high)
+        let high_beam_input = HWDigitalInput::HwHighBeam(Level::High);
+        let digital_chain = SensorDigitalInputChain::new(
+            Box::new(TestDigitalDataProvider::new(high_beam_input.clone())),
+            vec![], // No signal processing for this test
+            Box::new(GenericDigitalSensor::new(Level::High)), // Active high sensor
+        );
+        manager.add_digital_sensor_chain(digital_chain);
+        
+        // Add analog chain for temperature
+        let temp_input = HWAnalogInput::HwTemp;
+        let analog_chain = SensorAnalogInputChain::new(
+            Box::new(TestAnalogDataProvider::new(temp_input.clone())),
+            vec![Box::new(AnalogSignalProcessorMovingAverage::new(5))],
+            Box::new(TestTemperatureSensor),
+        );
+        manager.add_analog_sensor_chain(analog_chain);
+        
+        // Test both sensors
+        let high_beam_result = manager.read_digital_sensor(high_beam_input);
+        let temp_result = manager.read_analog_sensor(temp_input);
+        
+        assert!(high_beam_result.is_ok(), "High beam sensor should work");
+        assert!(temp_result.is_ok(), "Temperature sensor should work");
+        
+        let high_beam_active = high_beam_result.unwrap();
+        let temperature = temp_result.unwrap();
+        
+        println!("High beam active: {}", high_beam_active);
+        println!("Temperature: {:.1}°C", temperature);
+        
+        // Validate ranges
+        assert!(temperature >= -40.0 && temperature <= 120.0, 
+               "Temperature should be within sensor range");
+        
+        println!("✓ Multiple sensor chains test passed");
+    }
+
+    #[test]
+    fn test_sensor_manager_nonexistent_chain() {
+        println!("=== Testing Non-existent Sensor Chain ===");
+        
+        let mut manager = SensorManager::new();
+        
+        // Try to read from a sensor that wasn't configured
+        let non_existent_input = HWDigitalInput::HwSpeed(Level::High);
+        let result = manager.read_digital_sensor(non_existent_input);
+        
+        assert!(result.is_err(), "Reading non-existent sensor should fail");
+        
+        let error_msg = result.unwrap_err();
+        println!("Expected error: {}", error_msg);
+        assert!(error_msg.contains("Digital sensor chain not found"), 
+               "Error should indicate missing chain");
+        
+        println!("✓ Non-existent sensor chain test passed");
+    }
+
+    #[test] 
+    fn test_sensor_manager_signal_processing_pipeline() {
+        println!("=== Testing Signal Processing Pipeline ===");
+        
+        let mut manager = SensorManager::new();
+        
+        // Create a chain with multiple signal processors
+        let turn_signal_input = HWDigitalInput::HwTurnSignal(Level::High);
+        
+        // Add two debounce stages for extra filtering
+        let debouncer1 = Box::new(DigitalSignalDebouncer::new(2, Duration::from_millis(25)));
+        let debouncer2 = Box::new(DigitalSignalDebouncer::new(2, Duration::from_millis(25)));
+        
+        let chain = SensorDigitalInputChain::new(
+            Box::new(TestDigitalDataProvider::new(turn_signal_input.clone())),
+            vec![debouncer1, debouncer2], // Multiple processors in sequence
+            Box::new(GenericDigitalSensor::new(Level::High)),
+        );
+        manager.add_digital_sensor_chain(chain);
+        
+        // Read the sensor to verify the pipeline works
+        let result = manager.read_digital_sensor(turn_signal_input);
+        assert!(result.is_ok(), "Signal processing pipeline should work");
+        
+        let turn_signal_active = result.unwrap();
+        println!("Turn signal active (after processing): {}", turn_signal_active);
+        
+        println!("✓ Signal processing pipeline test passed");
+    }
+}
