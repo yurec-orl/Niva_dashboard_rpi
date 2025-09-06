@@ -9,7 +9,7 @@ pub trait DigitalSignalProcessor {
     fn read(&mut self, input: Level) -> Result<Level, String>;
 }
 
-struct DigitalSignalDebouncer {
+pub struct DigitalSignalDebouncer {
     required_stable_count: u8,
     required_stable_delay: Duration,
     last_stable_state: Level,
@@ -57,7 +57,7 @@ impl DigitalSignalProcessor for DigitalSignalDebouncer {
 }
 
 
-struct DigitalSignalProcessorPulseCounter {
+pub struct DigitalSignalProcessorPulseCounter {
     pulse_count: u32,
     last_level: Level,
 }
@@ -89,7 +89,7 @@ impl DigitalSignalProcessor for DigitalSignalProcessorPulseCounter {
     }
 }
 
-struct DigitalSignalProcessorPulsePerSecond {
+pub struct DigitalSignalProcessorPulsePerSecond {
     counter: DigitalSignalProcessorPulseCounter,
     last_update: Instant,
     current_pps: f32,

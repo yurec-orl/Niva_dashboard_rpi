@@ -3,7 +3,7 @@ use crate::hardware::hw_providers::{HWAnalogInput, HWAnalogProvider};
  
 // Raw analog data processors
 
-trait AnalogSignalProcessor {
+pub trait AnalogSignalProcessor {
     fn read(&mut self, input: u16) -> Result<u16, String>;
 }
 

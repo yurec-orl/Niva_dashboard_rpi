@@ -24,8 +24,9 @@ use std::time::{Duration, Instant};
 
 /////////////////////////////////////////////////////////////////////////
 
-// Hardware related stuff
+// Hardware input definitions
 
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum HWAnalogInput {
     Hw12v,
     HwTemp,
@@ -33,6 +34,7 @@ pub enum HWAnalogInput {
     HwOilPress,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum HWDigitalInput {
     HwSpeed(Level),
     HwCharge(Level),
@@ -61,20 +63,36 @@ impl HWDigitalInput {
 
 // Generic interface for reading input data.
 pub trait HWAnalogProvider {
+    fn input(&self) -> HWAnalogInput;
     fn read_analog(&self, input: HWAnalogInput) -> Result<u16, String>;
 }
 
 pub trait HWDigitalProvider {
+    fn input(&self) -> HWDigitalInput;
     fn read_digital(&self, input: HWDigitalInput) -> Result<Level, String>;
 }
 
 // Read directly from GPIO pins
 // Digital inputs only - Raspi does not have built-in ADC
 pub struct GPIOProvider {
+    input: HWDigitalInput,
     // Implementation details for GPIO access
 }
 
+impl GPIOProvider {
+    pub fn new(input: HWDigitalInput) -> Self {
+        GPIOProvider {
+            input,
+            // Initialize GPIO access here
+        }
+    }
+}
+
 impl HWDigitalProvider for GPIOProvider {
+    fn input(&self) -> HWDigitalInput {
+        self.input.clone()
+    }
+
     fn read_digital(&self, input: HWDigitalInput) -> Result<Level, String> {
         // Implementation for reading digital value from GPIO pin
         Ok(Level::Low)
@@ -83,10 +101,25 @@ impl HWDigitalProvider for GPIOProvider {
 
 // Read inputs from external ADC via I2C protocol
 pub struct I2CProvider {
+    dig_input: HWDigitalInput,
+    input: HWAnalogInput,
     // Implementation details for I2C access
 }
 
+impl I2CProvider {
+    pub fn new(dig_input: HWDigitalInput, input: HWAnalogInput) -> Self {
+        I2CProvider {
+            dig_input,
+            input,
+            // Initialize I2C access here
+        }
+    }
+}
+
 impl HWAnalogProvider for I2CProvider {
+    fn input(&self) -> HWAnalogInput {
+        self.input.clone()
+    }
     fn read_analog(&self, input: HWAnalogInput) -> Result<u16, String> {
         // Implementation for reading analog value from external ADC via I2C
         Ok(0)
@@ -94,25 +127,34 @@ impl HWAnalogProvider for I2CProvider {
 }
 
 impl HWDigitalProvider for I2CProvider {
+    fn input(&self) -> HWDigitalInput {
+        self.dig_input.clone()
+    }
     fn read_digital(&self, input: HWDigitalInput) -> Result<Level, String> {
         // Implementation for reading digital value from external controller via I2C
         Ok(Level::Low)
     }
 }
 
-pub struct TestDataProvider {
+pub struct TestDigitalDataProvider {
+    input: HWDigitalInput,
     start_time: Instant,
 }
 
-impl TestDataProvider {
-    pub fn new() -> Self {
-        TestDataProvider {
+impl TestDigitalDataProvider {
+    pub fn new(input: HWDigitalInput) -> Self {
+        TestDigitalDataProvider {
+            input,
             start_time: Instant::now(),
         }
     }
 }
 
-impl HWDigitalProvider for TestDataProvider {
+impl HWDigitalProvider for TestDigitalDataProvider {
+    fn input(&self) -> HWDigitalInput {
+        self.input.clone()
+    }
+
     fn read_digital(&self, input: HWDigitalInput) -> Result<Level, String> {
         let elapsed = self.start_time.elapsed();
         let active_duration = Duration::from_secs(4);
@@ -133,7 +175,15 @@ impl HWDigitalProvider for TestDataProvider {
     }
 }
 
-impl HWAnalogProvider for TestDataProvider {
+struct TestAnalogDataProvider {
+    input: HWAnalogInput,
+    start_time: Instant,
+}
+
+impl HWAnalogProvider for TestAnalogDataProvider {
+    fn input(&self) -> HWAnalogInput {
+        self.input.clone()
+    }
     fn read_analog(&self, input: HWAnalogInput) -> Result<u16, String> {
         let elapsed = self.start_time.elapsed();
         let cycle_duration = Duration::from_millis(5000); // 5 seconds total cycle
@@ -160,12 +210,14 @@ impl HWAnalogProvider for TestDataProvider {
 }
 
 struct TestPulseDataProvider {
+    input: HWDigitalInput,
     start_time: Instant,
 }
 
 impl TestPulseDataProvider {
-    pub fn new() -> Self {
+    pub fn new(input: HWDigitalInput) -> Self {
         TestPulseDataProvider {
+            input,
             start_time: Instant::now(),
         }
     }
@@ -191,6 +243,9 @@ impl TestPulseDataProvider {
 }
 
 impl HWDigitalProvider for TestPulseDataProvider {
+    fn input(&self) -> HWDigitalInput {
+        self.input.clone()
+    }
     fn read_digital(&self, input: HWDigitalInput) -> Result<Level, String> {
         let current_frequency = self.get_current_frequency();
         

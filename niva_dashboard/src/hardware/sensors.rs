@@ -4,7 +4,7 @@ use crate::hardware::digital_signal_processing::DigitalSignalProcessor;
 
 // Digital sensor trait - represents on/off state based on active level
 // Active level could be low in case of pull-up input configuration
-trait DigitalSensor {
+pub trait DigitalSensor {
     fn active_level(&self) -> Level;
 
     fn active(&self, input: Level) -> Result<bool, String> {
@@ -12,12 +12,12 @@ trait DigitalSensor {
     }
 }
 
-struct GenericDigitalSensor {
+pub struct GenericDigitalSensor {
     active_level: Level,
 }
 
 impl GenericDigitalSensor {
-    fn new(active_level: Level) -> Self {
+    pub fn new(active_level: Level) -> Self {
         GenericDigitalSensor { active_level }
     }
 }
@@ -36,8 +36,16 @@ impl DigitalSensor for GenericDigitalSensor {
 // Value should be a processed input, e.g. voltage level converted to temperature
 // All voltage divider calculations, pulse count to speed, and other 
 // raw input conversion into meaningful values are done here
-trait AnalogSensor {
+pub trait AnalogSensor {
     fn value(&self, input: u16) -> Result<f32, String>;
+
+    fn min_value(&self) -> f32 {
+        0.0
+    }
+
+    fn max_value(&self) -> f32 {
+        100.0
+    }
 }
 
 struct TemperatureSensor {

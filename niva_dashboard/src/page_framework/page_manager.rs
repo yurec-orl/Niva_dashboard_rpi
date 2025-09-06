@@ -2,6 +2,9 @@ use crate::graphics::context::GraphicsContext;
 use crate::page_framework::input::{InputHandler, ButtonState};
 use crate::page_framework::main_page::MainPage;
 use crate::page_framework::events::{UIEvent, EventSender, EventReceiver, create_event_channel};
+
+use crate::hardware::sensor_manager::SensorManager;
+
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -112,6 +115,7 @@ pub trait Page {
 // as well as rendering button labels.
 pub struct PageManager {
     context: GraphicsContext,
+    sensors: SensorManager,
     pg_id: u32,             // Page incremental id, depends on page creation order.
     current_page: Option<usize>,
     pages: Vec<Box<dyn Page>>,
@@ -134,7 +138,7 @@ pub struct PageManager {
 }
 
 impl PageManager {
-    pub fn new(context: GraphicsContext) -> Self {
+    pub fn new(context: GraphicsContext, sensors: SensorManager) -> Self {
         let mut buttons_map = HashMap::new();
         buttons_map.insert('1', ButtonPosition::Left1);
         buttons_map.insert('2', ButtonPosition::Left2);
@@ -150,6 +154,7 @@ impl PageManager {
 
         PageManager {
             context,
+            sensors,
             pg_id: 0,
             current_page: None,
             pages: Vec::new(),
