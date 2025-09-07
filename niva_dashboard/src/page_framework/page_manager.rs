@@ -337,12 +337,7 @@ impl PageManager {
         let diag_page_id = self.add_page(diag_page);
 
         // Create buttons that send events instead of direct function calls
-        let view_up_sender = event_sender.clone();
-        let view_down_sender = event_sender.clone();
-        let brightness_up_sender = event_sender.clone();
-        let brightness_down_sender = event_sender.clone();
-        let diag_sender = event_sender.clone();
-        
+       
         let main_buttons = vec![
             PageButton::new(ButtonPosition::Left1, "ВИД+".into(), Box::new({
                 let sender = event_sender.clone();
@@ -364,28 +359,28 @@ impl PageManager {
                 let sender = event_sender.clone();
                 move || sender.send(UIEvent::BrightnessDown)
             }) as Box<dyn FnMut()>),
-            PageButton::new(ButtonPosition::Right4, "ДИАГ".into(), Box::new(move || {
-                diag_sender.send(UIEvent::SwitchToPage(diag_page_id));
+            PageButton::new(ButtonPosition::Right4, "ДИАГ".into(), Box::new({
+                let sender = event_sender.clone();
+                move || sender.send(UIEvent::SwitchToPage(diag_page_id))
             }) as Box<dyn FnMut()>),
         ];
 
         self.get_page_mut(main_page_id).expect("Failed to get main page").set_buttons(main_buttons);
 
-        let diag_sensors_sender = event_sender.clone();
-        let diag_log_sender = event_sender.clone();
-        let diag_back_sender = event_sender.clone();
-
         match self.get_page_mut(diag_page_id) {
             Some(page) => {
                 page.set_buttons(vec![
-                    PageButton::new(ButtonPosition::Left1, "ДАТЧ".into(), Box::new(move || {
-                        diag_sensors_sender.send(UIEvent::ButtonPressed("diag_test_1".into()));
+                    PageButton::new(ButtonPosition::Left1, "ДАТЧ".into(), Box::new({
+                        let sender = event_sender.clone();
+                        move || sender.send(UIEvent::ButtonPressed("diag_test_1".into()))
                     }) as Box<dyn FnMut()>),
-                    PageButton::new(ButtonPosition::Left2, "ЖУРН".into(), Box::new(move || {
-                        diag_log_sender.send(UIEvent::ButtonPressed("diag_test_2".into()));
+                    PageButton::new(ButtonPosition::Left2, "ЖУРН".into(), Box::new({
+                        let sender = event_sender.clone();
+                        move || sender.send(UIEvent::ButtonPressed("diag_test_2".into()))
                     }) as Box<dyn FnMut()>),
-                    PageButton::new(ButtonPosition::Right4, "ВОЗВ".into(), Box::new(move || {
-                        diag_back_sender.send(UIEvent::SwitchToPage(main_page_id));
+                    PageButton::new(ButtonPosition::Right4, "ВОЗВ".into(), Box::new({
+                        let sender = event_sender.clone();
+                        move || sender.send(UIEvent::SwitchToPage(main_page_id))
                     }) as Box<dyn FnMut()>),
                 ]);
             }
