@@ -10,7 +10,7 @@ pub enum UIEvent {
     
     // Page navigation
     SwitchToPage(u32),
-    
+
     // System events
     Shutdown,
     Restart,
@@ -22,6 +22,7 @@ pub enum UIEvent {
     ShowSensorInfo,
     ShowECUInfo,
     ShowOSCInfo,
+    ShowLog,
 
     // Oscilloscope page events
     OscStart,
@@ -76,8 +77,8 @@ impl EventSender {
     
     /// Send an event (non-blocking)
     pub fn send(&self, event: UIEvent) {
-        if let Err(e) = self.sender.try_send(event) {
-            eprintln!("Failed to send UI event: {:?}", e);
+        if let Err(e) = self.sender.send(event) {
+            print!("Failed to send UI event: {:?}\r\n", e);
         }
     }
     

@@ -1,13 +1,18 @@
 use crate::graphics::context::GraphicsContext;
+use crate::graphics::ui_style::*;
+use crate::hardware::sensor_manager::SensorManager;
+use crate::page_framework::diag_page::DiagPage;
+use crate::page_framework::events::{UIEvent, EventSender, EventReceiver, EventBus, create_event_bus};
 use crate::page_framework::input::{InputHandler, ButtonState};
 use crate::page_framework::main_page::MainPage;
-use crate::page_framework::diag_page::DiagPage;
-use crate::page_framework::osc_page::OscPage;
-use crate::page_framework::events::{UIEvent, EventSender, EventReceiver, EventBus, create_event_bus};
+
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 const STATUS_LINE_MARGIN: f32 = 25.0;
+
+pub const MAIN_PAGE_NAME: &str = "Main";
+pub const DIAG_PAGE_NAME: &str = "Diagnostics";
 
 // ButtonPosition correspond to physical 2x4 buttons layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -58,19 +63,25 @@ pub struct PageBase {
     id: u32,            // Incremental id, depends on page creation order.
     name: String,
     buttons: Vec<PageButton<Box<dyn FnMut()>>>,
+    ui_style: UIStyle,
 }
 
 impl PageBase {
-    pub fn new(id: u32, name: String) -> Self {
+    pub fn new(id: u32, name: String, ui_style: UIStyle) -> Self {
         PageBase {
             id,
             name,
             buttons: Vec::new(),
+            ui_style,
         }
     }
 
     pub fn id(&self) -> u32 {
         self.id
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     pub fn set_buttons(&mut self, mut buttons: Vec<PageButton<Box<dyn FnMut()>>>) {
@@ -90,10 +101,15 @@ impl PageBase {
     pub fn button_by_position_mut(&mut self, pos: ButtonPosition) -> Option<&mut PageButton<Box<dyn FnMut()>>> {
         self.buttons.iter_mut().find(|button| button.position() == &pos)
     }
+
+    pub fn ui_style(&self) -> &UIStyle {
+        &self.ui_style
+    }
 }
 
 pub trait Page {
     fn id(&self) -> u32;
+    fn name(&self) -> &str;
     // Render page-specific stuff (except button labels, which are PageManager responsibility).
     fn render(&self, context: &mut GraphicsContext) -> Result<(), String>;
     // Trigger once on switching to this page.
@@ -106,19 +122,57 @@ pub trait Page {
     fn process_events(&mut self) {}
 
     fn buttons(&self) -> &Vec<PageButton<Box<dyn FnMut()>>>;
+    fn set_buttons(&mut self, buttons: Vec<PageButton<Box<dyn FnMut()>>>);
 
     fn button_by_position(&self, pos: ButtonPosition) -> Option<&PageButton<Box<dyn FnMut()>>>;
     
     fn button_by_position_mut(&mut self, pos: ButtonPosition) -> Option<&mut PageButton<Box<dyn FnMut()>>>;
+
+    fn ui_style(&self) -> &UIStyle;
+}
+
+// Helper struct to manage collection of pages.
+// Introduced to avoid borrowing issues in PageManager.
+struct Pages {
+    pages: Vec<Box<dyn Page>>,
+}
+
+impl Pages {
+    pub fn new() -> Self {
+        Pages { pages: Vec::new() }
+    }
+
+    pub fn add_page(&mut self, page: Box<dyn Page>) {
+        self.pages.push(page);
+    }
+
+    pub fn get_page(&self, id: u32) -> Option<&Box<dyn Page>> {
+        for page in &self.pages {
+            if page.id() == id {
+                return Some(page);
+            }
+        }
+        None
+    }
+
+    pub fn get_page_mut(&mut self, id: u32) -> Option<&mut Box<dyn Page>> {
+        for page in &mut self.pages {
+            if page.id() == id {
+                return Some(page);
+            }
+        }
+        None
+    }
 }
 
 // PageManager is responsible for managing multiple pages and their transitions,
 // as well as rendering button labels.
 pub struct PageManager {
     context: GraphicsContext,
+    sensors: SensorManager,
     pg_id: u32,             // Page incremental id, depends on page creation order.
-    current_page: Option<usize>,
-    pages: Vec<Box<dyn Page>>,
+    current_page: Option<u32>,
+    pages: Pages,
 
     // Input handling from gpio buttons, external keyboard, etc.
     input_handler: InputHandler,
@@ -139,7 +193,7 @@ pub struct PageManager {
 }
 
 impl PageManager {
-    pub fn new(context: GraphicsContext) -> Self {
+    pub fn new(context: GraphicsContext, sensors: SensorManager) -> Self {
         let mut buttons_map = HashMap::new();
         buttons_map.insert('1', ButtonPosition::Left1);
         buttons_map.insert('2', ButtonPosition::Left2);
@@ -157,9 +211,10 @@ impl PageManager {
 
         PageManager {
             context,
+            sensors,
             pg_id: 0,
             current_page: None,
-            pages: Vec::new(),
+            pages: Pages::new(),
             input_handler: InputHandler::new(),
             buttons_map,
             event_bus,
@@ -187,43 +242,55 @@ impl PageManager {
         self.event_sender.clone()
     }
 
-    /// Add a page with event processing capability
-    pub fn add_page_with_events(&mut self, page: Box<dyn Page>) -> usize {
-        // Pages can process their own events using their receivers
-        self.add_page(page)
+    fn get_page(&self, id: u32) -> Option<&Box<dyn Page>> {
+        self.pages.get_page(id)
     }
 
-    fn get_page(&self, index: Option<usize>) -> Option<&Box<dyn Page>> {
-        index.and_then(|i| self.pages.get(i))
-    }
-
-    fn get_page_mut(&mut self, index: Option<usize>) -> Option<&mut Box<dyn Page>> {
-        index.and_then(|i| self.pages.get_mut(i))
+    fn get_page_mut(&mut self, id: u32) -> Option<&mut Box<dyn Page>> {
+        self.pages.get_page_mut(id)
     }
 
     fn get_current_page(&self) -> Option<&Box<dyn Page>> {
-        self.get_page(self.current_page)
+        if let Some(page_id) = self.current_page {
+            self.get_page(page_id)
+        } else {
+            None
+        }
     }
 
     fn get_current_page_mut(&mut self) -> Option<&mut Box<dyn Page>> {
-        self.get_page_mut(self.current_page)
+        if let Some(page_id) = self.current_page {
+            self.get_page_mut(page_id)
+        } else {
+            None
+        }
     }
 
-    pub fn add_page(&mut self, page: Box<dyn Page>) -> usize {
-        self.pages.push(page);
-        self.pages.len() - 1
+    fn render_current_page(&mut self) -> Result<(), String> {
+        if let Some(page_id) = self.current_page {
+            match self.pages.get_page_mut(page_id) {
+                Some(page) => page.render(&mut self.context),
+                None => Err(format!("Current page id {} not found", page_id)),
+            }?;
+        }
+
+        Ok(())
     }
 
-    // Switch to a page by ID
+    pub fn add_page(&mut self, page: Box<dyn Page>) -> u32 {
+        let page_id = page.id();
+        self.pages.add_page(page);
+        page_id
+    }
+
+    // Switch to a page by index
     pub fn switch_page(&mut self, page_id: u32) -> Result<(), String> {
         // Call on_exit for old page first.
         if let Some(current) = self.get_current_page_mut() {
             current.on_exit()?;
         }
 
-        let page_index = self.pages.iter().position(|p| p.id() as u32 == page_id)
-            .ok_or_else(|| format!("Page with ID {} not found", page_id))?; 
-        self.current_page = Some(page_index);
+        self.current_page = Some(page_id);
 
         // Call on_enter for new page.
         if let Some(current) = self.get_current_page_mut() {
@@ -243,55 +310,39 @@ impl PageManager {
         // Get event sender for button callbacks
         let event_sender = self.event_sender.clone();
 
-        // Create pages with their own event receivers (MPMC allows this)
-        let mut main_page = Box::new(MainPage::new(
-            self.get_page_mut_id(), 
-            "Main".into(),
-            event_sender.clone(), 
-            self.get_event_receiver()
-        ));
-        let main_id = main_page.id().clone();
+        // Create and add pages first to get their IDs
+        let mut main_page_style = UIStyle::new();
+        main_page_style.set(TEXT_PRIMARY_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf".to_string()));
+        main_page_style.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(24));
+        main_page_style.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#FFFFFF".to_string())); // White color
+        let mut main_page = Box::new(MainPage::new(self.get_page_mut_id(),
+                                                   MAIN_PAGE_NAME.to_string(),
+                                                   main_page_style,
+                                                   event_sender.clone(),
+                                                   self.get_event_receiver()));
 
-        let diag_page = Box::new(DiagPage::new(
-            self.get_page_mut_id(), 
-            "Diagnostics".into(),
-            event_sender.clone(), 
-            self.get_event_receiver()
-        ));
-        let diag_id = diag_page.id().clone();
+        let mut diag_page_style = UIStyle::new();
+        diag_page_style.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(20));
+        diag_page_style.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#00FF00".to_string())); // Green color
+        diag_page_style.set(TEXT_PRIMARY_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf".to_string()));
+        let mut diag_page = Box::new(DiagPage::new(self.get_page_mut_id(),
+                                                   DIAG_PAGE_NAME.to_string(),
+                                                   diag_page_style,
+                                                   event_sender.clone(),
+                                                   self.get_event_receiver()));
 
-        let mut osc_page = Box::new(OscPage::new(
-            self.get_page_mut_id(), 
-            "Oscilloscope".into(),
-            event_sender.clone(), 
-            self.get_event_receiver()
-        ));
+        let main_page_id = self.add_page(main_page);
+        self.switch_page(main_page_id)?;
 
-        // Create diagnostic page buttons before adding to page manager
-        let mut diag_page_mut = diag_page;
+        let diag_page_id = self.add_page(diag_page);
+
+        // Create buttons that send events instead of direct function calls
+        let view_up_sender = event_sender.clone();
+        let view_down_sender = event_sender.clone();
+        let brightness_up_sender = event_sender.clone();
+        let brightness_down_sender = event_sender.clone();
+        let diag_sender = event_sender.clone();
         
-        let diag_buttons = vec![
-            PageButton::new(ButtonPosition::Left1, "ДАТЧ".into(), Box::new({
-                let sender = event_sender.clone();
-                move || sender.send(UIEvent::ShowSensorInfo)
-            }) as Box<dyn FnMut()>),
-            PageButton::new(ButtonPosition::Left2, "ЭБУ".into(), Box::new({
-                let sender = event_sender.clone();
-                move || sender.send(UIEvent::ShowECUInfo)
-            }) as Box<dyn FnMut()>),
-            PageButton::new(ButtonPosition::Right1, "ОСЦ".into(), Box::new({
-                let sender = event_sender.clone();
-                move || sender.send(UIEvent::ShowOSCInfo)
-            }) as Box<dyn FnMut()>),
-            PageButton::new(ButtonPosition::Right4, "НАЗАД".into(), Box::new({
-                let sender = event_sender.clone();
-                move || sender.send(UIEvent::SwitchToPage(main_id.clone()))
-            }) as Box<dyn FnMut()>),
-        ];
-        
-        diag_page_mut.set_buttons(diag_buttons);
-
-        // Create buttons for main page 
         let main_buttons = vec![
             PageButton::new(ButtonPosition::Left1, "ВИД+".into(), Box::new({
                 let sender = event_sender.clone();
@@ -313,20 +364,33 @@ impl PageManager {
                 let sender = event_sender.clone();
                 move || sender.send(UIEvent::BrightnessDown)
             }) as Box<dyn FnMut()>),
-            PageButton::new(ButtonPosition::Right4, "ДИАГ".into(), Box::new({
-                let sender = event_sender.clone();
-                move || sender.send(UIEvent::SwitchToPage(diag_id))
+            PageButton::new(ButtonPosition::Right4, "ДИАГ".into(), Box::new(move || {
+                diag_sender.send(UIEvent::SwitchToPage(diag_page_id));
             }) as Box<dyn FnMut()>),
         ];
 
-        main_page.set_buttons(main_buttons);
+        self.get_page_mut(main_page_id).expect("Failed to get main page").set_buttons(main_buttons);
 
-        // Add pages to manager in order: main(0), diag(1), osc(2)
-        let actual_main_page_idx = self.add_page(main_page);
-        let actual_diag_page_idx = self.add_page(diag_page_mut);
-        let actual_osc_page_idx = self.add_page(osc_page);
-        
-        self.switch_page(main_id)?;
+        let diag_sensors_sender = event_sender.clone();
+        let diag_log_sender = event_sender.clone();
+        let diag_back_sender = event_sender.clone();
+
+        match self.get_page_mut(diag_page_id) {
+            Some(page) => {
+                page.set_buttons(vec![
+                    PageButton::new(ButtonPosition::Left1, "ДАТЧ".into(), Box::new(move || {
+                        diag_sensors_sender.send(UIEvent::ButtonPressed("diag_test_1".into()));
+                    }) as Box<dyn FnMut()>),
+                    PageButton::new(ButtonPosition::Left2, "ЖУРН".into(), Box::new(move || {
+                        diag_log_sender.send(UIEvent::ButtonPressed("diag_test_2".into()));
+                    }) as Box<dyn FnMut()>),
+                    PageButton::new(ButtonPosition::Right4, "ВОЗВ".into(), Box::new(move || {
+                        diag_back_sender.send(UIEvent::SwitchToPage(main_page_id));
+                    }) as Box<dyn FnMut()>),
+                ]);
+            }
+            None => return Err("Failed to get diag page for button setup".into()),
+        }
 
         Ok(())
     }
@@ -336,10 +400,10 @@ impl PageManager {
     pub fn start(&mut self) -> Result<(), String> {
         // Hide mouse cursor for dashboard
         if let Err(e) = self.context.hide_cursor() {
-            eprintln!("Warning: Failed to hide cursor: {}", e);
+            print!("Warning: Failed to hide cursor: {}\r\n", e);
         }
         
-        self.context.initialize_text_renderer("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)?;
+        // Fonts are now created on-demand when needed
         
         print!("Dashboard initialized successfully!\r\n");
         self.running = true;
@@ -367,13 +431,7 @@ impl PageManager {
             }
             
             // Render current page
-            if let Some(page_idx) = self.current_page {
-                // Create a temporary borrow to avoid conflicts
-                let page = &mut self.pages[page_idx];
-                page.render(&mut self.context)?;
-            } else {
-                return Err("No current page to render".into());
-            }
+            self.render_current_page()?;
 
             // Render button labels on left and right sides
             self.render_button_labels()?;
@@ -473,6 +531,9 @@ impl PageManager {
             UIEvent::ShowOSCInfo => {
                 print!("ECU info event (handled by DiagPage)\r\n");
             }
+            UIEvent::ShowLog => {
+                print!("Show log event (handled by DiagPage)\r\n");
+            }
             // Oscilloscope events (for future use)
             UIEvent::OscStart => {
                 print!("Oscilloscope start event\r\n");
@@ -533,14 +594,27 @@ impl PageManager {
             // Right side buttons are right-aligned
             ButtonPosition::Right1 | ButtonPosition::Right2 | 
             ButtonPosition::Right3 | ButtonPosition::Right4 => {
-                let text_width = self.context.calculate_text_width(label, label_scale)?;
+                let text_width = self.context.calculate_text_width_with_font(
+                    label, 
+                    label_scale,
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                    16
+                )?;
                 x - text_width
             }
             // Left side buttons are left-aligned
             _ => x,
         };
         
-        self.context.render_text(label, render_x, y, label_scale, label_color)?;
+        self.context.render_text_with_font(
+            label, 
+            render_x, 
+            y, 
+            label_scale, 
+            label_color,
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            16
+        )?;
         Ok(())
     }
     
@@ -590,12 +664,14 @@ impl PageManager {
         let status_y = self.context.height as f32 - STATUS_LINE_MARGIN; // 25 pixels from bottom
         let status_x = 10.0; // 10 pixels from left
         
-        self.context.render_text(
+        self.context.render_text_with_font(
             &status_text,
             status_x,
             status_y,
             1.0, // scale
             (0.7, 0.7, 0.7), // gray color
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            14 // smaller font for status
         )?;
         
         Ok(())

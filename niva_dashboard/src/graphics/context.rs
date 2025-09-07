@@ -4,7 +4,7 @@ use std::os::raw::{c_char, c_int, c_uint, c_void};
 use std::ptr;
 use std::collections::HashMap;
 use freetype_sys as ft;
-use crate::graphics::colors::ColorManager;
+use crate::graphics::ui_style::UIStyle;
 
 // EGL types and constants
 type EGLDisplay = *mut c_void;
@@ -301,11 +301,11 @@ pub struct GraphicsContext {
     pub width: i32,
     pub height: i32,
     
-    // Text rendering
-    pub text_renderer: Option<OpenGLTextRenderer>,
+    // Text rendering - font management with HashMap
+    pub text_renderers: HashMap<String, OpenGLTextRenderer>,
     
-    // Color management with brightness control
-    pub color_manager: ColorManager,
+    // UI style with brightness control and theming
+    pub ui_style: UIStyle,
     
     // State
     initialized: bool,
@@ -331,8 +331,8 @@ impl GraphicsContext {
             previous_fb: 0,
             width,
             height,
-            text_renderer: None,
-            color_manager: ColorManager::new(),
+            text_renderers: HashMap::new(),
+            ui_style: UIStyle::new(),
             initialized: false,
             display_configured: false,
         };
@@ -926,22 +926,47 @@ impl GraphicsContext {
 
     /// Set display brightness (0.0 to 1.0)
     pub fn set_brightness(&mut self, brightness: f32) {
-        self.color_manager.set_brightness(brightness);
+        self.ui_style.set_brightness(brightness);
     }
 
     /// Get current brightness level
     pub fn get_brightness(&self) -> f32 {
-        self.color_manager.get_brightness()
+        self.ui_style.get_brightness()
     }
 
     /// Increase brightness by a step
     pub fn increase_brightness(&mut self, step: f32) {
-        self.color_manager.increase_brightness(step);
+        self.ui_style.increase_brightness(step);
     }
 
     /// Decrease brightness by a step
     pub fn decrease_brightness(&mut self, step: f32) {
-        self.color_manager.decrease_brightness(step);
+        self.ui_style.decrease_brightness(step);
+    }
+
+    // =============================================================================
+    // UI STYLE ACCESS
+    // =============================================================================
+    
+    /// Get a reference to the UI style
+    pub fn style(&self) -> &UIStyle {
+        &self.ui_style
+    }
+    
+    /// Get a mutable reference to the UI style
+    pub fn style_mut(&mut self) -> &mut UIStyle {
+        &mut self.ui_style
+    }
+    
+    /// Load UI style from JSON string
+    pub fn load_style_from_json(&mut self, json_str: &str) -> Result<(), Box<dyn std::error::Error>> {
+        self.ui_style = UIStyle::from_json(json_str)?;
+        Ok(())
+    }
+    
+    /// Save current UI style to JSON string
+    pub fn save_style_to_json(&self) -> Result<String, serde_json::Error> {
+        self.ui_style.to_json()
     }
 
     /// Clear the screen with black
@@ -949,6 +974,129 @@ impl GraphicsContext {
         unsafe {
             gl::ClearColor(0.0, 0.0, 0.0, 1.0);
             gl::Clear(gl::COLOR_BUFFER_BIT);
+        }
+    }
+
+    // =============================================================================
+    // NEW FONT MANAGEMENT SYSTEM
+    // =============================================================================
+    
+    /// Create a font key from font path and size
+    fn create_font_key(font_path: &str, font_size: u32) -> String {
+        format!("{}_{}", font_path, font_size)
+    }
+    
+    /// Get or create a text renderer for a specific font
+    pub fn get_text_renderer(&mut self, font_path: &str, font_size: u32) -> Result<&mut OpenGLTextRenderer, String> {
+        let key = Self::create_font_key(font_path, font_size);
+        
+        // Check if renderer already exists
+        if !self.text_renderers.contains_key(&key) {
+            // Create new renderer
+            let renderer = unsafe { OpenGLTextRenderer::new(font_path, font_size)? };
+            self.text_renderers.insert(key.clone(), renderer);
+            print!("Created new text renderer for font: {} (size: {})\r\n", font_path, font_size);
+        }
+        
+        Ok(self.text_renderers.get_mut(&key).unwrap())
+    }
+    
+    /// Render text using a specific font
+    pub fn render_text_with_font(
+        &mut self, 
+        text: &str, 
+        x: f32, 
+        y: f32, 
+        scale: f32, 
+        color: (f32, f32, f32),
+        font_path: &str,
+        font_size: u32
+    ) -> Result<(), String> {
+        // Apply brightness adjustment to the color
+        let adjusted_color = self.ui_style.apply_brightness(color);
+        
+        // Capture dimensions before borrowing renderer
+        let width = self.width as f32;
+        let height = self.height as f32;
+        
+        // Get the text renderer for this font
+        let renderer = self.get_text_renderer(font_path, font_size)?;
+        
+        // Render the text
+        unsafe {
+            renderer.render_text(text, x, y, scale, adjusted_color, width, height)
+        }
+    }
+    
+    /// Calculate text width using a specific font
+    pub fn calculate_text_width_with_font(
+        &mut self, 
+        text: &str, 
+        scale: f32,
+        font_path: &str,
+        font_size: u32
+    ) -> Result<f32, String> {
+        let renderer = self.get_text_renderer(font_path, font_size)?;
+        unsafe {
+            renderer.calculate_text_width(text, scale)
+        }
+    }
+    
+    /// Calculate text height using a specific font
+    pub fn calculate_text_height_with_font(
+        &mut self, 
+        text: &str, 
+        scale: f32,
+        font_path: &str,
+        font_size: u32
+    ) -> Result<f32, String> {
+        let renderer = self.get_text_renderer(font_path, font_size)?;
+        unsafe {
+            renderer.calculate_text_height(text, scale)
+        }
+    }
+    
+    /// Calculate text dimensions using a specific font
+    pub fn calculate_text_dimensions_with_font(
+        &mut self, 
+        text: &str, 
+        scale: f32,
+        font_path: &str,
+        font_size: u32
+    ) -> Result<(f32, f32), String> {
+        let renderer = self.get_text_renderer(font_path, font_size)?;
+        unsafe {
+            renderer.calculate_text_dimensions(text, scale)
+        }
+    }
+    
+    /// Get line height for a specific font
+    pub fn get_line_height_with_font(
+        &mut self, 
+        scale: f32,
+        font_path: &str,
+        font_size: u32
+    ) -> Result<f32, String> {
+        let renderer = self.get_text_renderer(font_path, font_size)?;
+        Ok(renderer.get_line_height(scale))
+    }
+    
+    /// Get line spacing for a specific font
+    pub fn get_line_spacing_with_font(
+        &mut self, 
+        scale: f32,
+        font_path: &str,
+        font_size: u32
+    ) -> Result<f32, String> {
+        let renderer = self.get_text_renderer(font_path, font_size)?;
+        Ok(renderer.get_line_spacing(scale))
+    }
+    
+    /// Cleanup text renderer before destroying OpenGL context
+    fn cleanup_text_renderer(&mut self) {
+        if !self.text_renderers.is_empty() {
+            print!("Cleaning up {} text renderer(s)...\r\n", self.text_renderers.len());
+            self.text_renderers.clear(); // This will trigger Drop for all OpenGLTextRenderer instances
         }
     }
 }
@@ -996,89 +1144,7 @@ impl Drop for GraphicsContext {
     }
 }
 
-impl GraphicsContext {
-    /// Initialize text renderer with the specified font
-    pub fn initialize_text_renderer(&mut self, font_path: &str, font_size: u32) -> Result<(), String> {
-        unsafe {
-            let renderer = OpenGLTextRenderer::new(font_path, font_size)?;
-            self.text_renderer = Some(renderer);
-            print!("Text renderer initialized successfully\r\n");
-            Ok(())
-        }
-    }
-    
-    /// Render text using the initialized text renderer
-    pub fn render_text(&mut self, text: &str, x: f32, y: f32, scale: f32, color: (f32, f32, f32)) -> Result<(), String> {
-        if let Some(ref mut renderer) = self.text_renderer {
-            // Apply brightness adjustment to the color
-            let adjusted_color = self.color_manager.apply_brightness(color);
-            unsafe {
-                renderer.render_text(text, x, y, scale, adjusted_color, self.width as f32, self.height as f32)
-            }
-        } else {
-            Err("Text renderer not initialized. Call initialize_text_renderer() first.".to_string())
-        }
-    }
-    
-    /// Calculate text width using the initialized text renderer
-    pub fn calculate_text_width(&mut self, text: &str, scale: f32) -> Result<f32, String> {
-        if let Some(ref mut renderer) = self.text_renderer {
-            unsafe {
-                renderer.calculate_text_width(text, scale)
-            }
-        } else {
-            Err("Text renderer not initialized. Call initialize_text_renderer() first.".to_string())
-        }
-    }
-    
-    /// Calculate text height using the initialized text renderer
-    pub fn calculate_text_height(&mut self, text: &str, scale: f32) -> Result<f32, String> {
-        if let Some(ref mut renderer) = self.text_renderer {
-            unsafe {
-                renderer.calculate_text_height(text, scale)
-            }
-        } else {
-            Err("Text renderer not initialized. Call initialize_text_renderer() first.".to_string())
-        }
-    }
-    
-    /// Calculate text dimensions (width, height) using the initialized text renderer
-    pub fn calculate_text_dimensions(&mut self, text: &str, scale: f32) -> Result<(f32, f32), String> {
-        if let Some(ref mut renderer) = self.text_renderer {
-            unsafe {
-                renderer.calculate_text_dimensions(text, scale)
-            }
-        } else {
-            Err("Text renderer not initialized. Call initialize_text_renderer() first.".to_string())
-        }
-    }
-    
-    /// Get line height for the current font
-    pub fn get_line_height(&self, scale: f32) -> Result<f32, String> {
-        if let Some(ref renderer) = self.text_renderer {
-            Ok(renderer.get_line_height(scale))
-        } else {
-            Err("Text renderer not initialized. Call initialize_text_renderer() first.".to_string())
-        }
-    }
-    
-    /// Get line spacing for the current font
-    pub fn get_line_spacing(&self, scale: f32) -> Result<f32, String> {
-        if let Some(ref renderer) = self.text_renderer {
-            Ok(renderer.get_line_spacing(scale))
-        } else {
-            Err("Text renderer not initialized. Call initialize_text_renderer() first.".to_string())
-        }
-    }
-    
-    /// Cleanup text renderer before destroying OpenGL context
-    fn cleanup_text_renderer(&mut self) {
-        if self.text_renderer.is_some() {
-            print!("Cleaning up text renderer...\r\n");
-            self.text_renderer = None; // This will trigger Drop for OpenGLTextRenderer
-        }
-    }
-}
+
 
 impl OpenGLTextRenderer {
     unsafe fn new(font_path: &str, font_size: u32) -> Result<Self, String> {

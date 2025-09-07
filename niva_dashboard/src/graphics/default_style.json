@@ -1,0 +1,87 @@
+{
+  "global_brightness": 1.0,
+  "global_background_color": "#000000",
+  "global_brand_primary_color": "#FF0000",
+  "global_brand_secondary_color": "#808080",
+  "global_brand_accent_color": "#FF6600",
+  
+  "gauge_background_color": "#000000",
+  "gauge_border_color": "#FFFFFF",
+  "gauge_border_width": 2.0,
+  "gauge_radius": 80.0,
+  
+  "needle_color": "#FF0000",
+  "needle_width": 4.0,
+  "needle_length": 0.8,
+  "needle_center_color": "#404040",
+  "needle_center_radius": 8.0,
+  "needle_shadow_enabled": false,
+  
+  "gauge_major_mark_color": "#FFFFFF",
+  "gauge_major_mark_width": 2.0,
+  "gauge_major_mark_length": 15.0,
+  "gauge_major_mark_offset": 5.0,
+  "gauge_major_mark_enabled": true,
+  
+  "gauge_minor_mark_color": "#808080",
+  "gauge_minor_mark_width": 1.0,
+  "gauge_minor_mark_length": 8.0,
+  "gauge_minor_mark_offset": 5.0,
+  "gauge_minor_mark_enabled": true,
+  "gauge_minor_mark_count": 4,
+  
+  "gauge_label_color": "#FFFFFF",
+  "gauge_label_font": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+  "gauge_label_font_size": 14,
+  "gauge_label_offset": 25.0,
+  "gauge_label_enabled": true,
+  
+  "gauge_title_color": "#FFFFFF",
+  "gauge_title_font": "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+  "gauge_title_font_size": 16,
+  "gauge_title_enabled": true,
+  
+  "gauge_unit_color": "#C0C0C0",
+  "gauge_unit_font_size": 12,
+  "gauge_unit_enabled": true,
+  
+  "gauge_warning_zone_color": "#FFAA00",
+  "gauge_warning_zone_start": 75.0,
+  "gauge_warning_zone_end": 90.0,
+  "gauge_warning_zone_enabled": false,
+  
+  "gauge_critical_zone_color": "#FF0000",
+  "gauge_critical_zone_start": 90.0,
+  "gauge_critical_zone_end": 100.0,
+  "gauge_critical_zone_enabled": false,
+  
+  "bar_background_color": "#404040",
+  "bar_border_color": "#808080",
+  "bar_fill_color": "#00FF00",
+  "bar_fill_gradient_enabled": true,
+  "bar_fill_gradient_start": "#00FF00",
+  "bar_fill_gradient_end": "#FFFF00",
+  
+  "bar_segments_enabled": false,
+  "bar_segment_count": 10,
+  "bar_segment_normal_color": "#00FF00",
+  "bar_segment_warning_color": "#FFAA00",
+  "bar_segment_critical_color": "#FF0000",
+  
+  "text_primary_color": "#FFFFFF",
+  "text_secondary_color": "#C0C0C0",
+  "text_warning_color": "#FFAA00",
+  "text_error_color": "#FF0000",
+  "text_primary_font_size": 16,
+  "text_secondary_font_size": 14,
+  
+  "indicator_normal_color": "#00FF00",
+  "indicator_warning_color": "#FFAA00",
+  "indicator_critical_color": "#FF0000",
+  "indicator_blink_speed": 2.0,
+  "indicator_glow_enabled": false,
+  
+  "animation_needle_speed": 1.0,
+  "animation_bar_speed": 1.0,
+  "animation_smooth_enabled": true
+}

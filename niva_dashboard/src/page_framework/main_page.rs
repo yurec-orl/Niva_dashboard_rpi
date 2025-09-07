@@ -1,4 +1,5 @@
 use crate::graphics::context::GraphicsContext;
+use crate::graphics::ui_style::*;
 use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition};
 use crate::page_framework::events::{EventSender, EventReceiver};
 
@@ -9,9 +10,9 @@ pub struct MainPage {
 }
 
 impl MainPage {
-    pub fn new(id: u32, name: String, event_sender: EventSender, event_receiver: EventReceiver) -> Self {
+    pub fn new(id: u32, name: String, ui_style: UIStyle, event_sender: EventSender, event_receiver: EventReceiver) -> Self {
         MainPage {
-            base: PageBase::new(id, name),
+            base: PageBase::new(id, name, ui_style),
             event_sender,
             event_receiver,
         }
@@ -27,8 +28,20 @@ impl Page for MainPage {
         self.base.id()
     }
 
+    fn name(&self) -> &str {
+        self.base.name()
+    }
+
     fn render(&self, context: &mut GraphicsContext) -> Result<(), String> {
-        context.render_text("Главная", 200.0, 100.0, 1.0, (1.0, 1.0, 1.0))?;
+        context.render_text_with_font(
+            "Main Page", 
+            200.0, 
+            100.0, 
+            1.0, 
+            self.ui_style().get_color(TEXT_PRIMARY_COLOR, (1.0, 1.0, 1.0)),
+            &self.ui_style().get_string(TEXT_PRIMARY_FONT, "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+            self.ui_style().get_integer(TEXT_PRIMARY_FONT_SIZE, 24)
+        )?;
         Ok(())
     }
 
@@ -48,11 +61,19 @@ impl Page for MainPage {
         self.base.buttons()
     }
 
+    fn set_buttons(&mut self, buttons: Vec<PageButton<Box<dyn FnMut()>>>) {
+        self.base.set_buttons(buttons);
+    }
+
     fn button_by_position(&self, pos: ButtonPosition) -> Option<&PageButton<Box<dyn FnMut()>>> {
         self.base.button_by_position(pos)
     }
 
     fn button_by_position_mut(&mut self, pos: ButtonPosition) -> Option<&mut PageButton<Box<dyn FnMut()>>> {
         self.base.button_by_position_mut(pos)
+    }
+
+    fn ui_style(&self) -> &UIStyle {
+        self.base.ui_style()
     }
 }
