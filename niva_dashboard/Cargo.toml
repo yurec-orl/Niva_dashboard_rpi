@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 crossterm = "0.27"
+crossbeam-channel = "0.5"
 drm = "0.11"
 freetype-sys = "0.13"
 gbm-rs = "0.2"
