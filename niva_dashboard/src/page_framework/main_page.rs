@@ -23,7 +23,15 @@ impl Page for MainPage {
     }
 
     fn render(&self, context: &mut GraphicsContext) -> Result<(), String> {
-        context.render_text("Main Page", 200.0, 100.0, 1.0, (1.0, 1.0, 1.0))?;
+        context.render_text_with_font(
+            "Main Page", 
+            200.0, 
+            100.0, 
+            1.0, 
+            (1.0, 1.0, 1.0),
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            24
+        )?;
         Ok(())
     }
 

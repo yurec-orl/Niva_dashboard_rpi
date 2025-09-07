@@ -265,7 +265,7 @@ impl PageManager {
             eprintln!("Warning: Failed to hide cursor: {}", e);
         }
         
-        self.context.initialize_text_renderer("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)?;
+        // Fonts are now created on-demand when needed
         
         print!("Dashboard initialized successfully!\r\n");
         self.running = true;
@@ -444,14 +444,27 @@ impl PageManager {
             // Right side buttons are right-aligned
             ButtonPosition::Right1 | ButtonPosition::Right2 | 
             ButtonPosition::Right3 | ButtonPosition::Right4 => {
-                let text_width = self.context.calculate_text_width(label, label_scale)?;
+                let text_width = self.context.calculate_text_width_with_font(
+                    label, 
+                    label_scale,
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                    16
+                )?;
                 x - text_width
             }
             // Left side buttons are left-aligned
             _ => x,
         };
         
-        self.context.render_text(label, render_x, y, label_scale, label_color)?;
+        self.context.render_text_with_font(
+            label, 
+            render_x, 
+            y, 
+            label_scale, 
+            label_color,
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            16
+        )?;
         Ok(())
     }
     
@@ -501,12 +514,14 @@ impl PageManager {
         let status_y = self.context.height as f32 - STATUS_LINE_MARGIN; // 25 pixels from bottom
         let status_x = 10.0; // 10 pixels from left
         
-        self.context.render_text(
+        self.context.render_text_with_font(
             &status_text,
             status_x,
             status_y,
             1.0, // scale
             (0.7, 0.7, 0.7), // gray color
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            14 // smaller font for status
         )?;
         
         Ok(())
