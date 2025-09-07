@@ -1,5 +1,4 @@
 use crate::graphics::context::GraphicsContext;
-use crate::graphics::ui_style::UIStyle;
 use crate::page_framework::input::{InputHandler, ButtonState};
 use crate::page_framework::main_page::MainPage;
 use crate::page_framework::events::{UIEvent, EventSender, EventReceiver, create_event_channel};

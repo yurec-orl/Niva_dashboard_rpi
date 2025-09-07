@@ -4,7 +4,7 @@ use std::os::raw::{c_char, c_int, c_uint, c_void};
 use std::ptr;
 use std::collections::HashMap;
 use freetype_sys as ft;
-use crate::graphics::colors::ColorManager;
+use crate::graphics::ui_style::UIStyle;
 
 // EGL types and constants
 type EGLDisplay = *mut c_void;
@@ -304,8 +304,8 @@ pub struct GraphicsContext {
     // Text rendering
     pub text_renderer: Option<OpenGLTextRenderer>,
     
-    // Color management with brightness control
-    pub color_manager: ColorManager,
+    // UI style with brightness control and theming
+    pub ui_style: UIStyle,
     
     // State
     initialized: bool,
@@ -332,7 +332,7 @@ impl GraphicsContext {
             width,
             height,
             text_renderer: None,
-            color_manager: ColorManager::new(),
+            ui_style: UIStyle::new(),
             initialized: false,
             display_configured: false,
         };
@@ -926,22 +926,47 @@ impl GraphicsContext {
 
     /// Set display brightness (0.0 to 1.0)
     pub fn set_brightness(&mut self, brightness: f32) {
-        self.color_manager.set_brightness(brightness);
+        self.ui_style.set_brightness(brightness);
     }
 
     /// Get current brightness level
     pub fn get_brightness(&self) -> f32 {
-        self.color_manager.get_brightness()
+        self.ui_style.get_brightness()
     }
 
     /// Increase brightness by a step
     pub fn increase_brightness(&mut self, step: f32) {
-        self.color_manager.increase_brightness(step);
+        self.ui_style.increase_brightness(step);
     }
 
     /// Decrease brightness by a step
     pub fn decrease_brightness(&mut self, step: f32) {
-        self.color_manager.decrease_brightness(step);
+        self.ui_style.decrease_brightness(step);
+    }
+
+    // =============================================================================
+    // UI STYLE ACCESS
+    // =============================================================================
+    
+    /// Get a reference to the UI style
+    pub fn style(&self) -> &UIStyle {
+        &self.ui_style
+    }
+    
+    /// Get a mutable reference to the UI style
+    pub fn style_mut(&mut self) -> &mut UIStyle {
+        &mut self.ui_style
+    }
+    
+    /// Load UI style from JSON string
+    pub fn load_style_from_json(&mut self, json_str: &str) -> Result<(), Box<dyn std::error::Error>> {
+        self.ui_style = UIStyle::from_json(json_str)?;
+        Ok(())
+    }
+    
+    /// Save current UI style to JSON string
+    pub fn save_style_to_json(&self) -> Result<String, serde_json::Error> {
+        self.ui_style.to_json()
     }
 
     /// Clear the screen with black
@@ -1011,7 +1036,7 @@ impl GraphicsContext {
     pub fn render_text(&mut self, text: &str, x: f32, y: f32, scale: f32, color: (f32, f32, f32)) -> Result<(), String> {
         if let Some(ref mut renderer) = self.text_renderer {
             // Apply brightness adjustment to the color
-            let adjusted_color = self.color_manager.apply_brightness(color);
+            let adjusted_color = self.ui_style.apply_brightness(color);
             unsafe {
                 renderer.render_text(text, x, y, scale, adjusted_color, self.width as f32, self.height as f32)
             }

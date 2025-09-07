@@ -314,6 +314,41 @@ impl UIStyle {
             .unwrap_or_else(|| default.to_string())
     }
     
+    // =============================================================================
+    // BRIGHTNESS MANAGEMENT
+    // =============================================================================
+    
+    /// Set global brightness (0.0 to 1.0)
+    pub fn set_brightness(&mut self, brightness: f32) {
+        let clamped_brightness = brightness.clamp(0.0, 1.0);
+        self.set(GLOBAL_BRIGHTNESS, UIStyleValue::Float(clamped_brightness));
+    }
+    
+    /// Get current global brightness
+    pub fn get_brightness(&self) -> f32 {
+        self.get_float(GLOBAL_BRIGHTNESS, 1.0)
+    }
+    
+    /// Increase brightness by a step
+    pub fn increase_brightness(&mut self, step: f32) {
+        let current = self.get_brightness();
+        let new_brightness = (current + step).clamp(0.0, 1.0);
+        self.set_brightness(new_brightness);
+    }
+    
+    /// Decrease brightness by a step
+    pub fn decrease_brightness(&mut self, step: f32) {
+        let current = self.get_brightness();
+        let new_brightness = (current - step).clamp(0.0, 1.0);
+        self.set_brightness(new_brightness);
+    }
+    
+    /// Apply brightness to a color tuple
+    pub fn apply_brightness(&self, color: (f32, f32, f32)) -> (f32, f32, f32) {
+        let brightness = self.get_brightness();
+        (color.0 * brightness, color.1 * brightness, color.2 * brightness)
+    }
+    
     /// Load default style values
     fn load_defaults(&mut self) {
         // Global defaults
@@ -553,5 +588,43 @@ mod tests {
         
         let color = style.get_color(NEEDLE_COLOR).unwrap();
         assert_eq!(color, (0.5, 0.0, 0.0)); // Should be dimmed
+    }
+
+    #[test]
+    fn test_brightness_management() {
+        let mut style = UIStyle::new();
+        
+        // Test default brightness
+        assert_eq!(style.get_brightness(), 1.0);
+        
+        // Test setting brightness
+        style.set_brightness(0.7);
+        assert_eq!(style.get_brightness(), 0.7);
+        
+        // Test increasing brightness
+        style.increase_brightness(0.2);
+        assert_eq!(style.get_brightness(), 0.9);
+        
+        // Test decreasing brightness (use epsilon for floating point comparison)
+        style.decrease_brightness(0.3);
+        let brightness = style.get_brightness();
+        assert!((brightness - 0.6).abs() < 0.001, "Expected ~0.6, got {}", brightness);
+        
+        // Test clamping to bounds
+        style.set_brightness(1.5); // Should be clamped to 1.0
+        assert_eq!(style.get_brightness(), 1.0);
+        
+        style.set_brightness(-0.5); // Should be clamped to 0.0
+        assert_eq!(style.get_brightness(), 0.0);
+        
+        // Test apply_brightness function
+        let color = (1.0, 0.5, 0.2);
+        style.set_brightness(0.8);
+        let adjusted = style.apply_brightness(color);
+        
+        // Use epsilon comparison for floating point values
+        assert!((adjusted.0 - 0.8).abs() < 0.001);
+        assert!((adjusted.1 - 0.4).abs() < 0.001);
+        assert!((adjusted.2 - 0.16).abs() < 0.001);
     }
 }
