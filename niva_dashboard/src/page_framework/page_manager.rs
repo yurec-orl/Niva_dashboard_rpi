@@ -127,6 +127,40 @@ pub trait Page {
     fn button_by_position_mut(&mut self, pos: ButtonPosition) -> Option<&mut PageButton<Box<dyn FnMut()>>>;
 }
 
+// Helper struct to manage collection of pages.
+// Introduced to avoid borrowing issues in PageManager.
+struct Pages {
+    pages: Vec<Box<dyn Page>>,
+}
+
+impl Pages {
+    pub fn new() -> Self {
+        Pages { pages: Vec::new() }
+    }
+
+    pub fn add_page(&mut self, page: Box<dyn Page>) {
+        self.pages.push(page);
+    }
+
+    pub fn get_page(&self, id: u32) -> Option<&Box<dyn Page>> {
+        for page in &self.pages {
+            if page.id() == id {
+                return Some(page);
+            }
+        }
+        None
+    }
+
+    pub fn get_page_mut(&mut self, id: u32) -> Option<&mut Box<dyn Page>> {
+        for page in &mut self.pages {
+            if page.id() == id {
+                return Some(page);
+            }
+        }
+        None
+    }
+}
+
 // PageManager is responsible for managing multiple pages and their transitions,
 // as well as rendering button labels.
 pub struct PageManager {
@@ -134,7 +168,7 @@ pub struct PageManager {
     sensors: SensorManager,
     pg_id: u32,             // Page incremental id, depends on page creation order.
     current_page: Option<u32>,
-    pages: Vec<Box<dyn Page>>,
+    pages: Pages,
 
     // Input handling from gpio buttons, external keyboard, etc.
     input_handler: InputHandler,
@@ -173,7 +207,7 @@ impl PageManager {
             sensors,
             pg_id: 0,
             current_page: None,
-            pages: Vec::new(),
+            pages: Pages::new(),
             input_handler: InputHandler::new(),
             buttons_map,
             event_receiver,
@@ -191,21 +225,11 @@ impl PageManager {
     }
 
     fn get_page(&self, id: u32) -> Option<&Box<dyn Page>> {
-        for page in &self.pages {
-            if page.id() == id {
-                return Some(page);
-            }
-        }
-        None
+        self.pages.get_page(id)
     }
 
     fn get_page_mut(&mut self, id: u32) -> Option<&mut Box<dyn Page>> {
-        for page in &mut self.pages {
-            if page.id() == id {
-                return Some(page);
-            }
-        }
-        None
+        self.pages.get_page_mut(id)
     }
 
     fn get_current_page(&self) -> Option<&Box<dyn Page>> {
@@ -226,11 +250,10 @@ impl PageManager {
 
     fn render_current_page(&mut self) -> Result<(), String> {
         if let Some(page_id) = self.current_page {
-            for page in &mut self.pages {
-                if page.id() == page_id {
-                    return page.render(&mut self.context);
-                }
-            }
+            match self.pages.get_page_mut(page_id) {
+                Some(page) => page.render(&mut self.context),
+                None => Err(format!("Current page id {} not found", page_id)),
+            }?;
         }
 
         Ok(())
@@ -238,7 +261,7 @@ impl PageManager {
 
     pub fn add_page(&mut self, page: Box<dyn Page>) -> u32 {
         let page_id = page.id();
-        self.pages.push(page);
+        self.pages.add_page(page);
         page_id
     }
 
