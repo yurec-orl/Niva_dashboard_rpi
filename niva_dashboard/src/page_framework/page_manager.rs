@@ -1,15 +1,18 @@
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
+use crate::hardware::sensor_manager::SensorManager;
+use crate::page_framework::diag_page::DiagPage;
+use crate::page_framework::events::{UIEvent, EventSender, EventReceiver, create_event_channel};
 use crate::page_framework::input::{InputHandler, ButtonState};
 use crate::page_framework::main_page::MainPage;
-use crate::page_framework::events::{UIEvent, EventSender, EventReceiver, create_event_channel};
-
-use crate::hardware::sensor_manager::SensorManager;
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 const STATUS_LINE_MARGIN: f32 = 25.0;
+
+pub const MAIN_PAGE_NAME: &str = "Main";
+pub const DIAG_PAGE_NAME: &str = "Diagnostics";
 
 // ButtonPosition correspond to physical 2x4 buttons layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -77,6 +80,10 @@ impl PageBase {
         self.id
     }
 
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     pub fn set_buttons(&mut self, mut buttons: Vec<PageButton<Box<dyn FnMut()>>>) {
         // Sort buttons by position to ensure correct order
         buttons.sort_by_key(|button| button.position().clone());
@@ -102,6 +109,7 @@ impl PageBase {
 
 pub trait Page {
     fn id(&self) -> u32;
+    fn name(&self) -> &str;
     // Render page-specific stuff (except button labels, which are PageManager responsibility).
     fn render(&self, context: &mut GraphicsContext) -> Result<(), String>;
     // Trigger once on switching to this page.
@@ -112,6 +120,7 @@ pub trait Page {
     fn on_button(&mut self, button: char) -> Result<(), String>;
 
     fn buttons(&self) -> &Vec<PageButton<Box<dyn FnMut()>>>;
+    fn set_buttons(&mut self, buttons: Vec<PageButton<Box<dyn FnMut()>>>);
 
     fn button_by_position(&self, pos: ButtonPosition) -> Option<&PageButton<Box<dyn FnMut()>>>;
     
@@ -124,7 +133,7 @@ pub struct PageManager {
     context: GraphicsContext,
     sensors: SensorManager,
     pg_id: u32,             // Page incremental id, depends on page creation order.
-    current_page: Option<usize>,
+    current_page: Option<u32>,
     pages: Vec<Box<dyn Page>>,
 
     // Input handling from gpio buttons, external keyboard, etc.
@@ -181,35 +190,66 @@ impl PageManager {
         id
     }
 
-    fn get_page(&self, index: Option<usize>) -> Option<&Box<dyn Page>> {
-        index.and_then(|i| self.pages.get(i))
+    fn get_page(&self, id: u32) -> Option<&Box<dyn Page>> {
+        for page in &self.pages {
+            if page.id() == id {
+                return Some(page);
+            }
+        }
+        None
     }
 
-    fn get_page_mut(&mut self, index: Option<usize>) -> Option<&mut Box<dyn Page>> {
-        index.and_then(|i| self.pages.get_mut(i))
+    fn get_page_mut(&mut self, id: u32) -> Option<&mut Box<dyn Page>> {
+        for page in &mut self.pages {
+            if page.id() == id {
+                return Some(page);
+            }
+        }
+        None
     }
 
     fn get_current_page(&self) -> Option<&Box<dyn Page>> {
-        self.get_page(self.current_page)
+        if let Some(page_id) = self.current_page {
+            self.get_page(page_id)
+        } else {
+            None
+        }
     }
 
     fn get_current_page_mut(&mut self) -> Option<&mut Box<dyn Page>> {
-        self.get_page_mut(self.current_page)
+        if let Some(page_id) = self.current_page {
+            self.get_page_mut(page_id)
+        } else {
+            None
+        }
     }
 
-    pub fn add_page(&mut self, page: Box<dyn Page>) -> usize {
+    fn render_current_page(&mut self) -> Result<(), String> {
+        if let Some(page_id) = self.current_page {
+            for page in &mut self.pages {
+                if page.id() == page_id {
+                    return page.render(&mut self.context);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn add_page(&mut self, page: Box<dyn Page>) -> u32 {
+        let page_id = page.id();
         self.pages.push(page);
-        self.pages.len() - 1
+        page_id
     }
 
     // Switch to a page by index
-    pub fn switch_page(&mut self, page_index: usize) -> Result<(), String> {
+    pub fn switch_page(&mut self, page_id: u32) -> Result<(), String> {
         // Call on_exit for old page first.
         if let Some(current) = self.get_current_page_mut() {
             current.on_exit()?;
         }
 
-        self.current_page = Some(page_index);
+        self.current_page = Some(page_id);
 
         // Call on_enter for new page.
         if let Some(current) = self.get_current_page_mut() {
@@ -228,13 +268,25 @@ impl PageManager {
     pub fn setup(&mut self) -> Result<(), String> {
         // Get event sender for button callbacks
         let event_sender = self.event_sender.clone();
-        
+
+        // Create and add pages first to get their IDs
         let mut main_page_style = UIStyle::new();
         main_page_style.set(TEXT_PRIMARY_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf".to_string()));
         main_page_style.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(24));
         main_page_style.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#FFFFFF".to_string())); // White color
-        let mut main_page = Box::new(MainPage::new(self.get_page_mut_id(), "Main".into(), main_page_style));
-        
+        let mut main_page = Box::new(MainPage::new(self.get_page_mut_id(), MAIN_PAGE_NAME.to_string(), main_page_style));
+
+        let mut diag_page_style = UIStyle::new();
+        diag_page_style.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(20));
+        diag_page_style.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#00FF00".to_string())); // Green color
+        diag_page_style.set(TEXT_PRIMARY_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf".to_string()));
+        let mut diag_page = Box::new(DiagPage::new(self.get_page_mut_id(), DIAG_PAGE_NAME.to_string(), diag_page_style));
+
+        let main_page_id = self.add_page(main_page);
+        self.switch_page(main_page_id)?;
+
+        let diag_page_id = self.add_page(diag_page);
+
         // Create buttons that send events instead of direct function calls
         let view_up_sender = event_sender.clone();
         let view_down_sender = event_sender.clone();
@@ -256,14 +308,32 @@ impl PageManager {
                 brightness_down_sender.send(UIEvent::BrightnessDown);
             }) as Box<dyn FnMut()>),
             PageButton::new(ButtonPosition::Right4, "ДИАГ".into(), Box::new(move || {
-                diag_sender.send(UIEvent::ShowDiagnostics);
+                diag_sender.send(UIEvent::SwitchToPage(diag_page_id));
             }) as Box<dyn FnMut()>),
         ];
-        
-        main_page.set_buttons(main_buttons);
-        
-        let main_page_idx = self.add_page(main_page);
-        self.switch_page(main_page_idx)?;
+
+        self.get_page_mut(main_page_id).expect("Failed to get main page").set_buttons(main_buttons);
+
+        let diag_sensors_sender = event_sender.clone();
+        let diag_log_sender = event_sender.clone();
+        let diag_back_sender = event_sender.clone();
+
+        match self.get_page_mut(diag_page_id) {
+            Some(page) => {
+                page.set_buttons(vec![
+                    PageButton::new(ButtonPosition::Left1, "ДАТЧ".into(), Box::new(move || {
+                        diag_sensors_sender.send(UIEvent::ButtonPressed("diag_test_1".into()));
+                    }) as Box<dyn FnMut()>),
+                    PageButton::new(ButtonPosition::Left2, "ЖУРН".into(), Box::new(move || {
+                        diag_log_sender.send(UIEvent::ButtonPressed("diag_test_2".into()));
+                    }) as Box<dyn FnMut()>),
+                    PageButton::new(ButtonPosition::Right4, "ВОЗВ".into(), Box::new(move || {
+                        diag_back_sender.send(UIEvent::SwitchToPage(main_page_id));
+                    }) as Box<dyn FnMut()>),
+                ]);
+            }
+            None => return Err("Failed to get diag page for button setup".into()),
+        }
 
         Ok(())
     }
@@ -273,7 +343,7 @@ impl PageManager {
     pub fn start(&mut self) -> Result<(), String> {
         // Hide mouse cursor for dashboard
         if let Err(e) = self.context.hide_cursor() {
-            eprintln!("Warning: Failed to hide cursor: {}", e);
+            print!("Warning: Failed to hide cursor: {}\r\n", e);
         }
         
         // Fonts are now created on-demand when needed
@@ -304,13 +374,7 @@ impl PageManager {
             }
             
             // Render current page
-            if let Some(page_idx) = self.current_page {
-                // Create a temporary borrow to avoid conflicts
-                let page = &mut self.pages[page_idx];
-                page.render(&mut self.context)?;
-            } else {
-                return Err("No current page to render".into());
-            }
+            self.render_current_page()?;
 
             // Render button labels on left and right sides
             self.render_button_labels()?;
@@ -372,25 +436,9 @@ impl PageManager {
             UIEvent::SetBrightness(level) => {
                 self.set_brightness(level);
             }
-            UIEvent::SwitchToPage(page_index) => {
-                if let Err(e) = self.switch_page(page_index) {
-                    print!("Failed to switch to page {}: {}\r\n", page_index, e);
-                }
-            }
-            UIEvent::NextPage => {
-                if let Some(current) = self.current_page {
-                    let next_page = (current + 1) % self.pages.len();
-                    if let Err(e) = self.switch_page(next_page) {
-                        print!("Failed to switch to next page: {}\r\n", e);
-                    }
-                }
-            }
-            UIEvent::PreviousPage => {
-                if let Some(current) = self.current_page {
-                    let prev_page = if current == 0 { self.pages.len() - 1 } else { current - 1 };
-                    if let Err(e) = self.switch_page(prev_page) {
-                        print!("Failed to switch to previous page: {}\r\n", e);
-                    }
+            UIEvent::SwitchToPage(page_id) => {
+                if let Err(e) = self.switch_page(page_id) {
+                    print!("Failed to switch to page {}: {}\r\n", page_id, e);
                 }
             }
             UIEvent::Shutdown => {
@@ -409,9 +457,13 @@ impl PageManager {
                     _ => print!("Unknown action: {}\r\n", action),
                 }
             }
-            UIEvent::ShowDiagnostics => {
-                print!("Showing diagnostics...\r\n");
-                // Implement diagnostics display
+            UIEvent::ShowSensorsInfo => {
+                print!("Showing sensors info...\r\n");
+                // Implement showing sensors info
+            }
+            UIEvent::ShowLog => {
+                print!("Showing log...\r\n");
+                // Implement showing log
             }
             UIEvent::RunSelfTest => {
                 print!("Running self test...\r\n");

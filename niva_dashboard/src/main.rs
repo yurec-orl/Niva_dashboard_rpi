@@ -19,7 +19,7 @@ fn setup_context() -> GraphicsContext {
 
     // Hide mouse cursor for dashboard application
     if let Err(e) = context.hide_cursor() {
-        eprintln!("Warning: Failed to hide cursor: {}", e);
+        print!("Warning: Failed to hide cursor: {}\r\n", e);
     } else {
         print!("✓ Mouse cursor hidden for dashboard mode\r\n");
     }
@@ -62,7 +62,7 @@ fn main() {
                     return;
                 }
                 _ => {
-                    eprintln!("Unknown argument: {}", parm[0]);
+                    print!("Unknown argument: {}\r\n", parm[0]);
                 }
             }
         }
@@ -77,6 +77,6 @@ fn main() {
 
     match mgr.start() {
         Ok(()) => print!("Dashboard finished successfully!\r\n"),
-        Err(e) => eprintln!("Failed to start dashboard: {}", e),
+        Err(e) => print!("Failed to start dashboard: {}\r\n", e),
     }
 }

@@ -9,10 +9,8 @@ pub enum UIEvent {
     SetBrightness(f32),
     
     // Page navigation
-    SwitchToPage(usize),
-    NextPage,
-    PreviousPage,
-    
+    SwitchToPage(u32),
+
     // System events
     Shutdown,
     Restart,
@@ -21,7 +19,8 @@ pub enum UIEvent {
     ButtonPressed(String), // Generic button with custom action name
     
     // Diagnostic events
-    ShowDiagnostics,
+    ShowSensorsInfo,
+    ShowLog,
     RunSelfTest,
 }
 
@@ -39,7 +38,7 @@ impl EventSender {
     /// Send an event (non-blocking)
     pub fn send(&self, event: UIEvent) {
         if let Err(e) = self.sender.send(event) {
-            eprintln!("Failed to send UI event: {:?}", e);
+            print!("Failed to send UI event: {:?}\r\n", e);
         }
     }
     

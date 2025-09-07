@@ -2,13 +2,13 @@ use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
 use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition};
 
-pub struct MainPage {
+pub struct DiagPage {
     base: PageBase,
 }
 
-impl MainPage {
+impl DiagPage {
     pub fn new(id: u32, name: String, ui_style: UIStyle) -> Self {
-        MainPage {
+        DiagPage {
             base: PageBase::new(id, name, ui_style),
         }
     }
@@ -22,7 +22,7 @@ impl MainPage {
     }
 }
 
-impl Page for MainPage {
+impl Page for DiagPage {
     fn id(&self) -> u32 {
         self.base.id()
     }
@@ -33,7 +33,7 @@ impl Page for MainPage {
 
     fn render(&self, context: &mut GraphicsContext) -> Result<(), String> {
         context.render_text_with_font(
-            "Main Page", 
+            "Diagnostics Page", 
             200.0, 
             100.0, 
             1.0, 
