@@ -129,7 +129,7 @@ impl SensorManager {
 
     pub fn read_digital_sensor(&mut self, input: HWDigitalInput) -> Result<bool, String> {
         for chain in &mut self.digital_sensors {
-            if (chain.hw_provider.input() != input) {
+            if chain.hw_provider.input() != input {
                 continue;
             }
             // Read raw input from hardware provider
@@ -148,7 +148,7 @@ impl SensorManager {
 
     pub fn read_analog_sensor(&mut self, input: HWAnalogInput) -> Result<f32, String> {
         for chain in &mut self.analog_sensors {
-            if (chain.hw_provider.input() != input) {
+            if chain.hw_provider.input() != input {
                 continue;
             }
             // Read raw input from hardware provider

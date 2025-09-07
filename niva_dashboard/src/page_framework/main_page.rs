@@ -1,4 +1,5 @@
 use crate::graphics::context::GraphicsContext;
+use crate::graphics::ui_style::*;
 use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition};
 
 pub struct MainPage {
@@ -6,14 +7,18 @@ pub struct MainPage {
 }
 
 impl MainPage {
-    pub fn new(id: u32, name: String) -> Self {
+    pub fn new(id: u32, name: String, ui_style: UIStyle) -> Self {
         MainPage {
-            base: PageBase::new(id, name),
+            base: PageBase::new(id, name, ui_style),
         }
     }
 
     pub fn set_buttons(&mut self, buttons: Vec<PageButton<Box<dyn FnMut()>>>) {
         self.base.set_buttons(buttons);
+    }
+
+    pub fn ui_style(&self) -> &UIStyle {
+        self.base.ui_style()
     }
 }
 
@@ -28,9 +33,9 @@ impl Page for MainPage {
             200.0, 
             100.0, 
             1.0, 
-            (1.0, 1.0, 1.0),
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            24
+            self.ui_style().get_color(TEXT_PRIMARY_COLOR, (1.0, 1.0, 1.0)),
+            &self.ui_style().get_string(TEXT_PRIMARY_FONT, "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+            self.ui_style().get_integer(TEXT_PRIMARY_FONT_SIZE, 24)
         )?;
         Ok(())
     }

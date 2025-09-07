@@ -1,4 +1,5 @@
 use crate::graphics::context::GraphicsContext;
+use crate::graphics::ui_style::*;
 use crate::page_framework::input::{InputHandler, ButtonState};
 use crate::page_framework::main_page::MainPage;
 use crate::page_framework::events::{UIEvent, EventSender, EventReceiver, create_event_channel};
@@ -59,14 +60,16 @@ pub struct PageBase {
     id: u32,            // Incremental id, depends on page creation order.
     name: String,
     buttons: Vec<PageButton<Box<dyn FnMut()>>>,
+    ui_style: UIStyle,
 }
 
 impl PageBase {
-    pub fn new(id: u32, name: String) -> Self {
+    pub fn new(id: u32, name: String, ui_style: UIStyle) -> Self {
         PageBase {
             id,
             name,
             buttons: Vec::new(),
+            ui_style,
         }
     }
 
@@ -90,6 +93,10 @@ impl PageBase {
 
     pub fn button_by_position_mut(&mut self, pos: ButtonPosition) -> Option<&mut PageButton<Box<dyn FnMut()>>> {
         self.buttons.iter_mut().find(|button| button.position() == &pos)
+    }
+
+    pub fn ui_style(&self) -> &UIStyle {
+        &self.ui_style
     }
 }
 
@@ -222,7 +229,11 @@ impl PageManager {
         // Get event sender for button callbacks
         let event_sender = self.event_sender.clone();
         
-        let mut main_page = Box::new(MainPage::new(self.get_page_mut_id(), "Main".into()));
+        let mut main_page_style = UIStyle::new();
+        main_page_style.set(TEXT_PRIMARY_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf".to_string()));
+        main_page_style.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(24));
+        main_page_style.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#FFFFFF".to_string())); // White color
+        let mut main_page = Box::new(MainPage::new(self.get_page_mut_id(), "Main".into(), main_page_style));
         
         // Create buttons that send events instead of direct function calls
         let view_up_sender = event_sender.clone();

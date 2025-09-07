@@ -32,6 +32,8 @@ pub const GLOBAL_BACKGROUND_COLOR: &str = "global_background_color";
 pub const GLOBAL_BRAND_PRIMARY_COLOR: &str = "global_brand_primary_color";
 pub const GLOBAL_BRAND_SECONDARY_COLOR: &str = "global_brand_secondary_color";
 pub const GLOBAL_BRAND_ACCENT_COLOR: &str = "global_brand_accent_color";
+pub const GLOBAL_FONT_PATH: &str = "global_font_path";
+pub const GLOBAL_FONT_SIZE: &str = "global_font_size";
 
 // Gauge Style Elements
 pub const GAUGE_BACKGROUND_COLOR: &str = "gauge_background_color";
@@ -266,52 +268,100 @@ impl UIStyle {
     }
     
     /// Get color value with brightness applied
-    pub fn get_color(&self, key: &str) -> Result<(f32, f32, f32), String> {
-        let value = self.get(key)
-            .ok_or_else(|| format!("Style key '{}' not found", key))?;
-        let (r, g, b) = value.as_color()?;
-        
-        // Apply global brightness
-        let brightness = self.get(GLOBAL_BRIGHTNESS)
-            .and_then(|v| v.as_float().ok())
-            .unwrap_or(1.0);
-            
-        Ok((r * brightness, g * brightness, b * brightness))
+    pub fn get_color(&self, key: &str, default: (f32, f32, f32)) -> (f32, f32, f32) {
+        match self.get(key) {
+            Some(value) => match value.as_color() {
+                Ok((r, g, b)) => {
+                    // Apply global brightness
+                    let brightness = self.get(GLOBAL_BRIGHTNESS)
+                        .and_then(|v| v.as_float().ok())
+                        .unwrap_or(1.0);
+                    (r * brightness, g * brightness, b * brightness)
+                },
+                Err(_) => {
+                    print!("Warning: Style key '{}' exists but cannot be converted to color, using default: ({}, {}, {})\r\n", key, default.0, default.1, default.2);
+                    default
+                }
+            },
+            None => {
+                print!("Warning: Style key '{}' not found, using default color: ({}, {}, {})\r\n", key, default.0, default.1, default.2);
+                default
+            }
+        }
     }
     
     /// Get color value with alpha and brightness applied
-    pub fn get_color_rgba(&self, key: &str) -> Result<(f32, f32, f32, f32), String> {
-        let (r, g, b) = self.get_color(key)?;
-        Ok((r, g, b, 1.0))
+    pub fn get_color_rgba(&self, key: &str, default: (f32, f32, f32, f32)) -> (f32, f32, f32, f32) {
+        let (r, g, b) = self.get_color(key, (default.0, default.1, default.2));
+        (r, g, b, default.3)
     }
     
     /// Get float value with fallback
     pub fn get_float(&self, key: &str, default: f32) -> f32 {
-        self.get(key)
-            .and_then(|v| v.as_float().ok())
-            .unwrap_or(default)
+        match self.get(key) {
+            Some(value) => match value.as_float() {
+                Ok(val) => val,
+                Err(_) => {
+                    print!("Warning: Style key '{}' exists but cannot be converted to float, using default: {}\r\n", key, default);
+                    default
+                }
+            },
+            None => {
+                print!("Warning: Style key '{}' not found, using default float: {}\r\n", key, default);
+                default
+            }
+        }
     }
     
     /// Get integer value with fallback
     pub fn get_integer(&self, key: &str, default: u32) -> u32 {
-        self.get(key)
-            .and_then(|v| v.as_integer().ok())
-            .unwrap_or(default)
+        match self.get(key) {
+            Some(value) => match value.as_integer() {
+                Ok(val) => val,
+                Err(_) => {
+                    print!("Warning: Style key '{}' exists but cannot be converted to integer, using default: {}\r\n", key, default);
+                    default
+                }
+            },
+            None => {
+                print!("Warning: Style key '{}' not found, using default integer: {}\r\n", key, default);
+                default
+            }
+        }
     }
     
     /// Get boolean value with fallback
     pub fn get_bool(&self, key: &str, default: bool) -> bool {
-        self.get(key)
-            .and_then(|v| v.as_bool().ok())
-            .unwrap_or(default)
+        match self.get(key) {
+            Some(value) => match value.as_bool() {
+                Ok(val) => val,
+                Err(_) => {
+                    print!("Warning: Style key '{}' exists but cannot be converted to boolean, using default: {}\r\n", key, default);
+                    default
+                }
+            },
+            None => {
+                print!("Warning: Style key '{}' not found, using default boolean: {}\r\n", key, default);
+                default
+            }
+        }
     }
     
     /// Get string value with fallback
     pub fn get_string(&self, key: &str, default: &str) -> String {
-        self.get(key)
-            .and_then(|v| v.as_string().ok())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| default.to_string())
+        match self.get(key) {
+            Some(value) => match value.as_string() {
+                Ok(val) => val.to_string(),
+                Err(_) => {
+                    print!("Warning: Style key '{}' exists but cannot be converted to string, using default: '{}'\r\n", key, default);
+                    default.to_string()
+                }
+            },
+            None => {
+                print!("Warning: Style key '{}' not found, using default string: '{}'\r\n", key, default);
+                default.to_string()
+            }
+        }
     }
     
     // =============================================================================
@@ -358,6 +408,8 @@ impl UIStyle {
         self.set(GLOBAL_BRAND_PRIMARY_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
         self.set(GLOBAL_BRAND_SECONDARY_COLOR, UIStyleValue::Color("#808080".to_string()));
         self.set(GLOBAL_BRAND_ACCENT_COLOR, UIStyleValue::Color("#0080FF".to_string()));
+        self.set(GLOBAL_FONT_PATH, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
+        self.set(GLOBAL_FONT_SIZE, UIStyleValue::Integer(16));
         
         // Gauge defaults
         self.set(GAUGE_BACKGROUND_COLOR, UIStyleValue::Color("#000000".to_string()));
@@ -575,7 +627,7 @@ mod tests {
         let json = style.to_json().unwrap();
         let loaded_style = UIStyle::from_json(&json).unwrap();
         
-        assert_eq!(loaded_style.get_color(NEEDLE_COLOR).unwrap(), (1.0, 0.0, 0.0));
+        assert_eq!(loaded_style.get_color(NEEDLE_COLOR, (0.0, 0.0, 0.0)), (1.0, 0.0, 0.0));
         assert_eq!(loaded_style.get_float(GAUGE_BORDER_WIDTH, 0.0), 2.5);
         assert_eq!(loaded_style.get_bool(GAUGE_LABEL_ENABLED, false), true);
     }
@@ -586,7 +638,7 @@ mod tests {
         style.set(GLOBAL_BRIGHTNESS, UIStyleValue::Float(0.5));
         style.set(NEEDLE_COLOR, UIStyleValue::Color("#FF0000".to_string()));
         
-        let color = style.get_color(NEEDLE_COLOR).unwrap();
+        let color = style.get_color(NEEDLE_COLOR, (0.0, 0.0, 0.0));
         assert_eq!(color, (0.5, 0.0, 0.0)); // Should be dimmed
     }
 
@@ -626,5 +678,30 @@ mod tests {
         assert!((adjusted.0 - 0.8).abs() < 0.001);
         assert!((adjusted.1 - 0.4).abs() < 0.001);
         assert!((adjusted.2 - 0.16).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_warning_messages() {
+        let style = UIStyle::new();
+        
+        // Test color warning
+        let color = style.get_color("non_existent_color", (0.5, 0.5, 0.5));
+        assert_eq!(color, (0.5, 0.5, 0.5));
+        
+        // Test float warning
+        let float_val = style.get_float("non_existent_float", 3.14);
+        assert_eq!(float_val, 3.14);
+        
+        // Test integer warning
+        let int_val = style.get_integer("non_existent_int", 42);
+        assert_eq!(int_val, 42);
+        
+        // Test boolean warning
+        let bool_val = style.get_bool("non_existent_bool", true);
+        assert_eq!(bool_val, true);
+        
+        // Test string warning
+        let string_val = style.get_string("non_existent_string", "default");
+        assert_eq!(string_val, "default");
     }
 }
