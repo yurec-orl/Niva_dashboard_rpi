@@ -47,7 +47,7 @@ impl TextIndicator {
         }
     }
     
-    /// Format the sensor value as a display string
+    /// Format the sensor value as a display string (without label)
     fn format_value(&self, value: &SensorValue) -> String {
         let value_str = match value.value {
             ValueData::Digital(b) => {
@@ -64,16 +64,7 @@ impl TextIndicator {
             }
         };
         
-        let mut result = String::new();
-        
-        // Add label if requested
-        if self.show_label && !value.metadata.label.is_empty() {
-            result.push_str(&value.metadata.label);
-            result.push_str(": ");
-        }
-        
-        // Add the value
-        result.push_str(&value_str);
+        let mut result = value_str;
         
         // Add unit if requested and available
         if self.show_unit && !value.metadata.unit.is_empty() {
@@ -87,6 +78,15 @@ impl TextIndicator {
         result
     }
     
+    /// Get the label text
+    fn get_label(&self, value: &SensorValue) -> String {
+        if self.show_label && !value.metadata.label.is_empty() {
+            value.metadata.label.clone()
+        } else {
+            String::new()
+        }
+    }
+    
     /// Get text color based on value status
     fn get_text_color(&self, value: &SensorValue) -> &'static str {
         if value.is_critical() {
@@ -98,18 +98,26 @@ impl TextIndicator {
         }
     }
     
-    /// Calculate text position based on alignment
-    fn calculate_text_position(&self, bounds: IndicatorBounds, text_width: f32) -> (f32, f32) {
-        let x = match self.alignment {
-            TextAlignment::Left => bounds.x,
-            TextAlignment::Center => bounds.x + (bounds.width - text_width) / 2.0,
-            TextAlignment::Right => bounds.x + bounds.width - text_width,
-        };
+    /// Calculate text position for label and value (label above, value below, both centered)
+    fn calculate_text_positions(
+        &self, 
+        bounds: IndicatorBounds, 
+        label_width: f32, 
+        value_width: f32,
+        font_height: f32
+    ) -> ((f32, f32), (f32, f32)) {
+        // Calculate x positions (centered)
+        let label_x = bounds.x + (bounds.width - label_width) / 2.0;
+        let value_x = bounds.x + (bounds.width - value_width) / 2.0;
         
-        // Vertically center the text
-        let y = bounds.y + bounds.height / 2.0;
+        // Calculate y positions (label in upper half, value in lower half)
+        let center_y = bounds.y + bounds.height / 2.0;
+        let spacing = font_height * 0.2; // Small spacing between label and value
         
-        (x, y)
+        let label_y = center_y - spacing / 2.0 - font_height / 2.0;
+        let value_y = center_y + spacing / 2.0 + font_height / 2.0;
+        
+        ((label_x, label_y), (value_x, value_y))
     }
 }
 
@@ -127,31 +135,65 @@ impl Indicator for TextIndicator {
         style: &UIStyle,
         context: &mut GraphicsContext,
     ) -> Result<(), String> {
-        // Format the text to display
-        let display_text = self.format_value(value);
+        // Get label and value texts
+        let label_text = self.get_label(value);
+        let value_text = self.format_value(value);
         
         // Get style parameters
         let font_path = style.get_string(TEXT_PRIMARY_FONT, "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf");
         let font_size = style.get_integer(TEXT_PRIMARY_FONT_SIZE, 24) as u32;
         let text_color = style.get_color(self.get_text_color(value), (1.0, 1.0, 1.0)); // Default to white
         
-        // Calculate text dimensions
         let scale = 1.0; // Default scale factor
-        let text_width = context.calculate_text_width_with_font(
-            &display_text,
+        
+        // Calculate text dimensions
+        let label_width = if !label_text.is_empty() {
+            context.calculate_text_width_with_font(
+                &label_text,
+                scale,
+                &font_path,
+                font_size,
+            )?
+        } else {
+            0.0
+        };
+        
+        let value_width = context.calculate_text_width_with_font(
+            &value_text,
             scale,
             &font_path,
             font_size,
         )?;
         
-        // Calculate position based on alignment
-        let (x, y) = self.calculate_text_position(bounds, text_width);
+        // Get font height for positioning
+        let font_height = context.get_line_height_with_font(scale, &font_path, font_size)?;
         
-        // Render the text
+        // Calculate positions for both texts
+        let ((label_x, label_y), (value_x, value_y)) = self.calculate_text_positions(
+            bounds, 
+            label_width, 
+            value_width, 
+            font_height
+        );
+        
+        // Render label if present
+        if !label_text.is_empty() {
+            context.render_text_with_font(
+                &label_text,
+                label_x,
+                label_y,
+                scale,
+                text_color,
+                &font_path,
+                font_size,
+            )?;
+        }
+        
+        // Render value
         context.render_text_with_font(
-            &display_text,
-            x,
-            y,
+            &value_text,
+            value_x,
+            value_y,
             scale,
             text_color,
             &font_path,
@@ -167,7 +209,13 @@ impl Indicator for TextIndicator {
         // Estimate size based on typical text content
         // This is a rough estimate - actual size depends on the value being displayed
         let estimated_width = font_size * 8.0; // Approximate width for "123.4 °C"
-        let estimated_height = font_size * 1.5; // Font size + some padding
+        
+        // Height needs to accommodate both label and value with spacing
+        let estimated_height = if self.show_label {
+            font_size * 2.5 // Two lines of text plus spacing
+        } else {
+            font_size * 1.5 // Single line of text plus padding
+        };
         
         (estimated_width, estimated_height)
     }

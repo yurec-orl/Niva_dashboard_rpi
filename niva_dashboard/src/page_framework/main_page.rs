@@ -37,8 +37,8 @@ impl MainPage {
         let margin_left = 120.0;
         let margin_top = 80.0;
         let col_width = 140.0;
-        let row_height = 120.0;
-        let indicator_width = 120.0;
+        let row_height = 64.0;
+        let indicator_width = 64.0;
         let indicator_height = 40.0;
 
         let mut col = 0;

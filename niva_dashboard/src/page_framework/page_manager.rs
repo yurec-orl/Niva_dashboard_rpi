@@ -170,6 +170,8 @@ impl Pages {
 pub struct PageManager {
     // Rendering-related stuff.
     context: GraphicsContext,
+    // Global UI style settings.
+    ui_style: UIStyle,
 
     // Takes care of low-level hw input, signal processing, and conversion
     // to actual sensor values.
@@ -215,8 +217,14 @@ impl PageManager {
         let event_sender = event_bus.sender();
         let event_receiver = event_bus.receiver();
 
+        let ui_style = UIStyle::new();
+        // ui_style.read_from_file("/etc/niva_dashboard/ui_style.json").unwrap_or_else(|e| {
+        //     print!("Warning: Failed to read UI style config: {}\r\n", e);
+        // });
+
         PageManager {
             context,
+            ui_style,
             sensor_manager,
             pg_id: 0,
             current_page: None,
@@ -317,9 +325,8 @@ impl PageManager {
         let event_sender = self.event_sender.clone();
 
         // Create and add pages first to get their IDs
-        let mut main_page_style = UIStyle::new();
-        main_page_style.set(TEXT_PRIMARY_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf".to_string()));
-        main_page_style.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(24));
+        let mut main_page_style = self.ui_style.clone();
+        main_page_style.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(14));
         main_page_style.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#FFFFFF".to_string())); // White color
         let mut main_page = Box::new(MainPage::new(self.get_page_mut_id(),
                                                    MAIN_PAGE_NAME.to_string(),
@@ -327,13 +334,13 @@ impl PageManager {
                                                    event_sender.clone(),
                                                    self.get_event_receiver()));
 
-        let mut diag_page_style = UIStyle::new();
-        diag_page_style.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(20));
-        diag_page_style.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#00FF00".to_string())); // Green color
-        diag_page_style.set(TEXT_PRIMARY_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf".to_string()));
+        // let mut diag_page_style = UIStyle::new();
+        // diag_page_style.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(20));
+        // diag_page_style.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#00FF00".to_string())); // Green color
+        // diag_page_style.set(TEXT_PRIMARY_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf".to_string()));
         let mut diag_page = Box::new(DiagPage::new(self.get_page_mut_id(),
                                                    DIAG_PAGE_NAME.to_string(),
-                                                   diag_page_style,
+                                                   self.ui_style.clone(),
                                                    event_sender.clone(),
                                                    self.get_event_receiver()));
 
@@ -430,6 +437,9 @@ impl PageManager {
                 gl::Enable(gl::BLEND);
                 gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
             }
+
+            // Read sensor values
+            self.sensor_manager.read_all_sensors()?;
             
             // Render current page
             self.render_current_page()?;

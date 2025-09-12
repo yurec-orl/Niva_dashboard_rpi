@@ -130,6 +130,8 @@ pub const TEXT_SECONDARY_FONT: &str = "text_secondary_font";
 pub const TEXT_SECONDARY_FONT_SIZE: &str = "text_secondary_font_size";
 pub const TEXT_MONOSPACE_FONT: &str = "text_monospace_font";
 pub const TEXT_MONOSPACE_FONT_SIZE: &str = "text_monospace_font_size";
+pub const TEXT_SMALL_FONT: &str = "text_small_font";
+pub const TEXT_SMALL_FONT_SIZE: &str = "text_small_font_size";
 
 pub const TEXT_LINE_SPACING: &str = "text_line_spacing";
 pub const TEXT_LETTER_SPACING: &str = "text_letter_spacing";
@@ -505,6 +507,9 @@ impl UIStyle {
         self.set(TEXT_SECONDARY_FONT_SIZE, UIStyleValue::Integer(14));
         self.set(TEXT_MONOSPACE_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf".to_string()));
         self.set(TEXT_MONOSPACE_FONT_SIZE, UIStyleValue::Integer(14));
+        self.set(TEXT_SMALL_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
+        self.set(TEXT_SMALL_FONT_SIZE, UIStyleValue::Integer(10));
+
         self.set(TEXT_LINE_SPACING, UIStyleValue::Float(1.2));
         self.set(TEXT_LETTER_SPACING, UIStyleValue::Float(0.0));
         
