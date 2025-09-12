@@ -1,7 +1,7 @@
 use rppal::gpio::Level;
 use std::time::{Duration, Instant};
 
-use crate::hardware::hw_providers::{HWDigitalInput, HWDigitalProvider};
+use crate::hardware::hw_providers::{HWDigitalProvider};
 
 // Raw digital data processors
 

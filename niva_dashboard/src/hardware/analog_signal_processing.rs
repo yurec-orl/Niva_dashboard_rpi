@@ -1,5 +1,5 @@
 use rppal::gpio::Level;
-use crate::hardware::hw_providers::{HWAnalogInput, HWAnalogProvider};
+use crate::hardware::hw_providers::{HWAnalogProvider};
  
 // Raw analog data processors
 

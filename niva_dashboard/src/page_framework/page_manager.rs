@@ -1,10 +1,10 @@
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
-use crate::hardware::sensor_manager::SensorManager;
 use crate::page_framework::diag_page::DiagPage;
 use crate::page_framework::events::{UIEvent, EventSender, EventReceiver, EventBus, create_event_bus};
 use crate::page_framework::input::{InputHandler, ButtonState};
 use crate::page_framework::main_page::MainPage;
+use crate::hardware::sensor_manager::SensorManager;
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -111,7 +111,7 @@ pub trait Page {
     fn id(&self) -> u32;
     fn name(&self) -> &str;
     // Render page-specific stuff (except button labels, which are PageManager responsibility).
-    fn render(&self, context: &mut GraphicsContext) -> Result<(), String>;
+    fn render(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager) -> Result<(), String>;
     // Trigger once on switching to this page.
     fn on_enter(&mut self) -> Result<(), String>;
     // Trigger once on switching from this page.
@@ -168,8 +168,14 @@ impl Pages {
 // PageManager is responsible for managing multiple pages and their transitions,
 // as well as rendering button labels.
 pub struct PageManager {
+    // Rendering-related stuff.
     context: GraphicsContext,
-    sensors: SensorManager,
+
+    // Takes care of low-level hw input, signal processing, and conversion
+    // to actual sensor values.
+    sensor_manager: SensorManager,
+
+    // UI pages related stuff.
     pg_id: u32,             // Page incremental id, depends on page creation order.
     current_page: Option<u32>,
     pages: Pages,
@@ -180,7 +186,7 @@ pub struct PageManager {
     // Map hardware keys with UI buttons positions.
     buttons_map: HashMap<char, ButtonPosition>,
 
-    // Event system for UI communication (MPMC)
+    // Event system for UI communication (MPMC).
     event_bus: EventBus,
     event_receiver: EventReceiver,
     event_sender: EventSender,
@@ -193,7 +199,7 @@ pub struct PageManager {
 }
 
 impl PageManager {
-    pub fn new(context: GraphicsContext, sensors: SensorManager) -> Self {
+    pub fn new(context: GraphicsContext, sensor_manager: SensorManager) -> Self {
         let mut buttons_map = HashMap::new();
         buttons_map.insert('1', ButtonPosition::Left1);
         buttons_map.insert('2', ButtonPosition::Left2);
@@ -211,7 +217,7 @@ impl PageManager {
 
         PageManager {
             context,
-            sensors,
+            sensor_manager,
             pg_id: 0,
             current_page: None,
             pages: Pages::new(),
@@ -269,7 +275,7 @@ impl PageManager {
     fn render_current_page(&mut self) -> Result<(), String> {
         if let Some(page_id) = self.current_page {
             match self.pages.get_page_mut(page_id) {
-                Some(page) => page.render(&mut self.context),
+                Some(page) => page.render(&mut self.context, &self.sensor_manager),
                 None => Err(format!("Current page id {} not found", page_id)),
             }?;
         }

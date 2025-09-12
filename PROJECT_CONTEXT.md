@@ -122,6 +122,33 @@ niva_dashboard/
 - Signal analysis and oscilloscope functionality
 - Multi-page dashboard navigation with physical buttons
 
+## Sensor Specifications
+
+### Analog Sensors
+- **Engine Temperature Sensor**: 
+  - Operational range: 5-100°C (normal engine operation)
+  - Dashboard range: 0-120°C (extended range for diagnostics)
+  - Purpose: Engine coolant temperature monitoring
+  
+- **12V System Voltage**:
+  - Normal range: 12-14.4V (healthy electrical system)
+  - Dashboard range: 0-20V (full diagnostic capability)
+  - Purpose: Electrical system health monitoring, can detect battery drain (0V) or regulator failure (>16V)
+  
+- **Oil Pressure Sensor**:
+  - Range: 0-8 kgf/cm² (kilogram-force per square centimeter)
+  - Purpose: Engine lubrication system monitoring
+  - Critical threshold: <1 kgf/cm² at idle indicates potential engine damage
+  
+- **Fuel Level Sensor**:
+  - Range: 0-100% (percentage of tank capacity)
+  - Purpose: Fuel quantity monitoring
+
+### Digital Sensors
+- **Speed and Tachometer**: Pulse-based sensors (active high)
+- **Warning Indicators**: Active-low sensors for brake fluid, oil pressure, fuel level warnings
+- **Status Indicators**: Active-low sensors for lights, charging system, parking brake, differential lock
+
 ## Current Test Modes
 The application supports multiple test modes for development and validation:
 1. Basic OpenGL triangle test

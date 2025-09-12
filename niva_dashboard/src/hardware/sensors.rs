@@ -68,3 +68,34 @@ impl AnalogSensor for TemperatureSensor {
         Ok(temperature)
     }
 }
+
+pub struct GenericAnalogSensor {
+    min_value: f32,
+    max_value: f32,
+    scale_factor: f32,
+}
+
+impl GenericAnalogSensor {
+    pub fn new(min_value: f32, max_value: f32, scale_factor: f32) -> Self {
+        GenericAnalogSensor {
+            min_value,
+            max_value,
+            scale_factor,
+        }
+    }
+}
+
+impl AnalogSensor for GenericAnalogSensor {
+    fn value(&self, input: u16) -> Result<f32, String> {
+        let value = (input as f32) * self.scale_factor;
+        Ok(value.clamp(self.min_value, self.max_value))
+    }
+
+    fn min_value(&self) -> f32 {
+        self.min_value
+    }
+
+    fn max_value(&self) -> f32 {
+        self.max_value
+    }
+}

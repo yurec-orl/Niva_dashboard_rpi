@@ -1,6 +1,7 @@
 use crate::graphics::context::GraphicsContext;
 use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition};
 use crate::page_framework::events::{UIEvent, EventSender, EventReceiver};
+use crate::hardware::sensor_manager::SensorManager;
 
 /// Oscilloscope page for signal visualization
 pub struct OscPage {
@@ -90,7 +91,7 @@ impl Page for OscPage {
         self.base.set_buttons(buttons);
     }
 
-    fn render(&self, context: &mut GraphicsContext) -> Result<(), String> {
+    fn render(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager) -> Result<(), String> {
         // Render oscilloscope UI
         let status = if self.is_running { "RUNNING" } else { "STOPPED" };
         let status_text = format!("OSC: {} | Rate: {:.0}Hz | Time: {:.1} | Volt: {:.1} | Trig: {:.2}", 

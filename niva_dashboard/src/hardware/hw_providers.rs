@@ -25,29 +25,52 @@ use std::time::{Duration, Instant};
 /////////////////////////////////////////////////////////////////////////
 
 // Hardware input definitions
+// Active level corresponds to physical sensor configuration - for sensors
+// that short to ground when active, use Level::Low and pull-up mode on input pins.
+// For sensors that provide +12V when active, use Level::High.
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+pub const HW_BRAKE_FLUID_LVL_LOW_INPUT: HWDigitalInput = HWDigitalInput::HwBrakeFluidLvlLow(Level::Low);
+pub const HW_CHARGE_INPUT: HWDigitalInput = HWDigitalInput::HwCharge(Level::Low);
+pub const HW_CHECK_ENGINE_INPUT: HWDigitalInput = HWDigitalInput::HwCheckEngine(Level::Low);
+pub const HW_DIFF_LOCK_INPUT: HWDigitalInput = HWDigitalInput::HwDiffLock(Level::Low);
+pub const HW_EXT_LIGHTS_INPUT: HWDigitalInput = HWDigitalInput::HwExtLights(Level::Low);
+pub const HW_FUEL_LVL_LOW_INPUT: HWDigitalInput = HWDigitalInput::HwFuelLvlLow(Level::Low);
+pub const HW_HIGH_BEAM_INPUT: HWDigitalInput = HWDigitalInput::HwHighBeam(Level::Low);
+pub const HW_INSTR_ILLUM_INPUT: HWDigitalInput = HWDigitalInput::HwInstrIllum(Level::Low);
+pub const HW_OIL_PRESS_LOW_INPUT: HWDigitalInput = HWDigitalInput::HwOilPressLow(Level::Low);
+pub const HW_PARK_BRAKE_INPUT: HWDigitalInput = HWDigitalInput::HwParkBrake(Level::Low);
+pub const HW_SPEED_INPUT: HWDigitalInput = HWDigitalInput::HwSpeed(Level::High);
+pub const HW_TACHO_INPUT: HWDigitalInput = HWDigitalInput::HwTacho(Level::High);
+pub const HW_TURN_SIGNAL_INPUT: HWDigitalInput = HWDigitalInput::HwTurnSignal(Level::Low);
+
+pub const HW_12V_INPUT: HWAnalogInput = HWAnalogInput::Hw12v;
+pub const HW_FUEL_LVL_INPUT: HWAnalogInput = HWAnalogInput::HwFuelLvl;
+pub const HW_OIL_PRESS_INPUT: HWAnalogInput = HWAnalogInput::HwOilPress;
+pub const HW_TEMP_INPUT: HWAnalogInput = HWAnalogInput::HwTemp;
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum HWAnalogInput {
     Hw12v,
-    HwTemp,
     HwFuelLvl,
     HwOilPress,
+    HwTemp,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum HWDigitalInput {
-    HwSpeed(Level),
-    HwCharge(Level),
-    HwFuelLvlLow(Level),
-    HwTacho(Level),
-    HwOilPressLow(Level),
-    HwInstrIllum(Level),
     HwBrakeFluidLvlLow(Level),
-    HwExtLights(Level),
-    HwTurnSignal(Level),
-    HwHighBeam(Level),
-    HwParkBrake(Level),
+    HwCharge(Level),
+    HwCheckEngine(Level),
     HwDiffLock(Level),
+    HwExtLights(Level),
+    HwFuelLvlLow(Level),
+    HwHighBeam(Level),
+    HwInstrIllum(Level),
+    HwOilPressLow(Level),
+    HwParkBrake(Level),
+    HwSpeed(Level),
+    HwTacho(Level),
+    HwTurnSignal(Level),
 }
 
 impl HWDigitalInput {
@@ -56,7 +79,8 @@ impl HWDigitalInput {
             Self::HwSpeed(level) | Self::HwCharge(level) | Self::HwFuelLvlLow(level) |
             Self::HwTacho(level) | Self::HwOilPressLow(level) | Self::HwInstrIllum(level) |
             Self::HwBrakeFluidLvlLow(level) | Self::HwExtLights(level) | Self::HwTurnSignal(level) |
-            Self::HwHighBeam(level) | Self::HwParkBrake(level) | Self::HwDiffLock(level) => *level,
+            Self::HwHighBeam(level) | Self::HwParkBrake(level) | Self::HwDiffLock(level) |
+            Self::HwCheckEngine(level) => *level,
         }
     }
 }

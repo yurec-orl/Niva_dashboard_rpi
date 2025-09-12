@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::opengl_test::{run_basic_geometry_test, run_opengl_text_rendering_test, run_dashboard_performance_test, run_rotating_needle_gauge_test};
+use crate::hardware::hw_providers::*;
 use crate::hardware::GpioInput;
 use crate::hardware::sensor_manager::SensorManager;
 
@@ -84,7 +85,7 @@ fn test_single_gpio_input() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn test_sensor_manager() -> Result<(), Box<dyn std::error::Error>> {
-    use crate::hardware::hw_providers::{TestDigitalDataProvider, TestAnalogDataProvider, HWDigitalInput, HWAnalogInput};
+    use crate::hardware::hw_providers::{TestDigitalDataProvider, TestAnalogDataProvider};
     use crate::hardware::sensor_manager::{SensorDigitalInputChain, SensorAnalogInputChain};
     use crate::hardware::digital_signal_processing::DigitalSignalDebouncer;
     use crate::hardware::analog_signal_processing::AnalogSignalProcessorMovingAverage;
@@ -106,7 +107,7 @@ fn test_sensor_manager() -> Result<(), Box<dyn std::error::Error>> {
     
     // Create digital sensor chain for park brake
     println!("Setting up digital sensor chain (park brake)...");
-    let park_brake_input = HWDigitalInput::HwParkBrake(Level::Low);
+    let park_brake_input = HW_PARK_BRAKE_INPUT;
     let digital_chain = SensorDigitalInputChain::new(
         Box::new(TestDigitalDataProvider::new(park_brake_input.clone())),
         vec![Box::new(DigitalSignalDebouncer::new(2, Duration::from_millis(50)))],
@@ -116,7 +117,7 @@ fn test_sensor_manager() -> Result<(), Box<dyn std::error::Error>> {
     
     // Create analog sensor chain for fuel level
     println!("Setting up analog sensor chain (fuel level)...");
-    let fuel_input = HWAnalogInput::HwFuelLvl;
+    let fuel_input = HW_FUEL_LVL_INPUT;
     let analog_chain = SensorAnalogInputChain::new(
         Box::new(TestAnalogDataProvider::new(fuel_input.clone())),
         vec![Box::new(AnalogSignalProcessorMovingAverage::new(3))],
@@ -128,16 +129,28 @@ fn test_sensor_manager() -> Result<(), Box<dyn std::error::Error>> {
     for i in 1..=5 {
         println!("\n--- Reading cycle {} ---", i);
         
-        // Read digital sensor
-        match manager.read_digital_sensor(park_brake_input.clone()) {
-            Ok(brake_active) => println!("Park brake: {}", if brake_active { "ENGAGED" } else { "RELEASED" }),
-            Err(e) => println!("Error reading park brake: {}", e),
-        }
-        
-        // Read analog sensor  
-        match manager.read_analog_sensor(fuel_input.clone()) {
-            Ok(fuel_level) => println!("Fuel level: {:.1}%", fuel_level),
-            Err(e) => println!("Error reading fuel level: {}", e),
+        // Read all sensors first
+        match manager.read_all_sensors() {
+            Ok(_) => {
+                // Get digital sensor values
+                let digital_values = manager.get_digital_sensor_values();
+                for (input, value) in digital_values {
+                    if *input == park_brake_input {
+                        println!("Park brake: {}", if *value { "ENGAGED" } else { "RELEASED" });
+                        break;
+                    }
+                }
+                
+                // Get analog sensor values  
+                let analog_values = manager.get_analog_sensor_values();
+                for (input, value) in analog_values {
+                    if *input == fuel_input {
+                        println!("Fuel level: {:.1}%", value);
+                        break;
+                    }
+                }
+            },
+            Err(e) => println!("Error reading sensors: {}", e),
         }
         
         thread::sleep(Duration::from_millis(500));

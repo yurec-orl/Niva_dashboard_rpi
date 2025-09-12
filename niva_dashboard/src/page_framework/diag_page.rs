@@ -2,6 +2,7 @@ use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
 use crate::page_framework::events::{EventSender, EventReceiver};
 use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition};
+use crate::hardware::sensor_manager::SensorManager;
 
 pub struct DiagPage {
     base: PageBase,
@@ -36,7 +37,7 @@ impl Page for DiagPage {
         self.base.set_buttons(buttons);
     }
 
-    fn render(&self, context: &mut GraphicsContext) -> Result<(), String> {
+    fn render(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager) -> Result<(), String> {
         context.render_text_with_font(
             "Diagnostics Page", 
             200.0, 

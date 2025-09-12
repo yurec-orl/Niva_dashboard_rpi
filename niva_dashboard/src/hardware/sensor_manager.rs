@@ -109,6 +109,8 @@ impl SensorAnalogInputChain {
 pub struct SensorManager {
     digital_sensors: Vec<SensorDigitalInputChain>,
     analog_sensors: Vec<SensorAnalogInputChain>,
+    digital_sensor_values: Vec<(HWDigitalInput, bool)>,
+    analog_sensor_values: Vec<(HWAnalogInput, f32)>,
 }
 
 impl SensorManager {
@@ -116,6 +118,8 @@ impl SensorManager {
         SensorManager {
             digital_sensors: Vec::new(),
             analog_sensors: Vec::new(),
+            digital_sensor_values: Vec::new(),
+            analog_sensor_values: Vec::new(),
         }
     }
 
@@ -127,7 +131,7 @@ impl SensorManager {
         self.analog_sensors.push(chain);
     }
 
-    pub fn read_digital_sensor(&mut self, input: HWDigitalInput) -> Result<bool, String> {
+    fn read_digital_sensor(&mut self, input: HWDigitalInput) -> Result<bool, String> {
         for chain in &mut self.digital_sensors {
             if chain.hw_provider.input() != input {
                 continue;
@@ -146,7 +150,7 @@ impl SensorManager {
         Err(format!("Digital sensor chain not found for input: {:?}", input))
     }
 
-    pub fn read_analog_sensor(&mut self, input: HWAnalogInput) -> Result<f32, String> {
+    fn read_analog_sensor(&mut self, input: HWAnalogInput) -> Result<f32, String> {
         for chain in &mut self.analog_sensors {
             if chain.hw_provider.input() != input {
                 continue;
@@ -163,6 +167,42 @@ impl SensorManager {
             return chain.sensor.value(value);
         }
         Err("Analog sensor chain not found".to_string())
+    }
+
+    pub fn read_all_sensors(&mut self) -> Result<(), String> {
+        // Clear previous values
+        self.digital_sensor_values.clear();
+        self.analog_sensor_values.clear();
+
+        // Collect inputs first to avoid borrowing issues
+        let digital_inputs: Vec<HWDigitalInput> = self.digital_sensors.iter()
+            .map(|chain| chain.hw_provider.input())
+            .collect();
+        let analog_inputs: Vec<HWAnalogInput> = self.analog_sensors.iter()
+            .map(|chain| chain.hw_provider.input())
+            .collect();
+
+        // Read digital sensors
+        for input in digital_inputs {
+            let value = self.read_digital_sensor(input)?;
+            self.digital_sensor_values.push((input, value));
+        }
+
+        // Read analog sensors  
+        for input in analog_inputs {
+            let value = self.read_analog_sensor(input)?;
+            self.analog_sensor_values.push((input, value));
+        }
+
+        Ok(())
+    }
+
+    pub fn get_digital_sensor_values(&self) -> &Vec<(HWDigitalInput, bool)> {
+        &self.digital_sensor_values
+    }
+    
+    pub fn get_analog_sensor_values(&self) -> &Vec<(HWAnalogInput, f32)> {
+        &self.analog_sensor_values
     }
 }
 
