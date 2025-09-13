@@ -226,11 +226,6 @@ pub trait Indicator {
               bounds: IndicatorBounds, 
               style: &UIStyle, 
               context: &mut GraphicsContext) -> Result<(), String>;
-    
-    /// Get the preferred/minimum size for this indicator type
-    /// Returns (width, height) in pixels
-    fn preferred_size(&self, style: &UIStyle) -> (f32, f32);
-    
     /// Get indicator type name for debugging and configuration
     fn indicator_type(&self) -> &'static str;
     

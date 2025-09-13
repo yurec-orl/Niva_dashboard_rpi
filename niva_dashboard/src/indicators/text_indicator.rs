@@ -203,23 +203,6 @@ impl Indicator for TextIndicator {
         Ok(())
     }
     
-    fn preferred_size(&self, style: &UIStyle) -> (f32, f32) {
-        let font_size = style.get_integer(TEXT_PRIMARY_FONT_SIZE, 24) as f32;
-        
-        // Estimate size based on typical text content
-        // This is a rough estimate - actual size depends on the value being displayed
-        let estimated_width = font_size * 8.0; // Approximate width for "123.4 °C"
-        
-        // Height needs to accommodate both label and value with spacing
-        let estimated_height = if self.show_label {
-            font_size * 2.5 // Two lines of text plus spacing
-        } else {
-            font_size * 1.5 // Single line of text plus padding
-        };
-        
-        (estimated_width, estimated_height)
-    }
-    
     fn indicator_type(&self) -> &'static str {
         "TextIndicator"
     }

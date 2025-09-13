@@ -339,7 +339,8 @@ impl PageManager {
         let mut main_page = Box::new(MainPage::new(MAIN_PAGE_ID,
                                                    main_page_style,
                                                    event_sender.clone(),
-                                                   self.get_event_receiver()));
+                                                   self.get_event_receiver(),
+                                                   &self.context));
 
         // let mut diag_page_style = UIStyle::new();
         // diag_page_style.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(20));

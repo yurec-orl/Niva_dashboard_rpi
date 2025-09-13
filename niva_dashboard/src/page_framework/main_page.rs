@@ -6,6 +6,7 @@ use crate::hardware::sensor_manager::SensorManager;
 use crate::hardware::hw_providers::{*};
 use crate::indicators::{Indicator, SensorValue, IndicatorBounds};
 use crate::indicators::text_indicator::{TextIndicator, TextAlignment};
+use crate::indicators::gauge_indicator::GaugeIndicator;
 use crate::page_framework::events::UIEvent;
 
 struct IndicatorSet {
@@ -22,7 +23,7 @@ pub struct MainPage {
 }
 
 impl MainPage {
-    fn setup_indicators() -> IndicatorSet {
+    fn setup_test_indicators() -> IndicatorSet {
         let mut indicators: Vec<Box<dyn Indicator>> = Vec::new();
         let mut indicator_bounds: Vec<IndicatorBounds> = Vec::new();
 
@@ -81,14 +82,71 @@ impl MainPage {
         IndicatorSet { indicators, indicator_bounds }
     }
 
-    pub fn new(id: u32, ui_style: UIStyle, event_sender: EventSender, event_receiver: EventReceiver) -> Self {
-        let indicator_set = Self::setup_indicators();
+    fn setup_indicators(context: &GraphicsContext) -> IndicatorSet {
+        let mut indicators: Vec<Box<dyn Indicator>> = Vec::new();
+        let mut indicator_bounds: Vec<IndicatorBounds> = Vec::new();
+
+        // Main indicator set layout:
+        // 1. Large central speedometer (gauge)
+        // 2. Smaller fuel level and oil pressure gauges on the left
+        // 3. Smaller temperature and battery voltage gauges on the right
+
+        let screen_width = context.width as f32;
+        let screen_height = context.height as f32;
+        
+        // Layout parameters
+        let button_margin = 120.0; // Space for buttons on left/right
+        let top_margin = 80.0;
+        let available_width = screen_width - 2.0 * button_margin;
+        let available_height = screen_height - top_margin - 40.0;
+
+        // Central speedometer - large gauge (RPM/Speed)
+        let center_gauge_size = 300.0;
+        let center_x = screen_width / 2.0 - center_gauge_size / 2.0;
+        let center_y = top_margin + 40.0;
+        
+        indicators.push(Box::new(GaugeIndicator::new()));
+        indicator_bounds.push(IndicatorBounds::new(center_x, center_y, center_gauge_size, center_gauge_size));
+
+        // Left side gauges - smaller gauges
+        let side_gauge_size = 120.0;
+        let left_x = button_margin + 20.0;
+        
+        // Fuel level gauge (left top)
+        let fuel_y = top_margin + 60.0;
+        indicators.push(Box::new(GaugeIndicator::new()));
+        indicator_bounds.push(IndicatorBounds::new(left_x, fuel_y, side_gauge_size, side_gauge_size));
+        
+        // Oil pressure gauge (left bottom)
+        let oil_y = fuel_y + side_gauge_size + 20.0;
+        indicators.push(Box::new(GaugeIndicator::new()));
+        indicator_bounds.push(IndicatorBounds::new(left_x, oil_y, side_gauge_size, side_gauge_size));
+
+        // Right side gauges - smaller gauges
+        let right_x = screen_width - button_margin - side_gauge_size - 20.0;
+        
+        // Temperature gauge (right top)
+        let temp_y = top_margin + 60.0;
+        indicators.push(Box::new(GaugeIndicator::new()));
+        indicator_bounds.push(IndicatorBounds::new(right_x, temp_y, side_gauge_size, side_gauge_size));
+        
+        // Battery voltage gauge (right bottom)
+        let battery_y = temp_y + side_gauge_size + 20.0;
+        indicators.push(Box::new(GaugeIndicator::new()));
+        indicator_bounds.push(IndicatorBounds::new(right_x, battery_y, side_gauge_size, side_gauge_size));
+
+        IndicatorSet { indicators, indicator_bounds }
+    }
+
+    pub fn new(id: u32, ui_style: UIStyle, event_sender: EventSender, event_receiver: EventReceiver, context: &GraphicsContext) -> Self {
+        let test_indicator_set = Self::setup_test_indicators();
+        let gauge_indicator_set = Self::setup_indicators(context);
 
         let mut main_page = MainPage {
             base: PageBase::new(id, "Main".to_string(), ui_style),
             event_sender: event_sender.clone(),
             event_receiver,
-            indicator_sets: vec![indicator_set],
+            indicator_sets: vec![gauge_indicator_set, test_indicator_set],
             current_indicator_set: 0,
         };
 
@@ -131,66 +189,150 @@ impl MainPage {
         self.base.set_buttons(buttons);
     }
 
-    // Helper method to read all sensor values and convert to SensorValue objects
+    // Helper method to read sensor values in the order expected by current indicator set
     fn read_all_sensors(&self, sensor_manager: &SensorManager) -> Result<Vec<SensorValue>, String> {
         let mut sensor_values = Vec::new();
-
-        // Read digital sensors using the new interface
+        
+        // Get sensor data from hardware
         let digital_values = sensor_manager.get_digital_sensor_values();
+        let analog_values = sensor_manager.get_analog_sensor_values();
+
+        // Current indicator set determines sensor order
+        if self.current_indicator_set == 0 {
+            // Test indicator set - original 16-sensor grid layout
+            self.read_test_sensors(digital_values, analog_values, &mut sensor_values);
+        } else {
+            // Gauge indicator set - 5 gauges in specific order
+            self.read_gauge_sensors(digital_values, analog_values, &mut sensor_values);
+        }
+
+        Ok(sensor_values)
+    }
+
+    fn read_test_sensors(&self, digital_values: &Vec<(crate::hardware::hw_providers::HWDigitalInput, bool)>, analog_values: &Vec<(crate::hardware::hw_providers::HWAnalogInput, f32)>, sensor_values: &mut Vec<SensorValue>) {
+        // Read digital sensors for test layout (12 total)
         for (sensor_input, value) in digital_values {
             let (label, sensor_name) = match sensor_input {
-                input if *input == HW_BRAKE_FLUID_LVL_LOW_INPUT => ("Brake Fluid", "brake_fluid"),
-                input if *input == HW_CHARGE_INPUT => ("Charge", "charge"),
-                input if *input == HW_CHECK_ENGINE_INPUT => ("Check Eng", "check_engine"),
-                input if *input == HW_DIFF_LOCK_INPUT => ("Diff Lock", "diff_lock"),
-                input if *input == HW_EXT_LIGHTS_INPUT => ("Ext Lights", "ext_lights"),
-                input if *input == HW_FUEL_LVL_LOW_INPUT => ("Fuel Low", "fuel_low"),
-                input if *input == HW_HIGH_BEAM_INPUT => ("High Beam", "high_beam"),
-                input if *input == HW_INSTR_ILLUM_INPUT => ("Illum", "instr_illum"),
-                input if *input == HW_OIL_PRESS_LOW_INPUT => ("Oil Press Low", "oil_press_low"),
-                input if *input == HW_PARK_BRAKE_INPUT => ("Park Brake", "park_brake"),
-                input if *input == HW_SPEED_INPUT => ("Speed", "speed"),
-                input if *input == HW_TACHO_INPUT => ("Tacho", "tacho"),
-                input if *input == HW_TURN_SIGNAL_INPUT => ("Turn Signal", "turn_signal"),
-                _ => ("Unknown", "unknown"),
+                HWDigitalInput::HwBrakeFluidLvlLow(_) => ("Brake Fluid", "brake_fluid"),
+                HWDigitalInput::HwCharge(_) => ("Charge", "charge"),
+                HWDigitalInput::HwCheckEngine(_) => ("Check Eng", "check_engine"),
+                HWDigitalInput::HwDiffLock(_) => ("Diff Lock", "diff_lock"),
+                HWDigitalInput::HwExtLights(_) => ("Ext Lights", "ext_lights"),
+                HWDigitalInput::HwFuelLvlLow(_) => ("Fuel Low", "fuel_low"),
+                HWDigitalInput::HwHighBeam(_) => ("High Beam", "high_beam"),
+                HWDigitalInput::HwInstrIllum(_) => ("Illum", "instr_illum"),
+                HWDigitalInput::HwOilPressLow(_) => ("Oil Press Low", "oil_press_low"),
+                HWDigitalInput::HwParkBrake(_) => ("Park Brake", "park_brake"),
+                HWDigitalInput::HwSpeed(_) => ("Speed", "speed"),
+                HWDigitalInput::HwTacho(_) => ("Tacho", "tacho"),
+                HWDigitalInput::HwTurnSignal(_) => ("Turn Signal", "turn_signal"),
             };
             
             sensor_values.push(SensorValue::digital(*value, label, sensor_name));
         }
 
-        // Read analog sensors using the new interface
-        let analog_values = sensor_manager.get_analog_sensor_values();
+        // Read analog sensors for test layout (4 total)
         for (sensor_input, value) in analog_values {
             match sensor_input {
-                input if *input == HW_12V_INPUT => {
+                HWAnalogInput::Hw12v => {
                     sensor_values.push(SensorValue::analog_with_thresholds(
-                        *value, 0.0, 20.0, Some(11.5), Some(13.8), Some(10.5), None, "battery_12v", "V", "12V"
+                        *value, 0.0, 20.0, Some(11.5), Some(13.8), Some(10.5), None, "V", "battery_12v", "12V"
                     ));
                 },
-                input if *input == HW_FUEL_LVL_INPUT => {
+                HWAnalogInput::HwFuelLvl => {
                     sensor_values.push(SensorValue::analog_with_thresholds(
-                        *value, 0.0, 100.0, Some(20.0), None, Some(10.0), None, "fuel_level", "%", "Fuel Level"
+                        *value, 0.0, 100.0, Some(20.0), None, Some(10.0), None, "%", "fuel_level", "Fuel Level"
                     ));
                 },
-                input if *input == HW_OIL_PRESS_INPUT => {
+                HWAnalogInput::HwOilPress => {
                     sensor_values.push(SensorValue::analog_with_thresholds(
-                        *value, 0.0, 8.0, Some(1.0), Some(6.0), Some(0.5), None, "oil_pressure", "kgf/cm²", "Oil Press"
+                        *value, 0.0, 8.0, Some(1.0), Some(6.0), Some(0.5), None, "kgf/cm²", "oil_pressure", "Oil Press"
                     ));
                 },
-                input if *input == HW_TEMP_INPUT => {
+                HWAnalogInput::HwTemp => {
                     sensor_values.push(SensorValue::analog_with_thresholds(
-                        *value, 0.0, 120.0, Some(90.0), None, None, Some(105.0), "temperature", "°C", "Temperature"
-                    ));
-                },
-                _ => {
-                    sensor_values.push(SensorValue::analog_with_thresholds(
-                        *value, 0.0, 100.0, Some(50.0), None, None, None, "unknown_analog", "", "Unknown"
+                        *value, 0.0, 120.0, Some(90.0), None, None, Some(105.0), "°C", "temperature", "Temperature"
                     ));
                 },
             }
         }
+    }
 
-        Ok(sensor_values)
+    fn read_gauge_sensors(&self, digital_values: &Vec<(crate::hardware::hw_providers::HWDigitalInput, bool)>, analog_values: &Vec<(crate::hardware::hw_providers::HWAnalogInput, f32)>, sensor_values: &mut Vec<SensorValue>) {
+        // Gauge layout order: Speed/RPM (center), Fuel (left top), Oil (left bottom), Temp (right top), Battery (right bottom)
+        
+        // Helper to find digital sensor value by variant type (ignoring Level)
+        let find_analog_by_variant = |variant_type: &str| -> Option<bool> {
+            digital_values.iter().find(|(sensor, _)| {
+                match (variant_type, sensor) {
+                    ("Speed", HWDigitalInput::HwSpeed(_)) => true,
+                    _ => false,
+                }
+            }).map(|(_, value)| *value)
+        };
+        
+        // Helper to find analog sensor value
+        let find_analog = |input: HWAnalogInput| -> Option<f32> {
+            analog_values.iter().find(|(sensor, _)| *sensor == input).map(|(_, value)| *value)
+        };
+        
+        // 1. Central speedometer - use TACHO input for RPM
+        if let Some(tacho_value) = find_digital_by_variant("Tacho") {
+            // Convert boolean pulses to RPM (simplified for now)
+            let rpm = if tacho_value { 3500.0 } else { 800.0 };
+            sensor_values.push(SensorValue::analog_with_thresholds(
+                rpm, 0.0, 6000.0, Some(4500.0), Some(5500.0), None, Some(5800.0), "RPM", "tacho", "RPM"
+            ));
+        } else {
+            // Default RPM value
+            sensor_values.push(SensorValue::analog_with_thresholds(
+                1500.0, 0.0, 6000.0, Some(4500.0), Some(5500.0), None, Some(5800.0), "RPM", "tacho", "RPM"
+            ));
+        }
+
+        // 2. Fuel level gauge (left top)
+        if let Some(fuel_value) = find_analog(HWAnalogInput::HwFuelLvl) {
+            sensor_values.push(SensorValue::analog_with_thresholds(
+                fuel_value, 0.0, 100.0, Some(15.0), None, Some(5.0), None, "%", "fuel_level", "Fuel"
+            ));
+        } else {
+            sensor_values.push(SensorValue::analog_with_thresholds(
+                75.0, 0.0, 100.0, Some(15.0), None, Some(5.0), None, "%", "fuel_level", "Fuel"
+            ));
+        }
+
+        // 3. Oil pressure gauge (left bottom)
+        if let Some(oil_value) = find_analog(HWAnalogInput::HwOilPress) {
+            sensor_values.push(SensorValue::analog_with_thresholds(
+                oil_value, 0.0, 8.0, Some(1.5), Some(6.0), Some(0.8), None, "kgf/cm²", "oil_pressure", "Oil"
+            ));
+        } else {
+            sensor_values.push(SensorValue::analog_with_thresholds(
+                2.5, 0.0, 8.0, Some(1.5), Some(6.0), Some(0.8), None, "kgf/cm²", "oil_pressure", "Oil"
+            ));
+        }
+
+        // 4. Temperature gauge (right top)
+        if let Some(temp_value) = find_analog(HWAnalogInput::HwTemp) {
+            sensor_values.push(SensorValue::analog_with_thresholds(
+                temp_value, 0.0, 120.0, Some(85.0), None, None, Some(100.0), "°C", "temperature", "Temp"
+            ));
+        } else {
+            sensor_values.push(SensorValue::analog_with_thresholds(
+                85.0, 0.0, 120.0, Some(85.0), None, None, Some(100.0), "°C", "temperature", "Temp"
+            ));
+        }
+
+        // 5. Battery voltage gauge (right bottom)
+        if let Some(battery_value) = find_analog(HWAnalogInput::Hw12v) {
+            sensor_values.push(SensorValue::analog_with_thresholds(
+                battery_value, 9.0, 16.0, Some(11.8), Some(14.2), Some(10.5), Some(15.5), "V", "battery_12v", "Battery"
+            ));
+        } else {
+            sensor_values.push(SensorValue::analog_with_thresholds(
+                12.6, 9.0, 16.0, Some(11.8), Some(14.2), Some(10.5), Some(15.5), "V", "battery_12v", "Battery"
+            ));
+        }
     }
 
     // Event handler methods for indicator set navigation

@@ -586,6 +586,28 @@ fn parse_color(color_str: &str) -> Result<(f32, f32, f32), String> {
     }
 }
 
+/// Calculate the average of two RGB colors
+/// Returns a color that is the blend of color1 and color2 with equal weight (0.5 each)
+pub fn average_colors(color1: (f32, f32, f32), color2: (f32, f32, f32)) -> (f32, f32, f32) {
+    (
+        (color1.0 + color2.0) * 0.5,
+        (color1.1 + color2.1) * 0.5,
+        (color1.2 + color2.2) * 0.5,
+    )
+}
+
+/// Calculate the weighted average of two RGB colors
+/// weight: 0.0 = fully color1, 1.0 = fully color2, 0.5 = equal blend
+pub fn blend_colors(color1: (f32, f32, f32), color2: (f32, f32, f32), weight: f32) -> (f32, f32, f32) {
+    let w = weight.clamp(0.0, 1.0);
+    let inv_w = 1.0 - w;
+    (
+        color1.0 * inv_w + color2.0 * w,
+        color1.1 * inv_w + color2.1 * w,
+        color1.2 * inv_w + color2.2 * w,
+    )
+}
+
 /// Check if string is a named color
 fn is_named_color(s: &str) -> bool {
     matches!(s.to_lowercase().as_str(), 
