@@ -129,7 +129,7 @@ impl Default for TextIndicator {
 
 impl Indicator for TextIndicator {
     fn render(
-        &mut self,
+        &self,
         value: &SensorValue,
         bounds: IndicatorBounds,
         style: &UIStyle,

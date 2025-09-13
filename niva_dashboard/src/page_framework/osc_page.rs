@@ -19,9 +19,9 @@ pub struct OscPage {
 }
 
 impl OscPage {
-    pub fn new(id: u32, name: String, event_sender: EventSender, event_receiver: EventReceiver) -> Self {
+    pub fn new(id: u32, event_sender: EventSender, event_receiver: EventReceiver) -> Self {
         Self {
-            base: PageBase::new(id, name),
+            base: PageBase::new(id, "Osc", UIStyle::new()),
             event_sender,
             event_receiver,
             is_running: false,

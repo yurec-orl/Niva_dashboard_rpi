@@ -221,7 +221,7 @@ pub trait Indicator {
     /// - `bounds`: Position and size constraints for the indicator
     /// - `style`: UI styling parameters (colors, fonts, sizes, etc.)
     /// - `context`: Graphics context for OpenGL rendering operations
-    fn render(&mut self, 
+    fn render(&self, 
               value: &SensorValue, 
               bounds: IndicatorBounds, 
               style: &UIStyle, 

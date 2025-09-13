@@ -1,30 +1,28 @@
-use std::cell::RefCell;
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
-use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition};
+use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition, DIAG_PAGE_ID};
 use crate::page_framework::events::{EventSender, EventReceiver};
 use crate::hardware::sensor_manager::SensorManager;
-use crate::hardware::hw_providers::{
-    HWDigitalInput, HWAnalogInput,
-    HW_BRAKE_FLUID_LVL_LOW_INPUT, HW_CHARGE_INPUT, HW_CHECK_ENGINE_INPUT,
-    HW_DIFF_LOCK_INPUT, HW_EXT_LIGHTS_INPUT, HW_FUEL_LVL_LOW_INPUT,
-    HW_HIGH_BEAM_INPUT, HW_INSTR_ILLUM_INPUT, HW_OIL_PRESS_LOW_INPUT,
-    HW_PARK_BRAKE_INPUT, HW_SPEED_INPUT, HW_TACHO_INPUT, HW_TURN_SIGNAL_INPUT,
-    HW_12V_INPUT, HW_FUEL_LVL_INPUT, HW_OIL_PRESS_INPUT, HW_TEMP_INPUT
-};
+use crate::hardware::hw_providers::{*};
 use crate::indicators::{Indicator, SensorValue, IndicatorBounds};
 use crate::indicators::text_indicator::{TextIndicator, TextAlignment};
+use crate::page_framework::events::UIEvent;
+
+struct IndicatorSet {
+    indicators: Vec<Box<dyn Indicator>>,
+    indicator_bounds: Vec<IndicatorBounds>,
+}
 
 pub struct MainPage {
     base: PageBase,
-    indicators: RefCell<Vec<Box<dyn Indicator>>>,
-    indicator_bounds: Vec<IndicatorBounds>,
+    current_indicator_set: usize,
+    indicator_sets: Vec<IndicatorSet>,
     event_receiver: EventReceiver,
     event_sender: EventSender,
 }
 
 impl MainPage {
-    pub fn new(id: u32, name: String, ui_style: UIStyle, event_sender: EventSender, event_receiver: EventReceiver) -> Self {
+    fn setup_indicators() -> IndicatorSet {
         let mut indicators: Vec<Box<dyn Indicator>> = Vec::new();
         let mut indicator_bounds: Vec<IndicatorBounds> = Vec::new();
 
@@ -45,7 +43,7 @@ impl MainPage {
         let mut row = 0;
 
         // Helper function to create indicator bounds and advance grid position
-        let mut create_bounds_and_advance = |col: &mut usize, row: &mut usize| -> IndicatorBounds {
+        let create_bounds_and_advance = |col: &mut usize, row: &mut usize| -> IndicatorBounds {
             let x = margin_left + (*col as f32 * col_width);
             let y = margin_top + (*row as f32 * row_height);
             let bounds = IndicatorBounds::new(x, y, indicator_width, indicator_height);
@@ -80,17 +78,56 @@ impl MainPage {
         // Temperature (1 decimal place)
         indicators.push(Box::new(TextIndicator::with_config(1, true, true, TextAlignment::Center)));
         indicator_bounds.push(create_bounds_and_advance(&mut col, &mut row));
-
-        MainPage {
-            base: PageBase::new(id, name, ui_style),
-            event_sender,
-            event_receiver,
-            indicators: RefCell::new(indicators),
-            indicator_bounds,
-        }
+        IndicatorSet { indicators, indicator_bounds }
     }
 
-    pub fn set_buttons(&mut self, buttons: Vec<PageButton<Box<dyn FnMut()>>>) {
+    pub fn new(id: u32, ui_style: UIStyle, event_sender: EventSender, event_receiver: EventReceiver) -> Self {
+        let indicator_set = Self::setup_indicators();
+
+        let mut main_page = MainPage {
+            base: PageBase::new(id, "Main".to_string(), ui_style),
+            event_sender: event_sender.clone(),
+            event_receiver,
+            indicator_sets: vec![indicator_set],
+            current_indicator_set: 0,
+        };
+
+        // Set up default buttons for the main page
+        main_page.setup_buttons();
+        
+        main_page
+    }
+
+    // Setup default buttons for main page using event system
+    fn setup_buttons(&mut self) {
+        let event_sender = self.event_sender.clone();
+        let buttons = vec![
+            PageButton::new(ButtonPosition::Left1, "ВИД+".into(), Box::new({
+                let sender = event_sender.clone();
+                move || sender.send(UIEvent::NextIndicatorSet)
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Left2, "ВИД-".into(), Box::new({
+                let sender = event_sender.clone();
+                move || sender.send(UIEvent::PreviousIndicatorSet)
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Left4, "ВЫХ".into(), Box::new({
+                let sender = event_sender.clone();
+                move || sender.send(UIEvent::Shutdown)
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Right1, "ЯРК+".into(), Box::new({
+                let sender = event_sender.clone();
+                move || sender.send(UIEvent::BrightnessUp)
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Right2, "ЯРК-".into(), Box::new({
+                let sender = event_sender.clone();
+                move || sender.send(UIEvent::BrightnessDown)
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Right4, "ДИАГ".into(), Box::new({
+                let sender = event_sender.clone();
+                move || sender.send(UIEvent::SwitchToPage(DIAG_PAGE_ID))
+            }) as Box<dyn FnMut()>),
+        ];
+
         self.base.set_buttons(buttons);
     }
 
@@ -155,6 +192,40 @@ impl MainPage {
 
         Ok(sensor_values)
     }
+
+    // Event handler methods for indicator set navigation
+    fn next_indicator_set(&mut self) {
+        if self.indicator_sets.len() > 1 {
+            self.current_indicator_set = (self.current_indicator_set + 1) % self.indicator_sets.len();
+            print!("MainPage: Switched to indicator set {}\r\n", self.current_indicator_set);
+        }
+    }
+
+    fn previous_indicator_set(&mut self) {
+        if self.indicator_sets.len() > 1 {
+            if self.current_indicator_set == 0 {
+                self.current_indicator_set = self.indicator_sets.len() - 1;
+            } else {
+                self.current_indicator_set -= 1;
+            }
+            print!("MainPage: Switched to indicator set {}\r\n", self.current_indicator_set);
+        }
+    }
+
+    fn reset_to_first_indicator_set(&mut self) {
+        self.current_indicator_set = 0;
+        print!("MainPage: Reset to first indicator set\r\n");
+    }
+
+    // Public method to get current indicator set index (for debugging/status)
+    pub fn current_indicator_set(&self) -> usize {
+        self.current_indicator_set
+    }
+
+    // Public method to get total number of indicator sets
+    pub fn indicator_sets_count(&self) -> usize {
+        self.indicator_sets.len()
+    }
 }
 
 impl Page for MainPage {
@@ -182,11 +253,12 @@ impl Page for MainPage {
         let sensor_values = self.read_all_sensors(sensor_manager)?;
 
         // Render each indicator with its corresponding sensor value
-        let mut indicators = self.indicators.borrow_mut();
+        let indicators = self.indicator_sets[self.current_indicator_set].indicators.iter();
+        let indicator_bounds = &self.indicator_sets[self.current_indicator_set].indicator_bounds;
         
-        for (i, indicator) in indicators.iter_mut().enumerate() {
+        for (i, indicator) in indicators.enumerate() {
             if let Some(sensor_value) = sensor_values.get(i) {
-                if let Some(bounds) = self.indicator_bounds.get(i) {
+                if let Some(bounds) = indicator_bounds.get(i) {
                     indicator.render(sensor_value, bounds.clone(), self.ui_style(), context)?;
                 }
             }
@@ -205,6 +277,33 @@ impl Page for MainPage {
 
     fn on_button(&mut self, _button: char) -> Result<(), String> {
         Ok(())
+    }
+
+    fn process_events(&mut self) {
+        // Process events specific to the main page
+        while let Ok(event) = self.event_receiver.try_recv() {
+            match event {
+                crate::page_framework::events::UIEvent::NextIndicatorSet => {
+                    self.next_indicator_set();
+                }
+                crate::page_framework::events::UIEvent::PreviousIndicatorSet => {
+                    self.previous_indicator_set();
+                }
+                crate::page_framework::events::UIEvent::ButtonPressed(action) => {
+                    match action.as_str() {
+                        "next_view" => self.next_indicator_set(),
+                        "prev_view" => self.previous_indicator_set(),
+                        "reset_view" => self.reset_to_first_indicator_set(),
+                        _ => {} // Ignore unknown actions
+                    }
+                }
+                // Let other events pass through to the page manager
+                _ => {
+                    // Re-send event to page manager for global handling
+                    self.event_sender.send(event);
+                }
+            }
+        }
     }
 
     fn buttons(&self) -> &Vec<PageButton<Box<dyn FnMut()>>> {

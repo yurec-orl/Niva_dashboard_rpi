@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 
 const STATUS_LINE_MARGIN: f32 = 25.0;
 
-pub const MAIN_PAGE_NAME: &str = "Main";
-pub const DIAG_PAGE_NAME: &str = "Diagnostics";
+pub const MAIN_PAGE_ID: u32 = 0;
+pub const DIAG_PAGE_ID: u32 = 1;
 
 // ButtonPosition correspond to physical 2x4 buttons layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -240,10 +240,12 @@ impl PageManager {
         }
     }
 
-    fn get_page_mut_id(&mut self) -> u32 {
+    fn get_page_id(&mut self) -> u32 {
         let id = self.pg_id;
-        self.pg_id += 1;
-        id
+        while (self.get_page(id)).is_some() {
+            self.pg_id += 1;
+        }
+        self.pg_id
     }
 
     /// Get a new event receiver for pages (MPMC allows multiple receivers)
@@ -293,6 +295,12 @@ impl PageManager {
 
     pub fn add_page(&mut self, page: Box<dyn Page>) -> u32 {
         let page_id = page.id();
+        // Check if page with same id already exists - abort if so,
+        // because page switching would be ambiguous.
+        if self.get_page(page_id).is_some() {
+            print!("Warning: Page with id {} already exists, exiting\r\n", page_id);
+            std::process::exit(1);
+        }
         self.pages.add_page(page);
         page_id
     }
@@ -328,8 +336,7 @@ impl PageManager {
         let mut main_page_style = self.ui_style.clone();
         main_page_style.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(14));
         main_page_style.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#FFFFFF".to_string())); // White color
-        let mut main_page = Box::new(MainPage::new(self.get_page_mut_id(),
-                                                   MAIN_PAGE_NAME.to_string(),
+        let mut main_page = Box::new(MainPage::new(MAIN_PAGE_ID,
                                                    main_page_style,
                                                    event_sender.clone(),
                                                    self.get_event_receiver()));
@@ -338,67 +345,15 @@ impl PageManager {
         // diag_page_style.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(20));
         // diag_page_style.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#00FF00".to_string())); // Green color
         // diag_page_style.set(TEXT_PRIMARY_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf".to_string()));
-        let mut diag_page = Box::new(DiagPage::new(self.get_page_mut_id(),
-                                                   DIAG_PAGE_NAME.to_string(),
+        let mut diag_page = Box::new(DiagPage::new(DIAG_PAGE_ID,
                                                    self.ui_style.clone(),
                                                    event_sender.clone(),
                                                    self.get_event_receiver()));
 
-        let main_page_id = self.add_page(main_page);
-        self.switch_page(main_page_id)?;
+        self.add_page(main_page);
+        self.switch_page(MAIN_PAGE_ID)?;
 
-        let diag_page_id = self.add_page(diag_page);
-
-        // Create buttons that send events instead of direct function calls
-       
-        let main_buttons = vec![
-            PageButton::new(ButtonPosition::Left1, "ВИД+".into(), Box::new({
-                let sender = event_sender.clone();
-                move || sender.send(UIEvent::ButtonPressed("view_up".into()))
-            }) as Box<dyn FnMut()>),
-            PageButton::new(ButtonPosition::Left2, "ВИД-".into(), Box::new({
-                let sender = event_sender.clone();
-                move || sender.send(UIEvent::ButtonPressed("view_down".into()))
-            }) as Box<dyn FnMut()>),
-            PageButton::new(ButtonPosition::Left4, "ВЫХ".into(), Box::new({
-                let sender = event_sender.clone();
-                move || sender.send(UIEvent::Shutdown)
-            }) as Box<dyn FnMut()>),
-            PageButton::new(ButtonPosition::Right1, "ЯРК+".into(), Box::new({
-                let sender = event_sender.clone();
-                move || sender.send(UIEvent::BrightnessUp)
-            }) as Box<dyn FnMut()>),
-            PageButton::new(ButtonPosition::Right2, "ЯРК-".into(), Box::new({
-                let sender = event_sender.clone();
-                move || sender.send(UIEvent::BrightnessDown)
-            }) as Box<dyn FnMut()>),
-            PageButton::new(ButtonPosition::Right4, "ДИАГ".into(), Box::new({
-                let sender = event_sender.clone();
-                move || sender.send(UIEvent::SwitchToPage(diag_page_id))
-            }) as Box<dyn FnMut()>),
-        ];
-
-        self.get_page_mut(main_page_id).expect("Failed to get main page").set_buttons(main_buttons);
-
-        match self.get_page_mut(diag_page_id) {
-            Some(page) => {
-                page.set_buttons(vec![
-                    PageButton::new(ButtonPosition::Left1, "ДАТЧ".into(), Box::new({
-                        let sender = event_sender.clone();
-                        move || sender.send(UIEvent::ButtonPressed("diag_test_1".into()))
-                    }) as Box<dyn FnMut()>),
-                    PageButton::new(ButtonPosition::Left2, "ЖУРН".into(), Box::new({
-                        let sender = event_sender.clone();
-                        move || sender.send(UIEvent::ButtonPressed("diag_test_2".into()))
-                    }) as Box<dyn FnMut()>),
-                    PageButton::new(ButtonPosition::Right4, "ВОЗВ".into(), Box::new({
-                        let sender = event_sender.clone();
-                        move || sender.send(UIEvent::SwitchToPage(main_page_id))
-                    }) as Box<dyn FnMut()>),
-                ]);
-            }
-            None => return Err("Failed to get diag page for button setup".into()),
-        }
+        self.add_page(diag_page);
 
         Ok(())
     }
@@ -532,41 +487,7 @@ impl PageManager {
                     _ => print!("Unknown action: {}\r\n", action),
                 }
             }
-            // Page-specific events are handled by individual pages automatically
-            UIEvent::ShowSensorInfo => {
-                print!("Sensor info event (handled by DiagPage)\r\n");
-            }
-            UIEvent::ShowECUInfo => {
-                print!("ECU info event (handled by DiagPage)\r\n");
-            }
-            UIEvent::ShowOSCInfo => {
-                print!("ECU info event (handled by DiagPage)\r\n");
-            }
-            UIEvent::ShowLog => {
-                print!("Show log event (handled by DiagPage)\r\n");
-            }
-            // Oscilloscope events (for future use)
-            UIEvent::OscStart => {
-                print!("Oscilloscope start event\r\n");
-            }
-            UIEvent::OscStop => {
-                print!("Oscilloscope stop event\r\n");
-            }
-            UIEvent::OscSetSampleRate(rate) => {
-                print!("Oscilloscope sample rate: {} Hz\r\n", rate);
-            }
-            UIEvent::OscSetTimeScale(scale) => {
-                print!("Oscilloscope time scale: {}\r\n", scale);
-            }
-            UIEvent::OscSetVoltageScale(scale) => {
-                print!("Oscilloscope voltage scale: {}\r\n", scale);
-            }
-            UIEvent::OscSetTriggerLevel(level) => {
-                print!("Oscilloscope trigger level: {}\r\n", level);
-            }
-            UIEvent::OscToggleChannel(channel) => {
-                print!("Oscilloscope toggle channel: {}\r\n", channel);
-            }
+            _ => {}
         }
     }
     

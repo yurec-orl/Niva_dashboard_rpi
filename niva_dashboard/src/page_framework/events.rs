@@ -11,6 +11,10 @@ pub enum UIEvent {
     // Page navigation
     SwitchToPage(u32),
 
+    // Main page events
+    NextIndicatorSet,
+    PreviousIndicatorSet,
+
     // System events
     Shutdown,
     Restart,
@@ -87,26 +91,6 @@ impl EventSender {
         if let Err(e) = self.sender.send(event) {
             eprintln!("Failed to send UI event (blocking): {:?}", e);
         }
-    }
-    
-    /// Send brightness up event
-    pub fn brightness_up(&self) {
-        self.send(UIEvent::BrightnessUp);
-    }
-    
-    /// Send brightness down event
-    pub fn brightness_down(&self) {
-        self.send(UIEvent::BrightnessDown);
-    }
-    
-    /// Send shutdown event
-    pub fn shutdown(&self) {
-        self.send(UIEvent::Shutdown);
-    }
-    
-    /// Send page switch event
-    pub fn switch_to_page(&self, page_id: u32) {
-        self.send(UIEvent::SwitchToPage(page_id));
     }
 }
 
