@@ -116,9 +116,8 @@ fn test_sensor_manager() -> Result<(), Box<dyn std::error::Error>> {
     
     // Create digital sensor chain for park brake
     println!("Setting up digital sensor chain (park brake)...");
-    let park_brake_input = HW_PARK_BRAKE_INPUT;
     let digital_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(park_brake_input.clone())),
+        Box::new(TestDigitalDataProvider::new(HWInput::HwParkBrake)),
         vec![Box::new(DigitalSignalDebouncer::new(2, Duration::from_millis(50)))],
         Box::new(GenericDigitalSensor::new(Level::Low)),
     );
@@ -126,9 +125,8 @@ fn test_sensor_manager() -> Result<(), Box<dyn std::error::Error>> {
     
     // Create analog sensor chain for fuel level
     println!("Setting up analog sensor chain (fuel level)...");
-    let fuel_input = HW_FUEL_LVL_INPUT;
     let analog_chain = SensorAnalogInputChain::new(
-        Box::new(TestAnalogDataProvider::new(fuel_input.clone())),
+        Box::new(TestAnalogDataProvider::new(HWInput::HwFuelLvl)),
         vec![Box::new(AnalogSignalProcessorMovingAverage::new(3))],
         Box::new(TestFuelSensor{value: SensorValue::analog(0.0, 0.0, 100.0, "%", "Fuel Level", "fuel_sensor")}),
     );
@@ -142,18 +140,18 @@ fn test_sensor_manager() -> Result<(), Box<dyn std::error::Error>> {
         match manager.read_all_sensors() {
             Ok(_) => {
                 // Get digital sensor values
-                let digital_values = manager.get_digital_sensor_values();
-                for (input, sensor_value) in digital_values {
-                    if *input == park_brake_input {
+                let values = manager.get_sensor_values();
+
+                for (input, sensor_value) in values {
+                    if *input == HWInput::HwParkBrake {
                         println!("Park brake: {}", if sensor_value.is_active() { "ENGAGED" } else { "RELEASED" });
                         break;
                     }
                 }
-                
-                // Get analog sensor values  
-                let analog_values = manager.get_analog_sensor_values();
-                for (input, sensor_value) in analog_values {
-                    if *input == fuel_input {
+
+                // Get analog sensor values
+                for (input, sensor_value) in values {
+                    if *input == HWInput::HwFuelLvl {
                         println!("Fuel level: {:.1}%", sensor_value.as_f32());
                         break;
                     }

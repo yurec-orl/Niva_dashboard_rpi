@@ -3,7 +3,7 @@
 // and concrete implementations for different hardware interfaces.
 //
 // Defines:
-// - HWAnalogInput/HWDigitalInput enums for all supported inputs
+// - HWInput/HWInput enums for all supported inputs
 // - HWAnalogProvider/HWDigitalProvider traits for hardware abstraction
 // - GPIOProvider: Direct GPIO digital input reading for Raspberry Pi
 // - I2CProvider: External ADC/controller interface via I2C protocol  
@@ -24,87 +24,49 @@ use std::time::{Duration, Instant};
 
 /////////////////////////////////////////////////////////////////////////
 
-// Hardware input definitions
-// Active level corresponds to physical sensor configuration - for sensors
-// that short to ground when active, use Level::Low and pull-up mode on input pins.
-// For sensors that provide +12V when active, use Level::High.
-
-pub const HW_BRAKE_FLUID_LVL_LOW_INPUT: HWDigitalInput = HWDigitalInput::HwBrakeFluidLvlLow(Level::Low);
-pub const HW_CHARGE_INPUT: HWDigitalInput = HWDigitalInput::HwCharge(Level::Low);
-pub const HW_CHECK_ENGINE_INPUT: HWDigitalInput = HWDigitalInput::HwCheckEngine(Level::Low);
-pub const HW_DIFF_LOCK_INPUT: HWDigitalInput = HWDigitalInput::HwDiffLock(Level::Low);
-pub const HW_EXT_LIGHTS_INPUT: HWDigitalInput = HWDigitalInput::HwExtLights(Level::Low);
-pub const HW_FUEL_LVL_LOW_INPUT: HWDigitalInput = HWDigitalInput::HwFuelLvlLow(Level::Low);
-pub const HW_HIGH_BEAM_INPUT: HWDigitalInput = HWDigitalInput::HwHighBeam(Level::Low);
-pub const HW_INSTR_ILLUM_INPUT: HWDigitalInput = HWDigitalInput::HwInstrIllum(Level::Low);
-pub const HW_OIL_PRESS_LOW_INPUT: HWDigitalInput = HWDigitalInput::HwOilPressLow(Level::Low);
-pub const HW_PARK_BRAKE_INPUT: HWDigitalInput = HWDigitalInput::HwParkBrake(Level::Low);
-pub const HW_SPEED_INPUT: HWDigitalInput = HWDigitalInput::HwSpeed(Level::High);
-pub const HW_TACHO_INPUT: HWDigitalInput = HWDigitalInput::HwTacho(Level::High);
-pub const HW_TURN_SIGNAL_INPUT: HWDigitalInput = HWDigitalInput::HwTurnSignal(Level::Low);
-
-pub const HW_12V_INPUT: HWAnalogInput = HWAnalogInput::Hw12v;
-pub const HW_FUEL_LVL_INPUT: HWAnalogInput = HWAnalogInput::HwFuelLvl;
-pub const HW_OIL_PRESS_INPUT: HWAnalogInput = HWAnalogInput::HwOilPress;
-pub const HW_TEMP_INPUT: HWAnalogInput = HWAnalogInput::HwTemp;
-
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum HWAnalogInput {
+pub enum HWInput {
+    // Analog inputs
     Hw12v,
     HwFuelLvl,
     HwOilPress,
-    HwTemp,
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum HWDigitalInput {
-    HwBrakeFluidLvlLow(Level),
-    HwCharge(Level),
-    HwCheckEngine(Level),
-    HwDiffLock(Level),
-    HwExtLights(Level),
-    HwFuelLvlLow(Level),
-    HwHighBeam(Level),
-    HwInstrIllum(Level),
-    HwOilPressLow(Level),
-    HwParkBrake(Level),
-    HwSpeed(Level),
-    HwTacho(Level),
-    HwTurnSignal(Level),
-}
-
-impl HWDigitalInput {
-    fn get_level(&self) -> Level {
-        match self {
-            Self::HwSpeed(level) | Self::HwCharge(level) | Self::HwFuelLvlLow(level) |
-            Self::HwTacho(level) | Self::HwOilPressLow(level) | Self::HwInstrIllum(level) |
-            Self::HwBrakeFluidLvlLow(level) | Self::HwExtLights(level) | Self::HwTurnSignal(level) |
-            Self::HwHighBeam(level) | Self::HwParkBrake(level) | Self::HwDiffLock(level) |
-            Self::HwCheckEngine(level) => *level,
-        }
-    }
+    HwEngineCoolantTemp,
+    // Digital inputs
+    HwBrakeFluidLvlLow,
+    HwCharge,
+    HwCheckEngine,
+    HwDiffLock,
+    HwExtLights,
+    HwFuelLvlLow,
+    HwHighBeam,
+    HwInstrIllum,
+    HwOilPressLow,
+    HwParkBrake,
+    HwSpeed,
+    HwTacho,
+    HwTurnSignal,
 }
 
 // Generic interface for reading input data.
 pub trait HWAnalogProvider {
-    fn input(&self) -> HWAnalogInput;
-    fn read_analog(&self, input: HWAnalogInput) -> Result<u16, String>;
+    fn input(&self) -> HWInput;
+    fn read_analog(&self, input: HWInput) -> Result<u16, String>;
 }
 
 pub trait HWDigitalProvider {
-    fn input(&self) -> HWDigitalInput;
-    fn read_digital(&self, input: HWDigitalInput) -> Result<Level, String>;
+    fn input(&self) -> HWInput;
+    fn read_digital(&self, input: HWInput) -> Result<Level, String>;
 }
 
 // Read directly from GPIO pins
 // Digital inputs only - Raspi does not have built-in ADC
 pub struct GPIOProvider {
-    input: HWDigitalInput,
+    input: HWInput,
     // Implementation details for GPIO access
 }
 
 impl GPIOProvider {
-    pub fn new(input: HWDigitalInput) -> Self {
+    pub fn new(input: HWInput) -> Self {
         GPIOProvider {
             input,
             // Initialize GPIO access here
@@ -113,27 +75,25 @@ impl GPIOProvider {
 }
 
 impl HWDigitalProvider for GPIOProvider {
-    fn input(&self) -> HWDigitalInput {
+    fn input(&self) -> HWInput {
         self.input.clone()
     }
 
-    fn read_digital(&self, input: HWDigitalInput) -> Result<Level, String> {
+    fn read_digital(&self, input: HWInput) -> Result<Level, String> {
         // Implementation for reading digital value from GPIO pin
         Ok(Level::Low)
     }
 }
 
-// Read inputs from external ADC via I2C protocol
+// Read inputs from external MC via I2C protocol
 pub struct I2CProvider {
-    dig_input: HWDigitalInput,
-    input: HWAnalogInput,
+    input: HWInput,
     // Implementation details for I2C access
 }
 
 impl I2CProvider {
-    pub fn new(dig_input: HWDigitalInput, input: HWAnalogInput) -> Self {
+    pub fn new(input: HWInput) -> Self {
         I2CProvider {
-            dig_input,
             input,
             // Initialize I2C access here
         }
@@ -141,32 +101,32 @@ impl I2CProvider {
 }
 
 impl HWAnalogProvider for I2CProvider {
-    fn input(&self) -> HWAnalogInput {
+    fn input(&self) -> HWInput {
         self.input.clone()
     }
-    fn read_analog(&self, input: HWAnalogInput) -> Result<u16, String> {
+    fn read_analog(&self, input: HWInput) -> Result<u16, String> {
         // Implementation for reading analog value from external ADC via I2C
         Ok(0)
     }
 }
 
 impl HWDigitalProvider for I2CProvider {
-    fn input(&self) -> HWDigitalInput {
-        self.dig_input.clone()
+    fn input(&self) -> HWInput {
+        self.input.clone()
     }
-    fn read_digital(&self, input: HWDigitalInput) -> Result<Level, String> {
+    fn read_digital(&self, input: HWInput) -> Result<Level, String> {
         // Implementation for reading digital value from external controller via I2C
         Ok(Level::Low)
     }
 }
 
 pub struct TestDigitalDataProvider {
-    input: HWDigitalInput,
+    input: HWInput,
     start_time: Instant,
 }
 
 impl TestDigitalDataProvider {
-    pub fn new(input: HWDigitalInput) -> Self {
+    pub fn new(input: HWInput) -> Self {
         TestDigitalDataProvider {
             input,
             start_time: Instant::now(),
@@ -175,37 +135,30 @@ impl TestDigitalDataProvider {
 }
 
 impl HWDigitalProvider for TestDigitalDataProvider {
-    fn input(&self) -> HWDigitalInput {
+    fn input(&self) -> HWInput {
         self.input.clone()
     }
 
-    fn read_digital(&self, input: HWDigitalInput) -> Result<Level, String> {
+    fn read_digital(&self, input: HWInput) -> Result<Level, String> {
         let elapsed = self.start_time.elapsed();
         let active_duration = Duration::from_secs(4);
         
-        // Extract the active level from the input enum
-        let active_level = input.get_level();
-        
         // Return active level for first 4 seconds, then inactive level
         if elapsed < active_duration {
-            Ok(active_level)
+            Ok(Level::High)
         } else {
-            // Return opposite level as inactive
-            match active_level {
-                Level::High => Ok(Level::Low),
-                Level::Low => Ok(Level::High),
-            }
+            Ok(Level::Low)
         }
     }
 }
 
 pub struct TestAnalogDataProvider {
-    input: HWAnalogInput,
+    input: HWInput,
     start_time: Instant,
 }
 
 impl TestAnalogDataProvider {
-    pub fn new(input: HWAnalogInput) -> Self {
+    pub fn new(input: HWInput) -> Self {
         TestAnalogDataProvider {
             input,
             start_time: Instant::now(),
@@ -214,10 +167,10 @@ impl TestAnalogDataProvider {
 }
 
 impl HWAnalogProvider for TestAnalogDataProvider {
-    fn input(&self) -> HWAnalogInput {
+    fn input(&self) -> HWInput {
         self.input.clone()
     }
-    fn read_analog(&self, input: HWAnalogInput) -> Result<u16, String> {
+    fn read_analog(&self, input: HWInput) -> Result<u16, String> {
         let elapsed = self.start_time.elapsed();
         let cycle_duration = Duration::from_millis(5000); // 5 seconds total cycle
         let half_cycle = Duration::from_millis(2500); // 2.5 seconds per half
@@ -243,12 +196,12 @@ impl HWAnalogProvider for TestAnalogDataProvider {
 }
 
 struct TestPulseDataProvider {
-    input: HWDigitalInput,
+    input: HWInput,
     start_time: Instant,
 }
 
 impl TestPulseDataProvider {
-    pub fn new(input: HWDigitalInput) -> Self {
+    pub fn new(input: HWInput) -> Self {
         TestPulseDataProvider {
             input,
             start_time: Instant::now(),
@@ -276,10 +229,10 @@ impl TestPulseDataProvider {
 }
 
 impl HWDigitalProvider for TestPulseDataProvider {
-    fn input(&self) -> HWDigitalInput {
+    fn input(&self) -> HWInput {
         self.input.clone()
     }
-    fn read_digital(&self, input: HWDigitalInput) -> Result<Level, String> {
+    fn read_digital(&self, input: HWInput) -> Result<Level, String> {
         let current_frequency = self.get_current_frequency();
         
         // If frequency is essentially zero, return low

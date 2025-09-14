@@ -41,7 +41,7 @@ fn setup_sensors() -> SensorManager {
     
     // Brake fluid level low sensor
     let brake_fluid_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HW_BRAKE_FLUID_LVL_LOW_INPUT)),
+        Box::new(TestDigitalDataProvider::new(HWInput::HwBrakeFluidLvlLow)),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
         Box::new(GenericDigitalSensor::new(Level::Low)),
     );
@@ -49,7 +49,7 @@ fn setup_sensors() -> SensorManager {
 
     // Charge indicator sensor
     let charge_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HW_CHARGE_INPUT)),
+        Box::new(TestDigitalDataProvider::new(HWInput::HwCharge)),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
         Box::new(GenericDigitalSensor::new(Level::Low)),
     );
@@ -57,7 +57,7 @@ fn setup_sensors() -> SensorManager {
 
     // Differential lock sensor
     let diff_lock_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HW_DIFF_LOCK_INPUT)),
+        Box::new(TestDigitalDataProvider::new(HWInput::HwDiffLock)),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
         Box::new(GenericDigitalSensor::new(Level::Low)),
     );
@@ -65,7 +65,7 @@ fn setup_sensors() -> SensorManager {
 
     // External lights sensor
     let ext_lights_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HW_EXT_LIGHTS_INPUT)),
+        Box::new(TestDigitalDataProvider::new(HWInput::HwExtLights)),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
         Box::new(GenericDigitalSensor::new(Level::Low)),
     );
@@ -73,7 +73,7 @@ fn setup_sensors() -> SensorManager {
 
     // Fuel level low sensor
     let fuel_lvl_low_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HW_FUEL_LVL_LOW_INPUT)),
+        Box::new(TestDigitalDataProvider::new(HWInput::HwFuelLvlLow)),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
         Box::new(GenericDigitalSensor::new(Level::Low)),
     );
@@ -81,7 +81,7 @@ fn setup_sensors() -> SensorManager {
 
     // High beam sensor
     let high_beam_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HW_HIGH_BEAM_INPUT)),
+        Box::new(TestDigitalDataProvider::new(HWInput::HwHighBeam)),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
         Box::new(GenericDigitalSensor::new(Level::Low)),
     );
@@ -89,7 +89,7 @@ fn setup_sensors() -> SensorManager {
 
     // Instrument illumination sensor
     let instr_illum_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HW_INSTR_ILLUM_INPUT)),
+        Box::new(TestDigitalDataProvider::new(HWInput::HwInstrIllum)),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
         Box::new(GenericDigitalSensor::new(Level::Low)),
     );
@@ -97,7 +97,7 @@ fn setup_sensors() -> SensorManager {
 
     // Oil pressure low sensor
     let oil_press_low_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HW_OIL_PRESS_LOW_INPUT)),
+        Box::new(TestDigitalDataProvider::new(HWInput::HwOilPressLow)),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
         Box::new(GenericDigitalSensor::new(Level::Low)),
     );
@@ -105,7 +105,7 @@ fn setup_sensors() -> SensorManager {
 
     // Parking brake sensor
     let park_brake_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HW_PARK_BRAKE_INPUT)),
+        Box::new(TestDigitalDataProvider::new(HWInput::HwParkBrake)),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
         Box::new(GenericDigitalSensor::new(Level::Low)),
     );
@@ -113,7 +113,7 @@ fn setup_sensors() -> SensorManager {
 
     // Speed sensor (active high, pulse-based)
     let speed_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HW_SPEED_INPUT)),
+        Box::new(TestDigitalDataProvider::new(HWInput::HwSpeed)),
         vec![Box::new(DigitalSignalDebouncer::new(3, std::time::Duration::from_millis(10)))],
         Box::new(GenericDigitalSensor::new(Level::High)),
     );
@@ -121,7 +121,7 @@ fn setup_sensors() -> SensorManager {
 
     // Tachometer sensor (active high, pulse-based)
     let tacho_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HW_TACHO_INPUT)),
+        Box::new(TestDigitalDataProvider::new(HWInput::HwTacho)),
         vec![Box::new(DigitalSignalDebouncer::new(3, std::time::Duration::from_millis(10)))],
         Box::new(GenericDigitalSensor::new(Level::High)),
     );
@@ -129,7 +129,7 @@ fn setup_sensors() -> SensorManager {
 
     // Turn signal sensor
     let turn_signal_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HW_TURN_SIGNAL_INPUT)),
+        Box::new(TestDigitalDataProvider::new(HWInput::HwTurnSignal)),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
         Box::new(GenericDigitalSensor::new(Level::Low)),
     );
@@ -139,7 +139,7 @@ fn setup_sensors() -> SensorManager {
     
     // 12V voltage sensor (0-20V range for full diagnostic capability)
     let voltage_12v_chain = SensorAnalogInputChain::new(
-        Box::new(TestAnalogDataProvider::new(HW_12V_INPUT)),
+        Box::new(TestAnalogDataProvider::new(HWInput::Hw12v)),
         vec![Box::new(AnalogSignalProcessorMovingAverage::new(10))],
         Box::new(GenericAnalogSensor::new(0.0, 20.0, 0.01)), // 0-20V range for diagnostic capability
     );
@@ -147,7 +147,7 @@ fn setup_sensors() -> SensorManager {
 
     // Fuel level sensor
     let fuel_level_chain = SensorAnalogInputChain::new(
-        Box::new(TestAnalogDataProvider::new(HW_FUEL_LVL_INPUT)),
+        Box::new(TestAnalogDataProvider::new(HWInput::HwFuelLvl)),
         vec![Box::new(AnalogSignalProcessorMovingAverage::new(15))],
         Box::new(GenericAnalogSensor::new(0.0, 100.0, 0.1)), // Scale for percentage
     );
@@ -155,7 +155,7 @@ fn setup_sensors() -> SensorManager {
 
     // Oil pressure sensor (0-8 kgf/cm² range)
     let oil_pressure_chain = SensorAnalogInputChain::new(
-        Box::new(TestAnalogDataProvider::new(HW_OIL_PRESS_INPUT)),
+        Box::new(TestAnalogDataProvider::new(HWInput::HwOilPress)),
         vec![Box::new(AnalogSignalProcessorMovingAverage::new(10))],
         Box::new(GenericAnalogSensor::new(0.0, 8.0, 0.01)), // 0-8 kgf/cm² pressure range
     );
@@ -163,7 +163,7 @@ fn setup_sensors() -> SensorManager {
 
     // Engine temperature sensor (0-120°C range)
     let temperature_chain = SensorAnalogInputChain::new(
-        Box::new(TestAnalogDataProvider::new(HW_TEMP_INPUT)),
+        Box::new(TestAnalogDataProvider::new(HWInput::HwEngineCoolantTemp)),
         vec![Box::new(AnalogSignalProcessorMovingAverage::new(20))],
         Box::new(GenericAnalogSensor::new(0.0, 120.0, 0.1)), // 0-120°C engine temperature range
     );

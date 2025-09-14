@@ -53,11 +53,11 @@
 //! manager.add_digital_sensor_chain(chain);
 //! 
 //! // Read processed sensor value
-//! let brake_active = manager.read_digital_sensor(HWDigitalInput::ParkBrake(Level::Low))?;
+//! let brake_active = manager.read_digital_sensor(HWInput::ParkBrake(Level::Low))?;
 //! ```
 
 use crate::hardware::sensors::{AnalogSensor, DigitalSensor};
-use crate::hardware::hw_providers::{HWDigitalInput, HWAnalogInput, HWAnalogProvider, HWDigitalProvider};
+use crate::hardware::hw_providers::{HWInput, HWAnalogProvider, HWDigitalProvider};
 use crate::hardware::analog_signal_processing::AnalogSignalProcessor;
 use crate::hardware::digital_signal_processing::DigitalSignalProcessor;
 use crate::hardware::sensor_value::{SensorValue, ValueData};
@@ -110,8 +110,7 @@ impl SensorAnalogInputChain {
 pub struct SensorManager {
     digital_sensors: Vec<SensorDigitalInputChain>,
     analog_sensors: Vec<SensorAnalogInputChain>,
-    digital_sensor_values: Vec<(HWDigitalInput, SensorValue)>,
-    analog_sensor_values: Vec<(HWAnalogInput, SensorValue)>,
+    sensor_values: Vec<(HWInput, SensorValue)>,
 }
 
 impl SensorManager {
@@ -119,8 +118,7 @@ impl SensorManager {
         SensorManager {
             digital_sensors: Vec::new(),
             analog_sensors: Vec::new(),
-            digital_sensor_values: Vec::new(),
-            analog_sensor_values: Vec::new(),
+            sensor_values: Vec::new(),
         }
     }
 
@@ -132,7 +130,7 @@ impl SensorManager {
         self.analog_sensors.push(chain);
     }
 
-    fn read_digital_sensor(&mut self, input: HWDigitalInput) -> Result<SensorValue, String> {
+    fn read_digital_sensor(&mut self, input: HWInput) -> Result<SensorValue, String> {
         for chain in &mut self.digital_sensors {
             if chain.hw_provider.input() != input {
                 continue;
@@ -151,7 +149,7 @@ impl SensorManager {
         Err(format!("Digital sensor chain not found for input: {:?}", input))
     }
 
-    fn read_analog_sensor(&mut self, input: HWAnalogInput) -> Result<SensorValue, String> {
+    fn read_analog_sensor(&mut self, input: HWInput) -> Result<SensorValue, String> {
         for chain in &mut self.analog_sensors {
             if chain.hw_provider.input() != input {
                 continue;
@@ -172,38 +170,33 @@ impl SensorManager {
 
     // Should be called periodically from event loop to update all sensors
     pub fn read_all_sensors(&mut self) -> Result<(), String> {
-        self.digital_sensor_values.clear();
-        self.analog_sensor_values.clear();
+        self.sensor_values.clear();
 
         // Collect inputs first to avoid borrowing issues
-        let digital_inputs: Vec<HWDigitalInput> = self.digital_sensors.iter()
+        let digital_inputs: Vec<HWInput> = self.digital_sensors.iter()
             .map(|chain| chain.hw_provider.input())
             .collect();
-        let analog_inputs: Vec<HWAnalogInput> = self.analog_sensors.iter()
+        let analog_inputs: Vec<HWInput> = self.analog_sensors.iter()
             .map(|chain| chain.hw_provider.input())
             .collect();
 
         // Read digital sensors
         for input in digital_inputs {
             let value = self.read_digital_sensor(input)?;
-            self.digital_sensor_values.push((input, value));
+            self.sensor_values.push((input, value));
         }
 
         // Read analog sensors  
         for input in analog_inputs {
             let value = self.read_analog_sensor(input)?;
-            self.analog_sensor_values.push((input, value));
+            self.sensor_values.push((input, value));
         }
 
         Ok(())
     }
 
-    pub fn get_digital_sensor_values(&self) -> &Vec<(HWDigitalInput, SensorValue)> {
-        &self.digital_sensor_values
-    }
-
-    pub fn get_analog_sensor_values(&self) -> &Vec<(HWAnalogInput, SensorValue)> {
-        &self.analog_sensor_values
+    pub fn get_sensor_values(&self) -> &Vec<(HWInput, SensorValue)> {
+        &self.sensor_values
     }
 }
 
@@ -251,7 +244,7 @@ mod tests {
         let mut manager = SensorManager::new();
         
         // Create test digital input for park brake (active low)
-        let park_brake_input = HWDigitalInput::HwParkBrake(Level::Low);
+        let park_brake_input = HWInput::HwParkBrake(Level::Low);
         
         // Create digital sensor chain components
         let hw_provider = Box::new(TestDigitalDataProvider::new(park_brake_input.clone()));
@@ -287,7 +280,7 @@ mod tests {
         let mut manager = SensorManager::new();
         
         // Create test analog input for fuel level
-        let fuel_input = HWAnalogInput::HwFuelLvl;
+        let fuel_input = HWInput::HwFuelLvl;
         
         // Create analog sensor chain components
         let hw_provider = Box::new(TestAnalogDataProvider::new(fuel_input.clone()));
@@ -323,7 +316,7 @@ mod tests {
         let mut manager = SensorManager::new();
         
         // Add digital chain for high beam indicator (active high)
-        let high_beam_input = HWDigitalInput::HwHighBeam(Level::High);
+        let high_beam_input = HWInput::HwHighBeam(Level::High);
         let digital_chain = SensorDigitalInputChain::new(
             Box::new(TestDigitalDataProvider::new(high_beam_input.clone())),
             vec![], // No signal processing for this test
@@ -332,7 +325,7 @@ mod tests {
         manager.add_digital_sensor_chain(digital_chain);
         
         // Add analog chain for temperature
-        let temp_input = HWAnalogInput::HwTemp;
+        let temp_input = HWInput::HwEngineCoolantTemp;
         let analog_chain = SensorAnalogInputChain::new(
             Box::new(TestAnalogDataProvider::new(temp_input.clone())),
             vec![Box::new(AnalogSignalProcessorMovingAverage::new(5))],
@@ -367,7 +360,7 @@ mod tests {
         let mut manager = SensorManager::new();
         
         // Try to read from a sensor that wasn't configured
-        let non_existent_input = HWDigitalInput::HwSpeed(Level::High);
+        let non_existent_input = HWInput::HwSpeed(Level::High);
         let result = manager.read_digital_sensor(non_existent_input);
         
         assert!(result.is_err(), "Reading non-existent sensor should fail");
@@ -387,7 +380,7 @@ mod tests {
         let mut manager = SensorManager::new();
         
         // Create a chain with multiple signal processors
-        let turn_signal_input = HWDigitalInput::HwTurnSignal(Level::High);
+        let turn_signal_input = HWInput::HwTurnSignal(Level::High);
         
         // Add two debounce stages for extra filtering
         let debouncer1 = Box::new(DigitalSignalDebouncer::new(2, Duration::from_millis(25)));

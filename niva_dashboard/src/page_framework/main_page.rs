@@ -12,6 +12,7 @@ use crate::page_framework::events::UIEvent;
 
 struct IndicatorSet {
     indicators: Vec<Box<dyn Indicator>>,
+    inputs: Vec<HWInput>, // Corresponding hardware inputs for each indicator
     indicator_bounds: Vec<IndicatorBounds>,
 }
 
@@ -26,6 +27,24 @@ pub struct MainPage {
 impl MainPage {
     fn setup_test_indicators() -> IndicatorSet {
         let mut indicators: Vec<Box<dyn Indicator>> = Vec::new();
+        let mut inputs: Vec<HWInput> = vec![
+            HWInput::Hw12v,
+            HWInput::HwFuelLvl,
+            HWInput::HwOilPress,
+            HWInput::HwEngineCoolantTemp,
+            HWInput::HwBrakeFluidLvlLow,
+            HWInput::HwCharge,
+            HWInput::HwCheckEngine,
+            HWInput::HwDiffLock,
+            HWInput::HwExtLights,
+            HWInput::HwFuelLvlLow,
+            HWInput::HwHighBeam,
+            HWInput::HwOilPressLow,
+            HWInput::HwParkBrake,
+            HWInput::HwSpeed,
+            HWInput::HwTacho,
+            HWInput::HwTurnSignal
+        ];
         let mut indicator_bounds: Vec<IndicatorBounds> = Vec::new();
 
         // Screen layout: assuming 800x480 resolution
@@ -80,11 +99,18 @@ impl MainPage {
         // Temperature (1 decimal place)
         indicators.push(Box::new(TextIndicator::with_config(1, true, true, TextAlignment::Center)));
         indicator_bounds.push(create_bounds_and_advance(&mut col, &mut row));
-        IndicatorSet { indicators, indicator_bounds }
+        IndicatorSet { indicators, inputs, indicator_bounds }
     }
 
     fn setup_indicators(context: &GraphicsContext) -> IndicatorSet {
         let mut indicators: Vec<Box<dyn Indicator>> = Vec::new();
+        let mut inputs: Vec<HWInput> = vec![
+            HWInput::HwSpeed,
+            HWInput::HwFuelLvl,
+            HWInput::HwOilPress,
+            HWInput::HwEngineCoolantTemp,
+            HWInput::Hw12v,
+        ];
         let mut indicator_bounds: Vec<IndicatorBounds> = Vec::new();
 
         // Main indicator set layout:
@@ -136,7 +162,7 @@ impl MainPage {
         indicators.push(Box::new(GaugeIndicator::new()));
         indicator_bounds.push(IndicatorBounds::new(right_x, battery_y, side_gauge_size, side_gauge_size));
 
-        IndicatorSet { indicators, indicator_bounds }
+        IndicatorSet { indicators, inputs, indicator_bounds }
     }
 
     pub fn new(id: u32, ui_style: UIStyle, event_sender: EventSender, event_receiver: EventReceiver, context: &GraphicsContext) -> Self {
@@ -192,12 +218,15 @@ impl MainPage {
 
     // Helper method to read sensor values directly from sensor manager
     fn get_sensor_values(&self, sensor_manager: &SensorManager) -> Result<Vec<SensorValue>, String> {
-        let mut sensor_values = Vec::new();
-        
         // Get sensor data from hardware (now returns SensorValue directly)
-        //let digital_sensor_values = sensor_manager.get_digital_sensor_values();
-        //let analog_sensor_values = sensor_manager.get_analog_sensor_values();
+        let mut sensor_values = sensor_manager.get_sensor_values();
 
+        // Filter and sort in same order as current indicator set inputs
+        let current_inputs = &self.indicator_sets[self.current_indicator_set].inputs;
+        let sensor_values: Vec<SensorValue> = sensor_values.iter()
+            .filter(|(input, _)| current_inputs.contains(input))
+            .map(|(_, value)| value.clone())
+            .collect();
 
         Ok(sensor_values)
     }
