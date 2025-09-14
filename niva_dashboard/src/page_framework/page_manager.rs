@@ -430,14 +430,14 @@ impl PageManager {
                 }
             }
 
-            // Process UI events from buttons and other sources (PageManager events)
-            while let Ok(event) = self.event_receiver.try_recv() {
-                self.handle_ui_event(event);
-            }
-
             // Let the current page process its own events
             if let Some(current_page) = self.get_current_page_mut() {
                 current_page.process_events();
+            }
+
+            // Process UI events from buttons and other sources (PageManager events)
+            while let Ok(event) = self.event_receiver.try_recv() {
+                self.handle_ui_event(event);
             }
 
             // Exit condition (for now, run for 30 seconds)

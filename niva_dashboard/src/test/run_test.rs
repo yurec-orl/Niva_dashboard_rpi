@@ -6,6 +6,7 @@ use crate::graphics::opengl_test::{run_basic_geometry_test, run_opengl_text_rend
 use crate::hardware::hw_providers::*;
 use crate::hardware::GpioInput;
 use crate::hardware::sensor_manager::SensorManager;
+use crate::hardware::sensor_value::{SensorValue, ValueData};
 
 pub fn run_test(name: &str) {
     match name {
@@ -97,11 +98,19 @@ fn test_sensor_manager() -> Result<(), Box<dyn std::error::Error>> {
     let mut manager = SensorManager::new();
     
     // Test fuel sensor implementation
-    struct TestFuelSensor;
+    struct TestFuelSensor {
+        value: SensorValue,
+    }
+
     impl AnalogSensor for TestFuelSensor {
-        fn value(&self, input: u16) -> Result<f32, String> {
+        fn read(&mut self, input: u16) -> Result<&SensorValue, String> {
             let percentage = (input as f32 / 1023.0) * 100.0;
-            Ok(percentage.clamp(0.0, 100.0))
+            self.value = SensorValue::analog(percentage.clamp(0.0, 100.0), 0.0, 100.0, "%", "Fuel Level", "fuel_sensor");
+            Ok(&self.value)
+        }
+
+        fn value(&self) -> Result<&SensorValue, String> {
+            Ok(&self.value)
         }
     }
     
@@ -121,7 +130,7 @@ fn test_sensor_manager() -> Result<(), Box<dyn std::error::Error>> {
     let analog_chain = SensorAnalogInputChain::new(
         Box::new(TestAnalogDataProvider::new(fuel_input.clone())),
         vec![Box::new(AnalogSignalProcessorMovingAverage::new(3))],
-        Box::new(TestFuelSensor),
+        Box::new(TestFuelSensor{value: SensorValue::analog(0.0, 0.0, 100.0, "%", "Fuel Level", "fuel_sensor")}),
     );
     manager.add_analog_sensor_chain(analog_chain);
     
@@ -134,18 +143,18 @@ fn test_sensor_manager() -> Result<(), Box<dyn std::error::Error>> {
             Ok(_) => {
                 // Get digital sensor values
                 let digital_values = manager.get_digital_sensor_values();
-                for (input, value) in digital_values {
+                for (input, sensor_value) in digital_values {
                     if *input == park_brake_input {
-                        println!("Park brake: {}", if *value { "ENGAGED" } else { "RELEASED" });
+                        println!("Park brake: {}", if sensor_value.is_active() { "ENGAGED" } else { "RELEASED" });
                         break;
                     }
                 }
                 
                 // Get analog sensor values  
                 let analog_values = manager.get_analog_sensor_values();
-                for (input, value) in analog_values {
+                for (input, sensor_value) in analog_values {
                     if *input == fuel_input {
-                        println!("Fuel level: {:.1}%", value);
+                        println!("Fuel level: {:.1}%", sensor_value.as_f32());
                         break;
                     }
                 }

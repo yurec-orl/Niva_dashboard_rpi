@@ -1,6 +1,7 @@
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::{UIStyle, blend_colors};
-use crate::indicators::indicator::{Indicator, SensorValue, IndicatorBounds, ValueData};
+use crate::indicators::indicator::{Indicator, IndicatorBounds};
+use crate::hardware::sensor_value::{SensorValue, ValueData};
 
 /// A circular gauge indicator with a rotating needle, similar to automotive gauges
 /// Features:

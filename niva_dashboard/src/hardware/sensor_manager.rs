@@ -60,6 +60,7 @@ use crate::hardware::sensors::{AnalogSensor, DigitalSensor};
 use crate::hardware::hw_providers::{HWDigitalInput, HWAnalogInput, HWAnalogProvider, HWDigitalProvider};
 use crate::hardware::analog_signal_processing::AnalogSignalProcessor;
 use crate::hardware::digital_signal_processing::DigitalSignalProcessor;
+use crate::hardware::sensor_value::{SensorValue, ValueData};
 use rppal::gpio::Level;
 
 // Sensor management - chains hardware providers, signal processors, and logical sensors
@@ -109,8 +110,8 @@ impl SensorAnalogInputChain {
 pub struct SensorManager {
     digital_sensors: Vec<SensorDigitalInputChain>,
     analog_sensors: Vec<SensorAnalogInputChain>,
-    digital_sensor_values: Vec<(HWDigitalInput, bool)>,
-    analog_sensor_values: Vec<(HWAnalogInput, f32)>,
+    digital_sensor_values: Vec<(HWDigitalInput, SensorValue)>,
+    analog_sensor_values: Vec<(HWAnalogInput, SensorValue)>,
 }
 
 impl SensorManager {
@@ -131,7 +132,7 @@ impl SensorManager {
         self.analog_sensors.push(chain);
     }
 
-    fn read_digital_sensor(&mut self, input: HWDigitalInput) -> Result<bool, String> {
+    fn read_digital_sensor(&mut self, input: HWDigitalInput) -> Result<SensorValue, String> {
         for chain in &mut self.digital_sensors {
             if chain.hw_provider.input() != input {
                 continue;
@@ -145,12 +146,12 @@ impl SensorManager {
             }
             
             // Convert to logical sensor value
-            return chain.sensor.active(level);
+            return Ok(chain.sensor.read(level)?.clone());
         }
         Err(format!("Digital sensor chain not found for input: {:?}", input))
     }
 
-    fn read_analog_sensor(&mut self, input: HWAnalogInput) -> Result<f32, String> {
+    fn read_analog_sensor(&mut self, input: HWAnalogInput) -> Result<SensorValue, String> {
         for chain in &mut self.analog_sensors {
             if chain.hw_provider.input() != input {
                 continue;
@@ -164,13 +165,13 @@ impl SensorManager {
             }
             
             // Convert to logical sensor value
-            return chain.sensor.value(value);
+            return Ok(chain.sensor.read(value)?.clone());
         }
         Err("Analog sensor chain not found".to_string())
     }
 
+    // Should be called periodically from event loop to update all sensors
     pub fn read_all_sensors(&mut self) -> Result<(), String> {
-        // Clear previous values
         self.digital_sensor_values.clear();
         self.analog_sensor_values.clear();
 
@@ -197,11 +198,11 @@ impl SensorManager {
         Ok(())
     }
 
-    pub fn get_digital_sensor_values(&self) -> &Vec<(HWDigitalInput, bool)> {
+    pub fn get_digital_sensor_values(&self) -> &Vec<(HWDigitalInput, SensorValue)> {
         &self.digital_sensor_values
     }
-    
-    pub fn get_analog_sensor_values(&self) -> &Vec<(HWAnalogInput, f32)> {
+
+    pub fn get_analog_sensor_values(&self) -> &Vec<(HWAnalogInput, SensorValue)> {
         &self.analog_sensor_values
     }
 }

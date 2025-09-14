@@ -5,10 +5,6 @@ pub mod gauge_indicator;
 // Re-export main types for convenience
 pub use indicator::{
     Indicator, 
-    SensorValue, 
-    ValueData, 
-    ValueConstraints, 
-    ValueMetadata, 
     IndicatorBounds
 };
 

@@ -1,6 +1,7 @@
-use crate::indicators::indicator::{Indicator, SensorValue, ValueData, IndicatorBounds};
+use crate::indicators::indicator::{Indicator, IndicatorBounds};
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::{UIStyle, TEXT_PRIMARY_FONT, TEXT_PRIMARY_FONT_SIZE, TEXT_PRIMARY_COLOR, TEXT_WARNING_COLOR, TEXT_ERROR_COLOR};
+use crate::hardware::sensor_value::{SensorValue, ValueData};
 
 /// Simple text indicator that displays sensor values as formatted text
 pub struct TextIndicator {
