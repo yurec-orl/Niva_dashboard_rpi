@@ -60,7 +60,7 @@ use crate::hardware::sensors::{AnalogSensor, DigitalSensor};
 use crate::hardware::hw_providers::{HWInput, HWAnalogProvider, HWDigitalProvider};
 use crate::hardware::analog_signal_processing::AnalogSignalProcessor;
 use crate::hardware::digital_signal_processing::DigitalSignalProcessor;
-use crate::hardware::sensor_value::{SensorValue, ValueData};
+use crate::hardware::sensor_value::SensorValue;
 use rppal::gpio::Level;
 
 // Sensor management - chains hardware providers, signal processors, and logical sensors
@@ -206,36 +206,9 @@ mod tests {
     use crate::hardware::hw_providers::{TestDigitalDataProvider, TestAnalogDataProvider};
     use crate::hardware::digital_signal_processing::DigitalSignalDebouncer;
     use crate::hardware::analog_signal_processing::AnalogSignalProcessorMovingAverage;
-    use crate::hardware::sensors::GenericDigitalSensor;
+    use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor};
+    use crate::hardware::sensor_value::{ValueConstraints, ValueMetadata};
     use std::time::Duration;
-    use std::thread;
-
-    // Test analog sensor implementation
-    struct TestFuelSensor;
-    impl AnalogSensor for TestFuelSensor {
-        fn value(&self, input: u16) -> Result<f32, String> {
-            // Convert ADC value (0-1023) to fuel percentage (0-100%)
-            let percentage = (input as f32 / 1023.0) * 100.0;
-            Ok(percentage.clamp(0.0, 100.0))
-        }
-        
-        fn min_value(&self) -> f32 { 0.0 }
-        fn max_value(&self) -> f32 { 100.0 }
-    }
-
-    // Test analog sensor for temperature
-    struct TestTemperatureSensor;
-    impl AnalogSensor for TestTemperatureSensor {
-        fn value(&self, input: u16) -> Result<f32, String> {
-            // Convert ADC value to temperature: assume 0V = -40°C, 5V = 120°C
-            // ADC range 0-1023 maps to -40 to 120°C
-            let temperature = -40.0 + (input as f32 / 1023.0) * 160.0;
-            Ok(temperature)
-        }
-        
-        fn min_value(&self) -> f32 { -40.0 }
-        fn max_value(&self) -> f32 { 120.0 }
-    }
 
     #[test]
     fn test_sensor_manager_digital_chain() {
@@ -244,12 +217,13 @@ mod tests {
         let mut manager = SensorManager::new();
         
         // Create test digital input for park brake (active low)
-        let park_brake_input = HWInput::HwParkBrake(Level::Low);
+        let park_brake_input = HWInput::HwParkBrake;
         
         // Create digital sensor chain components
-        let hw_provider = Box::new(TestDigitalDataProvider::new(park_brake_input.clone()));
+        let hw_provider = Box::new(TestDigitalDataProvider::new(park_brake_input));
         let debouncer = Box::new(DigitalSignalDebouncer::new(3, Duration::from_millis(50)));
-        let sensor = Box::new(GenericDigitalSensor::new(Level::Low)); // Active low sensor
+        let sensor = Box::new(GenericDigitalSensor::new("test_park_brake".to_string(), "Test Park Brake".to_string(), 
+                                                        Level::Low, ValueConstraints::digital_warning())); // Active low sensor
         
         // Create and add the chain
         let chain = SensorDigitalInputChain::new(
@@ -260,15 +234,15 @@ mod tests {
         manager.add_digital_sensor_chain(chain);
         
         // Test reading the sensor during active period (first 4 seconds)
-        let result = manager.read_digital_sensor(park_brake_input.clone());
+        let result = manager.read_digital_sensor(park_brake_input);
         assert!(result.is_ok(), "Digital sensor read should succeed");
         
-        let is_active = result.unwrap();
-        println!("Park brake active (during active period): {}", is_active);
+        let sensor_value = result.unwrap();
+        println!("Park brake active (during active period): {}", sensor_value.is_active());
         
         // In TestDigitalDataProvider, the first 4 seconds return the active level (Low)
         // Since our sensor is active-low, it should read as true (active)
-        assert!(is_active, "Park brake should be active during test period");
+        assert!(sensor_value.is_active(), "Park brake should be active during test period");
         
         println!("✓ Digital sensor chain test passed");
     }
@@ -283,9 +257,13 @@ mod tests {
         let fuel_input = HWInput::HwFuelLvl;
         
         // Create analog sensor chain components
-        let hw_provider = Box::new(TestAnalogDataProvider::new(fuel_input.clone()));
+        let hw_provider = Box::new(TestAnalogDataProvider::new(fuel_input));
         let moving_avg = Box::new(AnalogSignalProcessorMovingAverage::new(3));
-        let sensor = Box::new(TestFuelSensor);
+        let sensor = Box::new(GenericAnalogSensor::new(
+            ValueConstraints::analog_with_thresholds(0.0, 100.0, Some(10.0), Some(20.0), None, None),
+            ValueMetadata::new("%", "Test Fuel Level", "test_fuel"),
+            1.0
+        ));
         
         // Create and add the chain
         let chain = SensorAnalogInputChain::new(
@@ -296,13 +274,14 @@ mod tests {
         manager.add_analog_sensor_chain(chain);
         
         // Test reading the sensor
-        let result = manager.read_analog_sensor(fuel_input.clone());
+        let result = manager.read_analog_sensor(fuel_input);
         assert!(result.is_ok(), "Analog sensor read should succeed");
         
-        let fuel_percentage = result.unwrap();
-        println!("Fuel level: {:.1}%", fuel_percentage);
+        let sensor_value = result.unwrap();
+        println!("Fuel level: {:.1}%", sensor_value.as_f32());
         
         // Fuel percentage should be between 0 and 100
+        let fuel_percentage = sensor_value.as_f32();
         assert!(fuel_percentage >= 0.0 && fuel_percentage <= 100.0, 
                "Fuel percentage should be between 0 and 100");
         
@@ -316,20 +295,25 @@ mod tests {
         let mut manager = SensorManager::new();
         
         // Add digital chain for high beam indicator (active high)
-        let high_beam_input = HWInput::HwHighBeam(Level::High);
+        let high_beam_input = HWInput::HwHighBeam;
         let digital_chain = SensorDigitalInputChain::new(
-            Box::new(TestDigitalDataProvider::new(high_beam_input.clone())),
+            Box::new(TestDigitalDataProvider::new(high_beam_input)),
             vec![], // No signal processing for this test
-            Box::new(GenericDigitalSensor::new(Level::High)), // Active high sensor
+            Box::new(GenericDigitalSensor::new("test_high_beam".to_string(), "Test High Beam".to_string(),
+                                              Level::High, ValueConstraints::digital_default())), // Active high sensor
         );
         manager.add_digital_sensor_chain(digital_chain);
         
         // Add analog chain for temperature
         let temp_input = HWInput::HwEngineCoolantTemp;
         let analog_chain = SensorAnalogInputChain::new(
-            Box::new(TestAnalogDataProvider::new(temp_input.clone())),
+            Box::new(TestAnalogDataProvider::new(temp_input)),
             vec![Box::new(AnalogSignalProcessorMovingAverage::new(5))],
-            Box::new(TestTemperatureSensor),
+            Box::new(GenericAnalogSensor::new(
+                ValueConstraints::analog_with_thresholds(-40.0, 120.0, Some(-20.0), Some(0.0), Some(100.0), Some(110.0)),
+                ValueMetadata::new("°C", "Test Temperature", "test_temp"),
+                1.0
+            )),
         );
         manager.add_analog_sensor_chain(analog_chain);
         
@@ -340,13 +324,14 @@ mod tests {
         assert!(high_beam_result.is_ok(), "High beam sensor should work");
         assert!(temp_result.is_ok(), "Temperature sensor should work");
         
-        let high_beam_active = high_beam_result.unwrap();
-        let temperature = temp_result.unwrap();
+        let high_beam_sensor_value = high_beam_result.unwrap();
+        let temp_sensor_value = temp_result.unwrap();
         
-        println!("High beam active: {}", high_beam_active);
-        println!("Temperature: {:.1}°C", temperature);
+        println!("High beam active: {}", high_beam_sensor_value.is_active());
+        println!("Temperature: {:.1}°C", temp_sensor_value.as_f32());
         
         // Validate ranges
+        let temperature = temp_sensor_value.as_f32();
         assert!(temperature >= -40.0 && temperature <= 120.0, 
                "Temperature should be within sensor range");
         
@@ -360,7 +345,7 @@ mod tests {
         let mut manager = SensorManager::new();
         
         // Try to read from a sensor that wasn't configured
-        let non_existent_input = HWInput::HwSpeed(Level::High);
+        let non_existent_input = HWInput::HwSpeed;
         let result = manager.read_digital_sensor(non_existent_input);
         
         assert!(result.is_err(), "Reading non-existent sensor should fail");
@@ -380,16 +365,17 @@ mod tests {
         let mut manager = SensorManager::new();
         
         // Create a chain with multiple signal processors
-        let turn_signal_input = HWInput::HwTurnSignal(Level::High);
+        let turn_signal_input = HWInput::HwTurnSignal;
         
         // Add two debounce stages for extra filtering
         let debouncer1 = Box::new(DigitalSignalDebouncer::new(2, Duration::from_millis(25)));
         let debouncer2 = Box::new(DigitalSignalDebouncer::new(2, Duration::from_millis(25)));
         
         let chain = SensorDigitalInputChain::new(
-            Box::new(TestDigitalDataProvider::new(turn_signal_input.clone())),
+            Box::new(TestDigitalDataProvider::new(turn_signal_input)),
             vec![debouncer1, debouncer2], // Multiple processors in sequence
-            Box::new(GenericDigitalSensor::new(Level::High)),
+            Box::new(GenericDigitalSensor::new("test_turn_signal".to_string(), "Test Turn Signal".to_string(),
+                                              Level::High, ValueConstraints::digital_default())),
         );
         manager.add_digital_sensor_chain(chain);
         
@@ -397,8 +383,8 @@ mod tests {
         let result = manager.read_digital_sensor(turn_signal_input);
         assert!(result.is_ok(), "Signal processing pipeline should work");
         
-        let turn_signal_active = result.unwrap();
-        println!("Turn signal active (after processing): {}", turn_signal_active);
+        let sensor_value = result.unwrap();
+        println!("Turn signal active (after processing): {}", sensor_value.is_active());
         
         println!("✓ Signal processing pipeline test passed");
     }
