@@ -8,6 +8,7 @@ self.add_new_page()
 
 ## Project Overview
 A software dashboard for automotive use, written in Rust and designed to run on Raspberry Pi 4. The system mimics a multi-functional display (MFD) commonly found in aircraft, featuring a central screen with one row of configurable buttons on the left and right sides.
+On-screen text is in Russian, with a military-style abbreviations and shortened words where applicable.
 
 ## Hardware Platform
 - **Target Device**: Raspberry Pi 4
