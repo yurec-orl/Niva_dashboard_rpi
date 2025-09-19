@@ -336,7 +336,7 @@ impl PageManager {
         let mut main_page_style = self.ui_style.clone();
         main_page_style.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(14));
         main_page_style.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#FFFFFF".to_string())); // White color
-        let mut main_page = Box::new(MainPage::new(MAIN_PAGE_ID,
+        let main_page = Box::new(MainPage::new(MAIN_PAGE_ID,
                                                    main_page_style,
                                                    event_sender.clone(),
                                                    self.get_event_receiver(),
@@ -346,7 +346,7 @@ impl PageManager {
         // diag_page_style.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(20));
         // diag_page_style.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#00FF00".to_string())); // Green color
         // diag_page_style.set(TEXT_PRIMARY_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf".to_string()));
-        let mut diag_page = Box::new(DiagPage::new(DIAG_PAGE_ID,
+        let diag_page = Box::new(DiagPage::new(DIAG_PAGE_ID,
                                                    self.ui_style.clone(),
                                                    event_sender.clone(),
                                                    self.get_event_receiver()));

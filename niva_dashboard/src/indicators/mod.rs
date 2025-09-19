@@ -8,5 +8,3 @@ pub use indicator::{
     IndicatorBounds
 };
 
-pub use text_indicator::{TextIndicator, TextAlignment};
-pub use gauge_indicator::GaugeIndicator;

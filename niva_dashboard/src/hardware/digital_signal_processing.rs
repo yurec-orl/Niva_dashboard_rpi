@@ -1,7 +1,6 @@
 use rppal::gpio::Level;
 use std::time::{Duration, Instant};
 
-use crate::hardware::hw_providers::{HWDigitalProvider};
 
 // Raw digital data processors
 
@@ -37,7 +36,7 @@ impl DigitalSignalProcessor for DigitalSignalDebouncer {
 
         if current_state == self.last_stable_state {
             // State is same as what we're tracking
-            if (self.stable_count < u8::MAX) {
+            if self.stable_count < u8::MAX {
                 self.stable_count += 1;
             }
             

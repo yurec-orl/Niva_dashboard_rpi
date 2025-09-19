@@ -186,8 +186,8 @@ impl HWAnalogProvider for TestAnalogDataProvider {
             (progress * 1023.0) as u16
         } else {
             // Second half: gradually decreasing (1023 to 0)
-            let progress = ((elapsed.as_millis() % half_cycle.as_millis()) as f64 
-                / half_cycle.as_millis() as f64);
+            let progress = (elapsed.as_millis() % half_cycle.as_millis()) as f64 
+                / half_cycle.as_millis() as f64;
             (1023.0 - (progress * 1023.0)) as u16
         };
         

@@ -61,7 +61,6 @@ use crate::hardware::hw_providers::{HWInput, HWAnalogProvider, HWDigitalProvider
 use crate::hardware::analog_signal_processing::AnalogSignalProcessor;
 use crate::hardware::digital_signal_processing::DigitalSignalProcessor;
 use crate::hardware::sensor_value::SensorValue;
-use rppal::gpio::Level;
 
 // Sensor management - chains hardware providers, signal processors, and logical sensors
 pub struct SensorDigitalInputChain {

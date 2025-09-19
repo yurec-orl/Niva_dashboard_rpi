@@ -27,7 +27,7 @@ pub struct MainPage {
 impl MainPage {
     fn setup_test_indicators() -> IndicatorSet {
         let mut indicators: Vec<Box<dyn Indicator>> = Vec::new();
-        let mut inputs: Vec<HWInput> = vec![
+        let inputs: Vec<HWInput> = vec![
             HWInput::Hw12v,
             HWInput::HwFuelLvl,
             HWInput::HwOilPress,
@@ -104,7 +104,7 @@ impl MainPage {
 
     fn setup_indicators(context: &GraphicsContext) -> IndicatorSet {
         let mut indicators: Vec<Box<dyn Indicator>> = Vec::new();
-        let mut inputs: Vec<HWInput> = vec![
+        let inputs: Vec<HWInput> = vec![
             HWInput::HwSpeed,
             HWInput::HwFuelLvl,
             HWInput::HwOilPress,
