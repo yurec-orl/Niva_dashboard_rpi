@@ -218,17 +218,26 @@ impl MainPage {
 
     // Helper method to read sensor values directly from sensor manager
     fn get_sensor_values(&self, sensor_manager: &SensorManager) -> Result<Vec<SensorValue>, String> {
-        // Get sensor data from hardware (now returns SensorValue directly)
-        let mut sensor_values = sensor_manager.get_sensor_values();
+        // Get sensor data from hardware (now returns Vec<(HWInput, SensorValue)>)
+        let sensor_values_vec = sensor_manager.get_sensor_values();
 
-        // Filter and sort in same order as current indicator set inputs
+        // Get current indicator set inputs in order
         let current_inputs = &self.indicator_sets[self.current_indicator_set].inputs;
-        let sensor_values: Vec<SensorValue> = sensor_values.iter()
-            .filter(|(input, _)| current_inputs.contains(input))
-            .map(|(_, value)| value.clone())
-            .collect();
+        
+        // Map sensor values to match the order of current indicator inputs
+        let mut ordered_sensor_values = Vec::new();
+        for input in current_inputs {
+            // Find the sensor value for this input
+            if let Some((_, sensor_value)) = sensor_values_vec.iter().find(|(hw_input, _)| hw_input == input) {
+                ordered_sensor_values.push(sensor_value.clone());
+            } else {
+                // Log missing sensor and use a default value to maintain array alignment
+                eprintln!("Warning: Missing sensor data for {:?}, using default", input);
+                ordered_sensor_values.push(SensorValue::digital(false, format!("{:?}", input), format!("{:?}", input)));
+            }
+        }
 
-        Ok(sensor_values)
+        Ok(ordered_sensor_values)
     }
 
     // Event handler methods for indicator set navigation

@@ -9,6 +9,7 @@ pub struct SensorValue {
 /// The actual sensor value data
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ValueData {
+    Empty,
     /// Digital/boolean value (on/off, active/inactive)
     Digital(bool),
     /// Analog value (temperature, pressure, voltage, etc.)
@@ -36,6 +37,86 @@ pub struct ValueConstraints {
     pub critical_high: Option<f32>,
 }
 
+impl ValueConstraints {
+    pub fn new(min_value: Option<f32>, max_value: Option<f32>,
+               critical_low: Option<f32>, warning_low: Option<f32>,
+               warning_high: Option<f32>, critical_high: Option<f32>) -> Self {
+        ValueConstraints {
+            min_value: min_value.unwrap_or(0.0),
+            max_value: max_value.unwrap_or(100.0),
+            critical_low,
+            warning_low,
+            warning_high,
+            critical_high,
+        }
+    }
+
+    // Default 0-1 range, no critical/warning thresholds
+    // For sensors like turn signals, headlights, etc.
+    pub fn digital_default() -> Self {
+        ValueConstraints {
+            min_value: 0.0,
+            max_value: 1.0,
+            critical_low: None,
+            warning_low: None,
+            warning_high: None,
+            critical_high: None,
+        }
+    }
+
+    // 0-1 range, with critical level at 1.0 (brake fluid, oil pressure or battery charge)
+    // For sensors which are active when condition is critical
+    pub fn digital_critical() -> Self {
+        ValueConstraints {
+            min_value: 0.0,
+            max_value: 1.0,
+            critical_low: None,
+            warning_low: None,
+            warning_high: None,
+            critical_high: Some(1.0),
+        }
+    }
+
+    // 0-1 range, with warning level at zero
+    // (parking brake, high beam, diff lock indicators)
+    // For sensors which are active when condition is non-critical
+    pub fn digital_warning() -> Self {
+        ValueConstraints {
+            min_value: 0.0,
+            max_value: 1.0,
+            critical_low: None,
+            warning_low: None,
+            warning_high: Some(1.0),
+            critical_high: None,
+        }
+    }
+
+    // Parametrized analog sensor constraints
+    pub fn analog(min_value: f32, max_value: f32) -> Self {
+        ValueConstraints {
+            min_value,
+            max_value,
+            critical_low: None,
+            warning_low: None,
+            warning_high: None,
+            critical_high: None,
+        }
+    }
+
+    pub fn analog_with_thresholds(min_value: f32, max_value: f32,
+                                  critical_low: Option<f32>, warning_low: Option<f32>,
+                                  warning_high: Option<f32>, critical_high: Option<f32>) -> Self {
+        ValueConstraints {
+            min_value,
+            max_value,
+            critical_low,
+            warning_low,
+            warning_high,
+            critical_high,
+        }
+    }
+}
+
 /// Additional metadata about the sensor value
 #[derive(Debug, Clone, PartialEq)]
 pub struct ValueMetadata {
@@ -47,10 +128,33 @@ pub struct ValueMetadata {
     pub sensor_id: String,
 }
 
+impl ValueMetadata {
+    pub fn new(unit: impl Into<String>, label: impl Into<String>, sensor_id: impl Into<String>) -> Self {
+        Self {
+            unit: unit.into(),
+            label: label.into(),
+            sensor_id: sensor_id.into(),
+        }
+    }
+}
+
 impl SensorValue {
     /// Create a new sensor value with full context
     pub fn new(value: ValueData, constraints: ValueConstraints, metadata: ValueMetadata) -> Self {
         Self { value, constraints, metadata }
+    }
+
+    /// Create empty sensor value
+    pub fn empty() -> Self {
+        Self {
+            value: ValueData::Empty,
+            constraints: ValueConstraints::new(None, None, None, None, None, None),
+            metadata: ValueMetadata {
+                unit: String::new(),
+                label: String::new(),
+                sensor_id: String::new(),
+            },
+        }
     }
     
     /// Create a digital sensor value
@@ -134,6 +238,7 @@ impl SensorValue {
     /// Get the numeric value as f32
     pub fn as_f32(&self) -> f32 {
         match self.value {
+            ValueData::Empty => f32::NAN,
             ValueData::Digital(b) => if b { 1.0 } else { 0.0 },
             ValueData::Analog(v) => v,
             ValueData::Percentage(p) => p,
@@ -181,6 +286,7 @@ impl SensorValue {
     /// Check if value represents an "active" state
     pub fn is_active(&self) -> bool {
         match self.value {
+            ValueData::Empty => false,
             ValueData::Digital(b) => b,
             ValueData::Analog(v) => v > self.constraints.min_value,
             ValueData::Percentage(p) => p > 0.0,

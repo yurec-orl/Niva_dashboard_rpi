@@ -51,6 +51,7 @@ impl TextIndicator {
     /// Format the sensor value as a display string (without label)
     fn format_value(&self, value: &SensorValue) -> String {
         let value_str = match value.value {
+            ValueData::Empty => "N/A".to_string(),
             ValueData::Digital(b) => {
                 if b { "ON".to_string() } else { "OFF".to_string() }
             }
@@ -211,6 +212,7 @@ impl Indicator for TextIndicator {
     fn supports_value_type(&self, value: &ValueData) -> bool {
         // Text indicator can display any value type
         match value {
+            ValueData::Empty => true,       // Could be useful for "n/a" or static labels
             ValueData::Digital(_) => true,
             ValueData::Analog(_) => true,
             ValueData::Percentage(_) => true,

@@ -1,11 +1,20 @@
 use rppal::gpio::Level;
 
-use crate::hardware::sensor_value::SensorValue;
+use crate::hardware::sensor_value::{SensorValue, ValueConstraints, ValueMetadata};
 use crate::hardware::digital_signal_processing::{DigitalSignalProcessor, DigitalSignalProcessorPulsePerSecond};
+
+// Used by all sensor types
+pub trait Sensor {
+    fn id(&self) -> &String;
+    fn name(&self) -> &String;
+    fn value(&self) -> Result<&SensorValue, String>;
+    fn constraints(&self) -> &ValueConstraints;
+    fn metadata(&self) -> &ValueMetadata;
+}
 
 // Digital sensor trait - represents on/off state based on active level
 // Active level could be low in case of pull-up input configuration
-pub trait DigitalSensor {
+pub trait DigitalSensor: Sensor {
     fn active_level(&self) -> Level;
 
     // Update internal state based on input and return current sensor value
@@ -19,7 +28,7 @@ pub trait DigitalSensor {
 // Value should be a processed input, e.g. voltage level converted to temperature
 // All voltage divider calculations, pulse count to speed, and other 
 // raw input conversion into meaningful values are done here
-pub trait AnalogSensor {
+pub trait AnalogSensor: Sensor {
 
     // Update internal state based on input and return current sensor value
     fn read(&mut self, input: u16) -> Result<&SensorValue, String>;
@@ -37,14 +46,40 @@ pub trait AnalogSensor {
 }
 
 pub struct GenericDigitalSensor {
+    id: String,
+    name: String,
     value: SensorValue,
     active_level: Level,
+    constraints: ValueConstraints,
 }
 
 impl GenericDigitalSensor {
-    pub fn new(active_level: Level) -> Self {
-        GenericDigitalSensor { value: SensorValue::digital(false, "Generic Digital", "generic_digital_1"),
-                               active_level }
+    pub fn new(id: String, name: String, active_level: Level,
+               constraints: ValueConstraints) -> Self {
+        GenericDigitalSensor { id, name, value: SensorValue::empty(),
+                               active_level, constraints}
+    }
+}
+
+impl Sensor for GenericDigitalSensor {
+    fn id(&self) -> &String {
+        &self.value.metadata.sensor_id
+    }
+
+    fn name(&self) -> &String {
+        &self.value.metadata.label
+    }
+
+    fn value(&self) -> Result<&SensorValue, String> {
+        Ok(&self.value)
+    }
+
+    fn constraints(&self) -> &ValueConstraints {
+        &self.constraints
+    }
+
+    fn metadata(&self) -> &ValueMetadata {
+        &self.value.metadata
     }
 }
 
@@ -54,7 +89,7 @@ impl DigitalSensor for GenericDigitalSensor {
     }
 
     fn read(&mut self, input: Level) -> Result<&SensorValue, String> {
-        self.value = SensorValue::digital(input == self.active_level, "Generic Digital", "generic_digital_1");
+        self.value = SensorValue::digital(input == self.active_level, self.name.clone(), self.id.clone());
         Ok(&self.value)
     }
 
@@ -65,26 +100,53 @@ impl DigitalSensor for GenericDigitalSensor {
 
 pub struct GenericAnalogSensor {
     value: SensorValue,
-    min_value: f32,
-    max_value: f32,
+    constraints: ValueConstraints,
+    metadata: ValueMetadata,
     scale_factor: f32,
 }
 
 impl GenericAnalogSensor {
-    pub fn new(min_value: f32, max_value: f32, scale_factor: f32) -> Self {
+    pub fn new(constraints: ValueConstraints, metadata: ValueMetadata, 
+               scale_factor: f32) -> Self {
         GenericAnalogSensor {
-            value: SensorValue::analog(0.0, min_value, max_value, "units", "Generic_analog_value", "generic_analog_sensor"),
-            min_value,
-            max_value,
+            value: SensorValue::empty(),
+            constraints,
+            metadata,
             scale_factor,
         }
+    }
+}
+
+impl Sensor for GenericAnalogSensor {
+    fn id(&self) -> &String {
+        &self.metadata.sensor_id
+    }
+
+    fn name(&self) -> &String {
+        &self.metadata.label
+    }
+
+    fn value(&self) -> Result<&SensorValue, String> {
+        Ok(&self.value)
+    }
+
+    fn constraints(&self) -> &ValueConstraints {
+        &self.constraints
+    }
+
+    fn metadata(&self) -> &ValueMetadata {
+        &self.metadata
     }
 }
 
 impl AnalogSensor for GenericAnalogSensor {
     fn read(&mut self, input: u16) -> Result<&SensorValue, String> {
         let value = (input as f32) * self.scale_factor;
-        self.value = SensorValue::analog(value.clamp(self.min_value, self.max_value), self.min_value, self.max_value, "°C", "Temperature", "temp_sensor");
+        self.value = SensorValue::analog(value.clamp(self.min_value(), self.max_value()),
+                                         self.min_value(), self.max_value(), 
+                                         &self.metadata.unit,
+                                         &self.metadata.label,
+                                         &self.metadata.sensor_id);
         Ok(&self.value)
     }
 
@@ -93,23 +155,57 @@ impl AnalogSensor for GenericAnalogSensor {
     }
 
     fn min_value(&self) -> f32 {
-        self.min_value
+        self.constraints.min_value
     }
 
     fn max_value(&self) -> f32 {
-        self.max_value
+        self.constraints.max_value
     }
 }
 
 struct EngineTemperatureSensor {
     value: SensorValue,
+    constraints: ValueConstraints,
+    metadata: ValueMetadata,
 }
 
 impl EngineTemperatureSensor {
     fn new() -> Self {
         EngineTemperatureSensor {
-            value: SensorValue::analog(0.0, 0.0, 120.0, "°C", "Temperature", "temp_sensor"),
+            value: SensorValue::empty(),
+            constraints: ValueConstraints::analog_with_thresholds(
+                0.0, 120.0,
+                None, Some(100.0),
+                None, Some(110.0),
+            ),
+            metadata: ValueMetadata {
+                unit: "°C".to_string(),
+                label: "ТЕМП".to_string(),
+                sensor_id: "engine_temp".to_string(),
+            },
         }
+    }
+}
+
+impl Sensor for EngineTemperatureSensor {
+    fn id(&self) -> &String {
+        &self.value.metadata.sensor_id
+    }
+
+    fn name(&self) -> &String {
+        &self.value.metadata.label
+    }
+
+    fn value(&self) -> Result<&SensorValue, String> {
+        Ok(&self.value)
+    }
+
+    fn constraints(&self) -> &ValueConstraints {
+        &self.constraints
+    }
+
+    fn metadata(&self) -> &ValueMetadata {
+        &self.metadata
     }
 }
 
@@ -118,7 +214,9 @@ impl AnalogSensor for EngineTemperatureSensor {
         // Convert raw input (e.g. ADC value) to temperature
         // Placeholder conversion logic
         let temperature = (input as f32) * 0.1; // Example conversion
-        self.value = SensorValue::analog(temperature, 0.0, 120.0, "°C", "Temperature", "temp_sensor");
+        self.value = SensorValue::analog(temperature.clamp(self.constraints.min_value, self.constraints.max_value),
+                                         self.constraints.min_value, self.constraints.max_value,
+                                         &self.metadata.unit, &self.metadata.label, &self.metadata.sensor_id);
         Ok(&self.value)
     }
 
@@ -132,6 +230,8 @@ pub struct SpeedSensor {
     pulse_counter: DigitalSignalProcessorPulsePerSecond,
     pulses_per_revolution: u32,
     wheel_circumference_m: f32,
+    constraints: ValueConstraints,
+    metadata: ValueMetadata,
 }
 
 impl SpeedSensor {
@@ -141,10 +241,16 @@ impl SpeedSensor {
         // Diameter = 15" (381mm) + 2 * (235mm * 0.75) = 733.5mm
         // Circumference = π * 733.5mm = 2.304 meters
         SpeedSensor {
-            speed: SensorValue::analog(0.0, 0.0, 120.0, "km/h", "Speed", "speed_sensor"),
+            speed: SensorValue::empty(),
             pulse_counter: DigitalSignalProcessorPulsePerSecond::new(),
             pulses_per_revolution: 6, // 6 pulses per wheel rotation
             wheel_circumference_m: 2.304, // meters
+            constraints: ValueConstraints::analog(0.0, 180.0),
+            metadata: ValueMetadata {
+                unit: "км/ч".to_string(),
+                label: "СКОР".to_string(),
+                sensor_id: "speed_sensor".to_string(),
+            },
         }
     }
     
@@ -157,7 +263,9 @@ impl SpeedSensor {
         let pulses_per_second = self.pulse_counter.pulses_per_second();
         
         // Calculate and return speed
-        self.speed = SensorValue::analog(self.calculate_speed_kmh(pulses_per_second), 0.0, 120.0, "km/h", "Speed", "speed_sensor");
+        self.speed = SensorValue::analog(self.calculate_speed_kmh(pulses_per_second),
+            self.constraints.min_value.clone(), self.constraints.max_value.clone(),
+            &self.metadata.unit, &self.metadata.label, &self.metadata.sensor_id);
         self.speed.as_f32()
     }
     
@@ -222,6 +330,28 @@ impl SpeedSensor {
                 println!("After {} pulses: {:.1} km/h", i + 1, current_speed);
             }
         }
+    }
+}
+
+impl Sensor for SpeedSensor {
+    fn id(&self) -> &String {
+        &self.metadata.sensor_id
+    }
+
+    fn name(&self) -> &String {
+        &self.metadata.label
+    }
+
+    fn value(&self) -> Result<&SensorValue, String> {
+        Ok(&self.speed)
+    }
+
+    fn constraints(&self) -> &ValueConstraints {
+        &self.constraints
+    }
+
+    fn metadata(&self) -> &ValueMetadata {
+        &self.metadata
     }
 }
 

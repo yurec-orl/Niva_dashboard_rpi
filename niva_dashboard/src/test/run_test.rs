@@ -6,7 +6,6 @@ use crate::graphics::opengl_test::{run_basic_geometry_test, run_opengl_text_rend
 use crate::hardware::hw_providers::*;
 use crate::hardware::GpioInput;
 use crate::hardware::sensor_manager::SensorManager;
-use crate::hardware::sensor_value::{SensorValue, ValueData};
 
 pub fn run_test(name: &str) {
     match name {
@@ -90,36 +89,21 @@ fn test_sensor_manager() -> Result<(), Box<dyn std::error::Error>> {
     use crate::hardware::sensor_manager::{SensorDigitalInputChain, SensorAnalogInputChain};
     use crate::hardware::digital_signal_processing::DigitalSignalDebouncer;
     use crate::hardware::analog_signal_processing::AnalogSignalProcessorMovingAverage;
-    use crate::hardware::sensors::{GenericDigitalSensor, AnalogSensor};
+    use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor};
+    use crate::hardware::sensor_value::{ValueConstraints, ValueMetadata};
     use rppal::gpio::Level;
     use std::time::Duration;
     
     println!("Creating sensor manager for testing...");
     let mut manager = SensorManager::new();
     
-    // Test fuel sensor implementation
-    struct TestFuelSensor {
-        value: SensorValue,
-    }
-
-    impl AnalogSensor for TestFuelSensor {
-        fn read(&mut self, input: u16) -> Result<&SensorValue, String> {
-            let percentage = (input as f32 / 1023.0) * 100.0;
-            self.value = SensorValue::analog(percentage.clamp(0.0, 100.0), 0.0, 100.0, "%", "Fuel Level", "fuel_sensor");
-            Ok(&self.value)
-        }
-
-        fn value(&self) -> Result<&SensorValue, String> {
-            Ok(&self.value)
-        }
-    }
-    
     // Create digital sensor chain for park brake
     println!("Setting up digital sensor chain (park brake)...");
     let digital_chain = SensorDigitalInputChain::new(
         Box::new(TestDigitalDataProvider::new(HWInput::HwParkBrake)),
         vec![Box::new(DigitalSignalDebouncer::new(2, Duration::from_millis(50)))],
-        Box::new(GenericDigitalSensor::new(Level::Low)),
+        Box::new(GenericDigitalSensor::new("park_brake_test".to_string(), "СТОЯН ТОРМ".to_string(),
+                                           Level::Low, ValueConstraints::digital_warning())),
     );
     manager.add_digital_sensor_chain(digital_chain);
     
@@ -128,7 +112,8 @@ fn test_sensor_manager() -> Result<(), Box<dyn std::error::Error>> {
     let analog_chain = SensorAnalogInputChain::new(
         Box::new(TestAnalogDataProvider::new(HWInput::HwFuelLvl)),
         vec![Box::new(AnalogSignalProcessorMovingAverage::new(3))],
-        Box::new(TestFuelSensor{value: SensorValue::analog(0.0, 0.0, 100.0, "%", "Fuel Level", "fuel_sensor")}),
+        Box::new(GenericAnalogSensor::new(ValueConstraints::analog_with_thresholds(0.0, 100.0, Some(10.0), Some(20.0), None, None),
+                                          ValueMetadata{unit:"%".to_string(), label:"УРОВ ТОПЛ".to_string(), sensor_id:"fuel_test".to_string()}, 0.1)),
     );
     manager.add_analog_sensor_chain(analog_chain);
     
@@ -139,20 +124,26 @@ fn test_sensor_manager() -> Result<(), Box<dyn std::error::Error>> {
         // Read all sensors first
         match manager.read_all_sensors() {
             Ok(_) => {
-                // Get digital sensor values
+                // Get sensor values
                 let values = manager.get_sensor_values();
 
+                // Display digital sensor values
                 for (input, sensor_value) in values {
                     if *input == HWInput::HwParkBrake {
-                        println!("Park brake: {}", if sensor_value.is_active() { "ENGAGED" } else { "RELEASED" });
+                        println!("Park brake: {} ({})", 
+                                if sensor_value.is_active() { "ENGAGED" } else { "RELEASED" },
+                                if sensor_value.is_warning() { "WARNING" } else if sensor_value.is_critical() { "CRITICAL" } else { "NORMAL" });
                         break;
                     }
                 }
 
-                // Get analog sensor values
+                // Display analog sensor values
                 for (input, sensor_value) in values {
                     if *input == HWInput::HwFuelLvl {
-                        println!("Fuel level: {:.1}%", sensor_value.as_f32());
+                        let status = if sensor_value.is_critical() { " [CRITICAL]" } 
+                                   else if sensor_value.is_warning() { " [WARNING]" } 
+                                   else { "" };
+                        println!("Fuel level: {:.1}%{}", sensor_value.as_f32(), status);
                         break;
                     }
                 }
