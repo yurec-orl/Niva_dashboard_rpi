@@ -34,28 +34,28 @@ pub trait AnalogSensor: Sensor {
 }
 
 pub struct GenericDigitalSensor {
-    id: String,
-    name: String,
     value: SensorValue,
     active_level: Level,
     constraints: ValueConstraints,
+    metadata: ValueMetadata,
 }
 
 impl GenericDigitalSensor {
     pub fn new(id: String, name: String, active_level: Level,
                constraints: ValueConstraints) -> Self {
-        GenericDigitalSensor { id, name, value: SensorValue::empty(),
-                               active_level, constraints}
+        let metadata = ValueMetadata::new("", name, id); // Empty unit for digital sensors
+        GenericDigitalSensor { value: SensorValue::empty(),
+                               active_level, constraints, metadata}
     }
 }
 
 impl Sensor for GenericDigitalSensor {
     fn id(&self) -> &String {
-        &self.id
+        &self.metadata.sensor_id
     }
 
     fn name(&self) -> &String {
-        &self.name
+        &self.metadata.label
     }
 
     fn value(&self) -> Result<&SensorValue, String> {
@@ -67,7 +67,7 @@ impl Sensor for GenericDigitalSensor {
     }
 
     fn metadata(&self) -> &ValueMetadata {
-        &self.value.metadata
+        &self.metadata
     }
 
     fn min_value(&self) -> f32 {
@@ -85,7 +85,7 @@ impl DigitalSensor for GenericDigitalSensor {
     }
 
     fn read(&mut self, input: Level) -> Result<&SensorValue, String> {
-        self.value = SensorValue::digital(input == self.active_level, self.name.clone(), self.id.clone());
+        self.value = SensorValue::digital(input == self.active_level, self.metadata.label.clone(), self.metadata.sensor_id.clone());
         Ok(&self.value)
     }
 }
@@ -98,8 +98,9 @@ pub struct GenericAnalogSensor {
 }
 
 impl GenericAnalogSensor {
-    pub fn new(constraints: ValueConstraints, metadata: ValueMetadata, 
-               scale_factor: f32) -> Self {
+    pub fn new(id: String, name: String, units: String,
+               constraints: ValueConstraints, scale_factor: f32) -> Self {
+        let metadata = ValueMetadata::new(units, name, id);
         GenericAnalogSensor {
             value: SensorValue::empty(),
             constraints,
@@ -403,8 +404,7 @@ mod tests {
     #[test]
     fn test_generic_analog_sensor_creation() {
         let constraints = ValueConstraints::analog_with_thresholds(0.0, 100.0, Some(10.0), Some(20.0), None, None);
-        let metadata = ValueMetadata::new("%", "Test Sensor", "test_id");
-        let sensor = GenericAnalogSensor::new(constraints, metadata, 1.0);
+        let sensor = GenericAnalogSensor::new("test_id".to_string(), "Test Sensor".to_string(), "%".to_string(), constraints, 1.0);
 
         assert_eq!(sensor.min_value(), 0.0);
         assert_eq!(sensor.max_value(), 100.0);
@@ -414,8 +414,7 @@ mod tests {
     #[test]
     fn test_generic_analog_sensor_reading() {
         let constraints = ValueConstraints::analog_with_thresholds(0.0, 100.0, Some(10.0), Some(20.0), None, None);
-        let metadata = ValueMetadata::new("%", "Test Sensor", "test_id");
-        let mut sensor = GenericAnalogSensor::new(constraints, metadata, 0.1);
+        let mut sensor = GenericAnalogSensor::new("test_id".to_string(), "Test Sensor".to_string(), "%".to_string(), constraints, 0.1);
 
         // Test normal reading
         sensor.read(500).unwrap(); // 500 * 0.1 = 50.0
@@ -429,8 +428,7 @@ mod tests {
     #[test]
     fn test_generic_analog_sensor_clamping() {
         let constraints = ValueConstraints::analog_with_thresholds(0.0, 100.0, Some(10.0), Some(20.0), None, None);
-        let metadata = ValueMetadata::new("%", "Test Sensor", "test_id");
-        let mut sensor = GenericAnalogSensor::new(constraints, metadata, 1.0);
+        let mut sensor = GenericAnalogSensor::new("test_id".to_string(), "Test Sensor".to_string(), "%".to_string(), constraints, 1.0);
 
         // Test value above maximum gets clamped
         sensor.read(150).unwrap();
@@ -452,8 +450,7 @@ mod tests {
     #[test]
     fn test_generic_analog_sensor_scaling() {
         let constraints = ValueConstraints::analog_with_thresholds(0.0, 100.0, Some(10.0), Some(20.0), None, None);
-        let metadata = ValueMetadata::new("%", "Test Sensor", "test_id");
-        let mut sensor = GenericAnalogSensor::new(constraints, metadata, 0.01);
+        let mut sensor = GenericAnalogSensor::new("test_id".to_string(), "Test Sensor".to_string(), "%".to_string(), constraints, 0.01);
 
         sensor.read(5000).unwrap(); // 5000 * 0.01 = 50.0
         if let ValueData::Analog(value) = &Sensor::value(&sensor).unwrap().value {
@@ -597,8 +594,7 @@ mod tests {
 
         // Test GenericAnalogSensor implements Sensor trait correctly
         let constraints = ValueConstraints::analog_with_thresholds(0.0, 100.0, None, None, None, None);
-        let metadata = ValueMetadata::new("V", "Analog Test", "analog_test");
-        let analog_sensor = GenericAnalogSensor::new(constraints, metadata, 1.0);
+        let analog_sensor = GenericAnalogSensor::new("analog_test".to_string(), "Analog Test".to_string(), "V".to_string(), constraints, 1.0);
         
         assert_eq!(analog_sensor.id(), "analog_test");
         assert_eq!(analog_sensor.name(), "Analog Test");
@@ -619,8 +615,7 @@ mod tests {
     fn test_analog_sensor_trait_implementations() {
         // Test GenericAnalogSensor implements AnalogSensor trait
         let constraints = ValueConstraints::analog_with_thresholds(10.0, 90.0, None, None, None, None);
-        let metadata = ValueMetadata::new("V", "Test", "test");
-        let mut sensor = GenericAnalogSensor::new(constraints, metadata, 1.0);
+        let mut sensor = GenericAnalogSensor::new("test".to_string(), "Test".to_string(), "V".to_string(), constraints, 1.0);
         
         assert_eq!(sensor.min_value(), 10.0);
         assert_eq!(sensor.max_value(), 90.0);

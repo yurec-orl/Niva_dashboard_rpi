@@ -90,7 +90,7 @@ fn test_sensor_manager() -> Result<(), Box<dyn std::error::Error>> {
     use crate::hardware::digital_signal_processing::DigitalSignalDebouncer;
     use crate::hardware::analog_signal_processing::AnalogSignalProcessorMovingAverage;
     use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor};
-    use crate::hardware::sensor_value::{ValueConstraints, ValueMetadata};
+    use crate::hardware::sensor_value::ValueConstraints;
     use rppal::gpio::Level;
     use std::time::Duration;
     
@@ -112,8 +112,8 @@ fn test_sensor_manager() -> Result<(), Box<dyn std::error::Error>> {
     let analog_chain = SensorAnalogInputChain::new(
         Box::new(TestAnalogDataProvider::new(HWInput::HwFuelLvl)),
         vec![Box::new(AnalogSignalProcessorMovingAverage::new(3))],
-        Box::new(GenericAnalogSensor::new(ValueConstraints::analog_with_thresholds(0.0, 100.0, Some(10.0), Some(20.0), None, None),
-                                          ValueMetadata{unit:"%".to_string(), label:"УРОВ ТОПЛ".to_string(), sensor_id:"fuel_test".to_string()}, 0.1)),
+        Box::new(GenericAnalogSensor::new("fuel_test".to_string(), "УРОВ ТОПЛ".to_string(), "%".to_string(),
+                                          ValueConstraints::analog_with_thresholds(0.0, 100.0, Some(10.0), Some(20.0), None, None), 0.1)),
     );
     manager.add_analog_sensor_chain(analog_chain);
     

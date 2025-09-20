@@ -12,7 +12,7 @@ use crate::hardware::hw_providers::*;
 use crate::hardware::digital_signal_processing::DigitalSignalDebouncer;
 use crate::hardware::analog_signal_processing::AnalogSignalProcessorMovingAverage;
 use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor};
-use crate::hardware::sensor_value::{ValueConstraints, ValueMetadata};
+use crate::hardware::sensor_value::ValueConstraints;
 use rppal::gpio::Level;
 use std::env;
 
@@ -44,7 +44,7 @@ fn setup_sensors() -> SensorManager {
     let brake_fluid_chain = SensorDigitalInputChain::new(
         Box::new(TestDigitalDataProvider::new(HWInput::HwBrakeFluidLvlLow)),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
-        Box::new(GenericDigitalSensor::new("brk_fluid_lvl".to_string(), "Brake Fluid Level".to_string(),
+        Box::new(GenericDigitalSensor::new("HwBrakeFluidLvlLow".to_string(), "Brake Fluid Level".to_string(),
                                            Level::Low, ValueConstraints::digital_critical())),
     );
     mgr.add_digital_sensor_chain(brake_fluid_chain);
@@ -53,7 +53,7 @@ fn setup_sensors() -> SensorManager {
     let charge_chain = SensorDigitalInputChain::new(
         Box::new(TestDigitalDataProvider::new(HWInput::HwCharge)),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
-        Box::new(GenericDigitalSensor::new("chg_indicator".to_string(), "ЗАРЯД".to_string(),
+        Box::new(GenericDigitalSensor::new("HwCharge".to_string(), "ЗАРЯД".to_string(),
                                            Level::Low, ValueConstraints::digital_critical())),
     );
     mgr.add_digital_sensor_chain(charge_chain);
@@ -62,7 +62,7 @@ fn setup_sensors() -> SensorManager {
     let check_engine_chain = SensorDigitalInputChain::new(
         Box::new(TestDigitalDataProvider::new(HWInput::HwCheckEngine)),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
-        Box::new(GenericDigitalSensor::new("chk_engine".to_string(), "ПРОВЕРЬ ДВИГ".to_string(),
+        Box::new(GenericDigitalSensor::new("HwCheckEngine".to_string(), "ПРОВЕРЬ ДВИГ".to_string(),
                                            Level::Low, ValueConstraints::digital_warning())),
     );
     mgr.add_digital_sensor_chain(check_engine_chain);
@@ -71,7 +71,7 @@ fn setup_sensors() -> SensorManager {
     let diff_lock_chain = SensorDigitalInputChain::new(
         Box::new(TestDigitalDataProvider::new(HWInput::HwDiffLock)),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
-        Box::new(GenericDigitalSensor::new("diff_lock".to_string(), "БЛОК ДИФФ".to_string(),
+        Box::new(GenericDigitalSensor::new("HwDiffLock".to_string(), "БЛОК ДИФФ".to_string(),
                                            Level::Low, ValueConstraints::digital_warning())),
     );
     mgr.add_digital_sensor_chain(diff_lock_chain);
@@ -80,7 +80,7 @@ fn setup_sensors() -> SensorManager {
     let ext_lights_chain = SensorDigitalInputChain::new(
         Box::new(TestDigitalDataProvider::new(HWInput::HwExtLights)),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
-        Box::new(GenericDigitalSensor::new("ext_light".to_string(), "ГАБАРИТ".to_string(),
+        Box::new(GenericDigitalSensor::new("HwExtLights".to_string(), "ГАБАРИТ".to_string(),
                                            Level::Low, ValueConstraints::digital_default())),
     );
     mgr.add_digital_sensor_chain(ext_lights_chain);
@@ -89,7 +89,7 @@ fn setup_sensors() -> SensorManager {
     let fuel_lvl_low_chain = SensorDigitalInputChain::new(
         Box::new(TestDigitalDataProvider::new(HWInput::HwFuelLvlLow)),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
-        Box::new(GenericDigitalSensor::new("fuel_lvl_low".to_string(), "УРОВ ТОПЛ".to_string(),
+        Box::new(GenericDigitalSensor::new("HwFuelLvlLow".to_string(), "УРОВ ТОПЛ".to_string(),
                                            Level::Low, ValueConstraints::digital_warning())),
     );
     mgr.add_digital_sensor_chain(fuel_lvl_low_chain);
@@ -98,7 +98,7 @@ fn setup_sensors() -> SensorManager {
     let high_beam_chain = SensorDigitalInputChain::new(
         Box::new(TestDigitalDataProvider::new(HWInput::HwHighBeam)),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
-        Box::new(GenericDigitalSensor::new("high_beam".to_string(), "ДАЛЬНИЙ СВЕТ".to_string(),
+        Box::new(GenericDigitalSensor::new("HwHighBeam".to_string(), "ДАЛЬНИЙ СВЕТ".to_string(),
                                            Level::Low, ValueConstraints::digital_default())),
     );
     mgr.add_digital_sensor_chain(high_beam_chain);
@@ -107,7 +107,7 @@ fn setup_sensors() -> SensorManager {
     let instr_illum_chain = SensorDigitalInputChain::new(
         Box::new(TestDigitalDataProvider::new(HWInput::HwInstrIllum)),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
-        Box::new(GenericDigitalSensor::new("instr_illum".to_string(), "ОСВЕЩ".to_string(),
+        Box::new(GenericDigitalSensor::new("HwInstrIllum".to_string(), "ОСВЕЩ".to_string(),
                                            Level::Low, ValueConstraints::digital_default())),
     );
     mgr.add_digital_sensor_chain(instr_illum_chain);
@@ -116,7 +116,7 @@ fn setup_sensors() -> SensorManager {
     let oil_press_low_chain = SensorDigitalInputChain::new(
         Box::new(TestDigitalDataProvider::new(HWInput::HwOilPressLow)),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
-        Box::new(GenericDigitalSensor::new("oil_press_low".to_string(), "ДАВЛ МАСЛА".to_string(),
+        Box::new(GenericDigitalSensor::new("HwOilPressLow".to_string(), "ДАВЛ МАСЛА".to_string(),
                                            Level::Low, ValueConstraints::digital_critical())),
     );
     mgr.add_digital_sensor_chain(oil_press_low_chain);
@@ -125,7 +125,7 @@ fn setup_sensors() -> SensorManager {
     let park_brake_chain = SensorDigitalInputChain::new(
         Box::new(TestDigitalDataProvider::new(HWInput::HwParkBrake)),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
-        Box::new(GenericDigitalSensor::new("park_brake".to_string(), "СТОЯН ТОРМ".to_string(),
+        Box::new(GenericDigitalSensor::new("HwParkBrake".to_string(), "СТОЯН ТОРМ".to_string(),
                                            Level::Low, ValueConstraints::digital_warning())),
     );
     mgr.add_digital_sensor_chain(park_brake_chain);
@@ -134,7 +134,7 @@ fn setup_sensors() -> SensorManager {
     let speed_chain = SensorDigitalInputChain::new(
         Box::new(TestDigitalDataProvider::new(HWInput::HwSpeed)),
         vec![Box::new(DigitalSignalDebouncer::new(3, std::time::Duration::from_millis(10)))],
-        Box::new(GenericDigitalSensor::new("speed".to_string(), "СКОРОСТЬ".to_string(),
+        Box::new(GenericDigitalSensor::new("HwSpeed".to_string(), "СКОРОСТЬ".to_string(),
                                            Level::High, ValueConstraints::digital_default())),
     );
     mgr.add_digital_sensor_chain(speed_chain);
@@ -143,7 +143,7 @@ fn setup_sensors() -> SensorManager {
     let tacho_chain = SensorDigitalInputChain::new(
         Box::new(TestDigitalDataProvider::new(HWInput::HwTacho)),
         vec![Box::new(DigitalSignalDebouncer::new(3, std::time::Duration::from_millis(10)))],
-        Box::new(GenericDigitalSensor::new("tacho".to_string(), "ТАХОМЕТР".to_string(),
+        Box::new(GenericDigitalSensor::new("HwTacho".to_string(), "ТАХОМЕТР".to_string(),
                                            Level::High, ValueConstraints::digital_default())),
     );
     mgr.add_digital_sensor_chain(tacho_chain);
@@ -152,7 +152,7 @@ fn setup_sensors() -> SensorManager {
     let turn_signal_chain = SensorDigitalInputChain::new(
         Box::new(TestDigitalDataProvider::new(HWInput::HwTurnSignal)),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
-        Box::new(GenericDigitalSensor::new("turn_signal".to_string(), "ИНД ПОВОР".to_string(),
+        Box::new(GenericDigitalSensor::new("HwTurnSignal".to_string(), "ИНД ПОВОР".to_string(),
                                            Level::Low, ValueConstraints::digital_default())),
     );
     mgr.add_digital_sensor_chain(turn_signal_chain);
@@ -163,8 +163,8 @@ fn setup_sensors() -> SensorManager {
     let voltage_12v_chain = SensorAnalogInputChain::new(
         Box::new(TestAnalogDataProvider::new(HWInput::Hw12v)),
         vec![Box::new(AnalogSignalProcessorMovingAverage::new(10))],
-        Box::new(GenericAnalogSensor::new(ValueConstraints::analog_with_thresholds(0.0, 20.0, Some(11.0), Some(13.0), Some(14.7), Some(15.0)),
-                                          ValueMetadata::new("В", "БОРТ СЕТЬ", "voltage"), 0.02)), // 0-20V range for diagnostic capability
+        Box::new(GenericAnalogSensor::new("Hw12v".to_string(), "БОРТ СЕТЬ".to_string(), "В".to_string(),
+                                          ValueConstraints::analog_with_thresholds(0.0, 20.0, Some(11.0), Some(13.0), Some(14.7), Some(15.0)), 0.02)), // 0-20V range for diagnostic capability
     );
     mgr.add_analog_sensor_chain(voltage_12v_chain);
 
@@ -172,8 +172,8 @@ fn setup_sensors() -> SensorManager {
     let fuel_level_chain = SensorAnalogInputChain::new(
         Box::new(TestAnalogDataProvider::new(HWInput::HwFuelLvl)),
         vec![Box::new(AnalogSignalProcessorMovingAverage::new(15))],
-        Box::new(GenericAnalogSensor::new(ValueConstraints::analog_with_thresholds(0.0, 100.0, Some(10.0), Some(20.0), None, None),
-                                          ValueMetadata::new("%", "УРОВ ТОПЛ", "fuel_lvl"), 0.1)), // Scale for percentage
+        Box::new(GenericAnalogSensor::new("HwFuelLvl".to_string(), "УРОВ ТОПЛ".to_string(), "%".to_string(),
+                                          ValueConstraints::analog_with_thresholds(0.0, 100.0, Some(10.0), Some(20.0), None, None), 0.1)), // Scale for percentage
     );
     mgr.add_analog_sensor_chain(fuel_level_chain);
 
@@ -181,8 +181,8 @@ fn setup_sensors() -> SensorManager {
     let oil_pressure_chain = SensorAnalogInputChain::new(
         Box::new(TestAnalogDataProvider::new(HWInput::HwOilPress)),
         vec![Box::new(AnalogSignalProcessorMovingAverage::new(10))],
-        Box::new(GenericAnalogSensor::new(ValueConstraints::analog_with_thresholds(0.0, 8.0, Some(0.5), Some(1.0), Some(7.0), Some(8.0)),
-                                          ValueMetadata::new("кгс/см²", "ДАВЛ МАСЛА", "oil_press"), 0.01)), // 0-8 kgf/cm² pressure range
+        Box::new(GenericAnalogSensor::new("HwOilPress".to_string(), "ДАВЛ МАСЛА".to_string(), "кгс/см²".to_string(),
+                                          ValueConstraints::analog_with_thresholds(0.0, 8.0, Some(0.5), Some(1.0), Some(7.0), Some(8.0)), 0.01)), // 0-8 kgf/cm² pressure range
     );
     mgr.add_analog_sensor_chain(oil_pressure_chain);
 
@@ -190,8 +190,8 @@ fn setup_sensors() -> SensorManager {
     let temperature_chain = SensorAnalogInputChain::new(
         Box::new(TestAnalogDataProvider::new(HWInput::HwEngineCoolantTemp)),
         vec![Box::new(AnalogSignalProcessorMovingAverage::new(20))],
-        Box::new(GenericAnalogSensor::new(ValueConstraints::analog_with_thresholds(0.0, 120.0, Some(5.0), Some(10.0), Some(95.0), Some(105.0)),
-                                          ValueMetadata::new("°C", "ТЕМП ДВИГ", "engine_temp"), 0.1)), // 0-120°C engine temperature range
+        Box::new(GenericAnalogSensor::new("HwEngineCoolantTemp".to_string(), "ТЕМП ДВИГ".to_string(), "°C".to_string(),
+                                          ValueConstraints::analog_with_thresholds(0.0, 120.0, Some(5.0), Some(10.0), Some(95.0), Some(105.0)), 0.1)), // 0-120°C engine temperature range
     );
     mgr.add_analog_sensor_chain(temperature_chain);
 

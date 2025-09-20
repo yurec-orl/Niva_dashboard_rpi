@@ -259,8 +259,8 @@ mod tests {
         let hw_provider = Box::new(TestAnalogDataProvider::new(fuel_input));
         let moving_avg = Box::new(AnalogSignalProcessorMovingAverage::new(3));
         let sensor = Box::new(GenericAnalogSensor::new(
+            "test_fuel".to_string(), "Test Fuel Level".to_string(), "%".to_string(),
             ValueConstraints::analog_with_thresholds(0.0, 100.0, Some(10.0), Some(20.0), None, None),
-            ValueMetadata::new("%", "Test Fuel Level", "test_fuel"),
             1.0
         ));
         
@@ -309,8 +309,8 @@ mod tests {
             Box::new(TestAnalogDataProvider::new(temp_input)),
             vec![Box::new(AnalogSignalProcessorMovingAverage::new(5))],
             Box::new(GenericAnalogSensor::new(
+                "test_temp".to_string(), "Test Temperature".to_string(), "°C".to_string(),
                 ValueConstraints::analog_with_thresholds(-40.0, 120.0, Some(-20.0), Some(0.0), Some(100.0), Some(110.0)),
-                ValueMetadata::new("°C", "Test Temperature", "test_temp"),
                 1.0
             )),
         );
