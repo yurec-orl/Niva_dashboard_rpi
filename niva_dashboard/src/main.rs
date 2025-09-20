@@ -200,6 +200,14 @@ fn setup_sensors() -> SensorManager {
     mgr
 }
 
+fn setup_ui_style() -> graphics::ui_style::UIStyle {
+    let mut ui_style = graphics::ui_style::UIStyle::new();
+    // ui_style.read_from_file("/etc/niva_dashboard/ui_style.json").unwrap_or_else(|e| {
+    //     print!("Warning: Failed to read UI style config: {}\r\n", e);
+    // });
+    ui_style
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     
@@ -211,7 +219,9 @@ fn main() {
     print!("4. Rotating needle gauge test (circular gauge with numbers)\r\n");
     print!("5. GPIO input test\r\n");
     print!("6. Sensor manager test\r\n");
-    print!("Usage: cargo run -- [test={{basic|gltext|dashboard|needle|gpio|sensors}}]\r\n");
+    print!("7. Digital segmented display test\r\n");
+    print!("8. Simple font rendering test\r\n");
+    print!("Usage: cargo run -- [test={{basic|gltext|dashboard|needle|gpio|sensors|digital|font}}]\r\n");
 
     for arg in args {
         let parm = arg.split("=").collect::<Vec<&str>>();
@@ -230,8 +240,9 @@ fn main() {
 
     let context = setup_context();
     let sensors = setup_sensors();
+    let ui_style = setup_ui_style();
 
-    let mut mgr = PageManager::new(context, sensors);
+    let mut mgr = PageManager::new(context, sensors, ui_style);
 
     mgr.setup().expect("Failed to setup page manager");
 

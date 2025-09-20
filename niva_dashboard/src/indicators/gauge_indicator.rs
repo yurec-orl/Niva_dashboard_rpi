@@ -34,7 +34,7 @@ impl Indicator for GaugeIndicator {
         let inner_radius = radius - 5.0;
         let needle_length = radius * 0.8;
         let mark_radius = inner_radius - 15.0;
-        let number_radius = mark_radius - 20.0;
+        let number_radius = mark_radius - 5.0;
         
         // Get numeric value and constraints
         let current_value = value.as_f32();
@@ -248,6 +248,12 @@ void main() {
     fn render_gauge_numbers(&self, context: &mut GraphicsContext, center_x: f32, center_y: f32, radius: f32, start_angle: f32, end_angle: f32, min_value: f32, max_value: f32, num_marks: i32, color: (f32, f32, f32), style: &UIStyle) -> Result<(), String> {
         let angle_range = end_angle - start_angle;
         let value_range = max_value - min_value;
+        
+        // Use style for font path and size if available
+        let font_path = style.get_string(GAUGE_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
+        let font_size = style.get_integer(GAUGE_LABEL_FONT_SIZE, DEFAULT_GLOBAL_FONT_SIZE);
+        let text_scale = 0.7;
+        
         for i in 0..num_marks {
             let t = i as f32 / (num_marks - 1) as f32;
             let angle = start_angle + t * angle_range;
@@ -255,12 +261,23 @@ void main() {
             let cos_a = angle.cos();
             let sin_a = angle.sin();
             let text = format!("{:.0}", value);
-            let text_scale = 0.7;
-            let text_x = center_x + cos_a * radius;
-            let text_y = center_y + sin_a * radius;
-            // Use style for font path and size if available
-            let font_path = style.get_string(GAUGE_LABEL_FONT, "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf");
-            let font_size = style.get_integer(GAUGE_LABEL_FONT_SIZE, 12);
+            
+            // Calculate the target position on the line from gauge center towards the mark
+            let target_x = center_x + cos_a * radius;
+            let target_y = center_y + sin_a * radius;
+            
+            // Calculate text dimensions to find the center offset
+            let (text_width, text_height) = context.calculate_text_dimensions_with_font(
+                &text, 
+                text_scale, 
+                &font_path, 
+                font_size
+            )?;
+            
+            // Calculate the top-left corner position to center the text at the target position
+            let text_x = target_x - text_width / 2.0;
+            let text_y = target_y - text_height / 2.0;
+            
             context.render_text_with_font(
                 &text, 
                 text_x, 

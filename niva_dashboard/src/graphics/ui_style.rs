@@ -25,6 +25,17 @@ use serde::{Deserialize, Serialize};
 // STYLE ELEMENT NAME CONSTANTS
 // =============================================================================
 
+// Default values
+pub const DEFAULT_GLOBAL_FONT_PATH: &str = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf";  // Use monospace for more digital look
+pub const DEFAULT_GLOBAL_FONT_SIZE: u32 = 14;
+
+// Digital Display Fonts (for 7-segment style displays)
+pub const DIGITAL_DISPLAY_FONT_PATH: &str = "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/DSEG7Classic-Regular.ttf";
+pub const DIGITAL_DISPLAY_FONT_ITALIC_PATH: &str = "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/DSEG7Classic-Italic.ttf";
+pub const DIGITAL_DISPLAY_14SEG_FONT_PATH: &str = "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/DSEG14Classic-Regular.ttf";
+pub const DIGITAL_DISPLAY_14SEG_ITALIC_PATH: &str = "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/DSEG14Classic-Italic.ttf";
+pub const DIGITAL_DISPLAY_MONO_FONT_PATH: &str = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf";
+
 // Global Style Elements
 pub const GLOBAL_BRIGHTNESS: &str = "global_brightness";
 pub const GLOBAL_CONTRAST: &str = "global_contrast";
@@ -136,6 +147,20 @@ pub const TEXT_SMALL_FONT_SIZE: &str = "text_small_font_size";
 
 pub const TEXT_LINE_SPACING: &str = "text_line_spacing";
 pub const TEXT_LETTER_SPACING: &str = "text_letter_spacing";
+
+// Digital Display Style Elements (7-segment style)
+pub const DIGITAL_DISPLAY_FONT: &str = "digital_display_font";
+pub const DIGITAL_DISPLAY_FONT_SIZE: &str = "digital_display_font_size";
+pub const DIGITAL_DISPLAY_COLOR: &str = "digital_display_color";
+pub const DIGITAL_DISPLAY_BACKGROUND_COLOR: &str = "digital_display_background_color";
+pub const DIGITAL_DISPLAY_GLOW_ENABLED: &str = "digital_display_glow_enabled";
+pub const DIGITAL_DISPLAY_GLOW_COLOR: &str = "digital_display_glow_color";
+pub const DIGITAL_DISPLAY_INACTIVE_COLOR: &str = "digital_display_inactive_color";
+
+// Extended Digital Display Fonts (additional variants)
+pub const DIGITAL_DISPLAY_FONT_ITALIC: &str = "digital_display_font_italic";
+pub const DIGITAL_DISPLAY_14SEG_FONT: &str = "digital_display_14seg_font";
+pub const DIGITAL_DISPLAY_14SEG_ITALIC: &str = "digital_display_14seg_italic";
 
 // Warning Indicator Style Elements
 pub const INDICATOR_NORMAL_COLOR: &str = "indicator_normal_color";
@@ -598,6 +623,20 @@ impl UIStyle {
         self.set(INDICATOR_GLOW_ENABLED, UIStyleValue::Boolean(false));
         self.set(INDICATOR_GLOW_RADIUS, UIStyleValue::Float(5.0));
         self.set(INDICATOR_SIZE, UIStyleValue::Float(24.0));
+        
+        // Digital display defaults (amber theme like classic LCD displays)
+        self.set(DIGITAL_DISPLAY_FONT, UIStyleValue::String(DIGITAL_DISPLAY_FONT_PATH.to_string()));
+        self.set(DIGITAL_DISPLAY_FONT_SIZE, UIStyleValue::Integer(64));
+        self.set(DIGITAL_DISPLAY_COLOR, UIStyleValue::Color("#000000".to_string())); // Black active segments
+        self.set(DIGITAL_DISPLAY_BACKGROUND_COLOR, UIStyleValue::Color("#FFA500".to_string())); // Amber background  
+        self.set(DIGITAL_DISPLAY_INACTIVE_COLOR, UIStyleValue::Color("#996600".to_string())); // Dark amber inactive segments
+        self.set(DIGITAL_DISPLAY_GLOW_ENABLED, UIStyleValue::Boolean(false)); // Disabled by default
+        self.set(DIGITAL_DISPLAY_GLOW_COLOR, UIStyleValue::Color("#FFA500".to_string())); // Amber glow
+        
+        // Extended digital display font defaults
+        self.set(DIGITAL_DISPLAY_FONT_ITALIC, UIStyleValue::String(DIGITAL_DISPLAY_FONT_ITALIC_PATH.to_string()));
+        self.set(DIGITAL_DISPLAY_14SEG_FONT, UIStyleValue::String(DIGITAL_DISPLAY_14SEG_FONT_PATH.to_string()));
+        self.set(DIGITAL_DISPLAY_14SEG_ITALIC, UIStyleValue::String(DIGITAL_DISPLAY_14SEG_ITALIC_PATH.to_string()));
         
         // Animation defaults
         self.set(ANIMATION_NEEDLE_SPEED, UIStyleValue::Float(1.0));

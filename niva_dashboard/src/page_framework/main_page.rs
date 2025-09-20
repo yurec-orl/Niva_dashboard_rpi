@@ -128,19 +128,19 @@ impl MainPage {
         let available_height = screen_height - top_margin - 40.0;
 
         // Central speedometer - large gauge (RPM/Speed)
-        let center_gauge_size = 300.0;
+        let center_gauge_size = 260.0;
         let center_x = screen_width / 2.0 - center_gauge_size / 2.0;
-        let center_y = top_margin + 40.0;
+        let center_y = top_margin;
         
         indicators.push(Box::new(GaugeIndicator::new()));
         indicator_bounds.push(IndicatorBounds::new(center_x, center_y, center_gauge_size, center_gauge_size));
 
         // Left side gauges - smaller gauges
         let side_gauge_size = 120.0;
-        let left_x = button_margin + 20.0;
+        let left_x = button_margin;
         
         // Fuel level gauge (left top)
-        let fuel_y = top_margin + 60.0;
+        let fuel_y = top_margin;
         indicators.push(Box::new(GaugeIndicator::new()));
         indicator_bounds.push(IndicatorBounds::new(left_x, fuel_y, side_gauge_size, side_gauge_size));
         
@@ -150,10 +150,10 @@ impl MainPage {
         indicator_bounds.push(IndicatorBounds::new(left_x, oil_y, side_gauge_size, side_gauge_size));
 
         // Right side gauges - smaller gauges
-        let right_x = screen_width - button_margin - side_gauge_size - 20.0;
+        let right_x = screen_width - button_margin - side_gauge_size;
         
         // Temperature gauge (right top)
-        let temp_y = top_margin + 60.0;
+        let temp_y = top_margin;
         indicators.push(Box::new(GaugeIndicator::new()));
         indicator_bounds.push(IndicatorBounds::new(right_x, temp_y, side_gauge_size, side_gauge_size));
         
@@ -165,12 +165,12 @@ impl MainPage {
         IndicatorSet { indicators, inputs, indicator_bounds }
     }
 
-    pub fn new(id: u32, ui_style: UIStyle, event_sender: EventSender, event_receiver: EventReceiver, context: &GraphicsContext) -> Self {
+    pub fn new(id: u32, event_sender: EventSender, event_receiver: EventReceiver, context: &GraphicsContext) -> Self {
         let test_indicator_set = Self::setup_test_indicators();
         let gauge_indicator_set = Self::setup_indicators(context);
 
         let mut main_page = MainPage {
-            base: PageBase::new(id, "Main".to_string(), ui_style),
+            base: PageBase::new(id, "Main".to_string()),
             event_sender: event_sender.clone(),
             event_receiver,
             indicator_sets: vec![gauge_indicator_set, test_indicator_set],
@@ -284,16 +284,16 @@ impl Page for MainPage {
         self.base.name()
     }
 
-    fn render(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager) -> Result<(), String> {
+    fn render(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
         // Render page title
         context.render_text_with_font(
             "Main Page", 
             400.0, 
             40.0, 
             1.0, 
-            self.ui_style().get_color(TEXT_PRIMARY_COLOR, (1.0, 1.0, 1.0)),
-            &self.ui_style().get_string(TEXT_PRIMARY_FONT, "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
-            self.ui_style().get_integer(TEXT_PRIMARY_FONT_SIZE, 24)
+            ui_style.get_color(TEXT_PRIMARY_COLOR, (1.0, 1.0, 1.0)),
+            ui_style.get_string(TEXT_PRIMARY_FONT, DEFAULT_GLOBAL_FONT_PATH).as_str(),
+            ui_style.get_integer(TEXT_PRIMARY_FONT_SIZE, 24)
         )?;
 
         // Read sensor values and create SensorValue objects
@@ -306,7 +306,7 @@ impl Page for MainPage {
         for (i, indicator) in indicators.enumerate() {
             if let Some(sensor_value) = sensor_values.get(i) {
                 if let Some(bounds) = indicator_bounds.get(i) {
-                    indicator.render(sensor_value, bounds.clone(), self.ui_style(), context)?;
+                    indicator.render(sensor_value, bounds.clone(), ui_style, context)?;
                 }
             }
         }
@@ -369,9 +369,5 @@ impl Page for MainPage {
 
     fn button_by_position_mut(&mut self, pos: ButtonPosition) -> Option<&mut PageButton<Box<dyn FnMut()>>> {
         self.base.button_by_position_mut(pos)
-    }
-
-    fn ui_style(&self) -> &UIStyle {
-        self.base.ui_style()
     }
 }

@@ -63,16 +63,14 @@ pub struct PageBase {
     id: u32,            // Incremental id, depends on page creation order.
     name: String,
     buttons: Vec<PageButton<Box<dyn FnMut()>>>,
-    ui_style: UIStyle,
 }
 
 impl PageBase {
-    pub fn new(id: u32, name: String, ui_style: UIStyle) -> Self {
+    pub fn new(id: u32, name: String) -> Self {
         PageBase {
             id,
             name,
             buttons: Vec::new(),
-            ui_style,
         }
     }
 
@@ -101,17 +99,13 @@ impl PageBase {
     pub fn button_by_position_mut(&mut self, pos: ButtonPosition) -> Option<&mut PageButton<Box<dyn FnMut()>>> {
         self.buttons.iter_mut().find(|button| button.position() == &pos)
     }
-
-    pub fn ui_style(&self) -> &UIStyle {
-        &self.ui_style
-    }
 }
 
 pub trait Page {
     fn id(&self) -> u32;
     fn name(&self) -> &str;
     // Render page-specific stuff (except button labels, which are PageManager responsibility).
-    fn render(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager) -> Result<(), String>;
+    fn render(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String>;
     // Trigger once on switching to this page.
     fn on_enter(&mut self) -> Result<(), String>;
     // Trigger once on switching from this page.
@@ -127,8 +121,6 @@ pub trait Page {
     fn button_by_position(&self, pos: ButtonPosition) -> Option<&PageButton<Box<dyn FnMut()>>>;
     
     fn button_by_position_mut(&mut self, pos: ButtonPosition) -> Option<&mut PageButton<Box<dyn FnMut()>>>;
-
-    fn ui_style(&self) -> &UIStyle;
 }
 
 // Helper struct to manage collection of pages.
@@ -201,7 +193,7 @@ pub struct PageManager {
 }
 
 impl PageManager {
-    pub fn new(context: GraphicsContext, sensor_manager: SensorManager) -> Self {
+    pub fn new(context: GraphicsContext, sensor_manager: SensorManager, ui_style: UIStyle) -> Self {
         let mut buttons_map = HashMap::new();
         buttons_map.insert('1', ButtonPosition::Left1);
         buttons_map.insert('2', ButtonPosition::Left2);
@@ -216,11 +208,6 @@ impl PageManager {
         let event_bus = create_event_bus();
         let event_sender = event_bus.sender();
         let event_receiver = event_bus.receiver();
-
-        let ui_style = UIStyle::new();
-        // ui_style.read_from_file("/etc/niva_dashboard/ui_style.json").unwrap_or_else(|e| {
-        //     print!("Warning: Failed to read UI style config: {}\r\n", e);
-        // });
 
         PageManager {
             context,
@@ -285,7 +272,7 @@ impl PageManager {
     fn render_current_page(&mut self) -> Result<(), String> {
         if let Some(page_id) = self.current_page {
             match self.pages.get_page_mut(page_id) {
-                Some(page) => page.render(&mut self.context, &self.sensor_manager),
+                Some(page) => page.render(&mut self.context, &self.sensor_manager, &self.ui_style),
                 None => Err(format!("Current page id {} not found", page_id)),
             }?;
         }
@@ -333,23 +320,14 @@ impl PageManager {
         let event_sender = self.event_sender.clone();
 
         // Create and add pages first to get their IDs
-        let mut main_page_style = self.ui_style.clone();
-        main_page_style.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(14));
-        main_page_style.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#FFFFFF".to_string())); // White color
         let main_page = Box::new(MainPage::new(MAIN_PAGE_ID,
-                                                   main_page_style,
-                                                   event_sender.clone(),
-                                                   self.get_event_receiver(),
-                                                   &self.context));
+                                               event_sender.clone(),
+                                               self.get_event_receiver(),
+                                               &self.context));
 
-        // let mut diag_page_style = UIStyle::new();
-        // diag_page_style.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(20));
-        // diag_page_style.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#00FF00".to_string())); // Green color
-        // diag_page_style.set(TEXT_PRIMARY_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf".to_string()));
         let diag_page = Box::new(DiagPage::new(DIAG_PAGE_ID,
-                                                   self.ui_style.clone(),
-                                                   event_sender.clone(),
-                                                   self.get_event_receiver()));
+                                               event_sender.clone(),
+                                               self.get_event_receiver()));
 
         self.add_page(main_page);
         self.switch_page(MAIN_PAGE_ID)?;

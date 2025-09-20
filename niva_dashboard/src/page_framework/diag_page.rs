@@ -11,9 +11,9 @@ pub struct DiagPage {
 }
 
 impl DiagPage {
-    pub fn new(id: u32, ui_style: UIStyle, event_sender: EventSender, event_receiver: EventReceiver) -> Self {
+    pub fn new(id: u32, event_sender: EventSender, event_receiver: EventReceiver) -> Self {
         let mut diag_page = DiagPage {
-            base: PageBase::new(id, "Diag".to_string(), ui_style),
+            base: PageBase::new(id, "Diag".to_string()),
             event_sender,
             event_receiver,
         };
@@ -55,15 +55,15 @@ impl Page for DiagPage {
         self.base.set_buttons(buttons);
     }
 
-    fn render(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager) -> Result<(), String> {
+    fn render(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
         context.render_text_with_font(
             "Diagnostics Page", 
             200.0, 
             100.0, 
             1.0, 
-            self.ui_style().get_color(TEXT_PRIMARY_COLOR, (1.0, 1.0, 1.0)),
-            &self.ui_style().get_string(TEXT_PRIMARY_FONT, "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
-            self.ui_style().get_integer(TEXT_PRIMARY_FONT_SIZE, 24)
+            ui_style.get_color(TEXT_PRIMARY_COLOR, (1.0, 1.0, 1.0)),
+            ui_style.get_string(TEXT_PRIMARY_FONT, DEFAULT_GLOBAL_FONT_PATH).as_str(),
+            ui_style.get_integer(TEXT_PRIMARY_FONT_SIZE, 24)
         )?;
         Ok(())
     }
@@ -90,9 +90,5 @@ impl Page for DiagPage {
 
     fn button_by_position_mut(&mut self, pos: ButtonPosition) -> Option<&mut PageButton<Box<dyn FnMut()>>> {
         self.base.button_by_position_mut(pos)
-    }
-
-    fn ui_style(&self) -> &UIStyle {
-        self.base.ui_style()
     }
 }
