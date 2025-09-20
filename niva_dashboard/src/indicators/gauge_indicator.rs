@@ -1,5 +1,5 @@
 use crate::graphics::context::GraphicsContext;
-use crate::graphics::ui_style::{UIStyle, blend_colors};
+use crate::graphics::ui_style::*;
 use crate::indicators::indicator::{Indicator, IndicatorBounds};
 use crate::hardware::sensor_value::{SensorValue, ValueData};
 
@@ -41,11 +41,18 @@ impl Indicator for GaugeIndicator {
         let min_value = value.constraints.min_value;
         let max_value = value.constraints.max_value;
         
-        // Get colors based on value status
-        let needle_color = (1.0, 0.0, 0.0);
-        let border_color = (0.4, 0.4, 0.5);
-        let mark_color = (0.9, 0.9, 1.0);
-        let text_color = (1.0, 1.0, 1.0);
+        // Get colors from UIStyle using constants
+        let needle_color = style.get_color_rgba(NEEDLE_COLOR, (1.0, 0.0, 0.0, 1.0));
+        let border_color = style.get_color_rgba(GAUGE_BORDER_COLOR, (0.4, 0.4, 0.5, 1.0));
+        let mark_color = style.get_color_rgba(GAUGE_MAJOR_MARK_COLOR, (0.9, 0.9, 1.0, 1.0));
+        let text_color = style.get_color_rgba(GAUGE_LABEL_COLOR, (1.0, 1.0, 1.0, 1.0));
+        // Only use RGB for rendering
+        let needle_color = (needle_color.0, needle_color.1, needle_color.2);
+        let border_color = (border_color.0, border_color.1, border_color.2);
+        let mark_color = (mark_color.0, mark_color.1, mark_color.2);
+        let text_color = (text_color.0, text_color.1, text_color.2);
+
+        let needle_glow = style.get_bool(NEEDLE_GLOW_ENABLED, false);
 
         let start_angle = -225.0f32.to_radians(); // Start at bottom-left
         let end_angle = 45.0f32.to_radians();     // End at bottom-right (270 degrees total)
@@ -69,11 +76,13 @@ impl Indicator for GaugeIndicator {
             
             self.render_gauge_numbers(context, center_x, center_y, number_radius, 
                                       start_angle, end_angle, min_value, max_value, 
-                                      num_marks, text_color)?;
+                                      num_marks, text_color, style)?;
             
             self.render_triangular_needle(center_x, center_y, needle_length, 
                                         start_angle, end_angle, min_value, max_value, 
-                                        current_value, needle_color, context.width as f32, context.height as f32, shader_program);
+                                        current_value, needle_color, needle_glow,
+                                        context.width as f32, context.height as f32,
+                                        shader_program);
             
             // Render center circle
             self.render_gauge_center_circle(center_x, center_y, 8.0, (0.4, 0.4, 0.5), 
@@ -236,41 +245,41 @@ void main() {
     }
     
     /// Render numbered scale marks
-    fn render_gauge_numbers(&self, context: &mut GraphicsContext, center_x: f32, center_y: f32, radius: f32, start_angle: f32, end_angle: f32, min_value: f32, max_value: f32, num_marks: i32, color: (f32, f32, f32)) -> Result<(), String> {
+    fn render_gauge_numbers(&self, context: &mut GraphicsContext, center_x: f32, center_y: f32, radius: f32, start_angle: f32, end_angle: f32, min_value: f32, max_value: f32, num_marks: i32, color: (f32, f32, f32), style: &UIStyle) -> Result<(), String> {
         let angle_range = end_angle - start_angle;
         let value_range = max_value - min_value;
-        
         for i in 0..num_marks {
             let t = i as f32 / (num_marks - 1) as f32;
             let angle = start_angle + t * angle_range;
             let value = min_value + t * value_range;
-            
             let cos_a = angle.cos();
             let sin_a = angle.sin();
-
             let text = format!("{:.0}", value);
             let text_scale = 0.7;
-            
-            // Calculate text position (roughly centered on the angle position)
             let text_x = center_x + cos_a * radius;
             let text_y = center_y + sin_a * radius;
-
+            // Use style for font path and size if available
+            let font_path = style.get_string(GAUGE_LABEL_FONT, "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf");
+            let font_size = style.get_integer(GAUGE_LABEL_FONT_SIZE, 12);
             context.render_text_with_font(
                 &text, 
                 text_x, 
                 text_y, 
                 text_scale, 
                 color,
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                12
+                &font_path,
+                font_size
             )?;
         }
-        
         Ok(())
     }
     
     /// Render triangular needle with glow effect
-    unsafe fn render_triangular_needle(&self, center_x: f32, center_y: f32, length: f32, start_angle: f32, end_angle: f32, min_value: f32, max_value: f32, current_value: f32, color: (f32, f32, f32), screen_w: f32, screen_h: f32, shader_program: u32) {
+    unsafe fn render_triangular_needle(&self, center_x: f32, center_y: f32, length: f32,
+                                       start_angle: f32, end_angle: f32,
+                                       min_value: f32, max_value: f32, current_value: f32,
+                                       color: (f32, f32, f32), needle_glow: bool,
+                                       screen_w: f32, screen_h: f32, shader_program: u32) {
         gl::UseProgram(shader_program);
         
         // Calculate needle angle based on value
@@ -293,33 +302,18 @@ void main() {
         let core_color = (1.0, 1.0, 1.0);
 
         // Render glow layers (from largest/faintest to smallest/brightest)
-        let glow_layers = [
-            (3.0, color, 0.15), // Outermost glow: 2.5x size, 15% opacity
-            (2.0, color, 0.25), // Middle glow: 2.0x size, 25% opacity
-            (1.5, color, 0.40), // Inner glow: 1.5x size, 40% opacity
-            (0.75, blend_colors(color, core_color, 0.7), 1.00), // Core outer: 25% narrower, full opacity
-            (0.25, core_color, 1.00), // Core needle: 75% narrower, full opacity
-        ];
-        // let glow_layers_count = 10;
-        // let mut glow_layers = Vec::new();
-        // for i in 0..glow_layers_count {
-        //     let t = i as f32 / (glow_layers_count - 1) as f32;
-        //     let size_multiplier = 3.0 - t * 2.75;
-        //     let opacity = 0.15 + t * (1.0 - 0.15);
-            
-        //     // Non-linear color blending: keep primary color for 70% of layers, then blend to core
-        //     let blend_weight = if t <= 0.7 {
-        //         0.0 // Keep primary color for first 70% of layers
-        //     } else {
-        //         // For the last 30%, smoothly blend from 0 to 1
-        //         let blend_progress = (t - 0.7) / 0.3;
-        //         // Use cubic curve for smoother transition: x^2 * (3 - 2*x)
-        //         blend_progress * blend_progress * (3.0 - 2.0 * blend_progress)
-        //     };
-            
-        //     let blended_color = blend_colors(color, core_color, blend_weight);
-        //     glow_layers.push((size_multiplier, blended_color, opacity));
-        // }
+        let mut glow_layers = Vec::new();
+
+        if needle_glow {
+            // Glow effect layers
+            glow_layers.push((3.0, color, 0.15)); // Outermost glow: 2.5x size, 15% opacity
+            glow_layers.push((2.0, color, 0.25)); // Middle glow: 2.0x size, 25% opacity
+            glow_layers.push((1.5, color, 0.40)); // Inner glow: 1.5x size, 40% opacity
+            glow_layers.push((0.75, blend_colors(color, core_color, 0.7), 1.00)); // Core outer: 25% narrower, full opacity
+            glow_layers.push((0.25, core_color, 1.00)); // Core needle: 75% narrower, full opacity
+        } else {
+            glow_layers.push((1.0, color, 1.0)); // Just the base color, no glow effect
+        }
 
         for (size_multiplier, color, opacity) in glow_layers.iter() {
             let base_width = base_needle_width * size_multiplier;

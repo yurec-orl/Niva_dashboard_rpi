@@ -50,6 +50,7 @@ pub const NEEDLE_CENTER_COLOR: &str = "needle_center_color";
 pub const NEEDLE_CENTER_RADIUS: &str = "needle_center_radius";
 pub const NEEDLE_SHADOW_ENABLED: &str = "needle_shadow_enabled";
 pub const NEEDLE_SHADOW_COLOR: &str = "needle_shadow_color";
+pub const NEEDLE_GLOW_ENABLED: &str = "needle_glow_enabled";
 
 // Gauge Marks
 pub const GAUGE_MAJOR_MARK_COLOR: &str = "gauge_major_mark_color";
@@ -428,7 +429,8 @@ impl UIStyle {
         self.set(NEEDLE_CENTER_RADIUS, UIStyleValue::Float(8.0));
         self.set(NEEDLE_SHADOW_ENABLED, UIStyleValue::Boolean(false));
         self.set(NEEDLE_SHADOW_COLOR, UIStyleValue::Color("#000000".to_string()));
-        
+        self.set(NEEDLE_GLOW_ENABLED, UIStyleValue::Boolean(false));
+
         // Gauge marks defaults
         self.set(GAUGE_MAJOR_MARK_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
         self.set(GAUGE_MAJOR_MARK_WIDTH, UIStyleValue::Float(2.0));
