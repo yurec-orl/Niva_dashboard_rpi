@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::opengl_test::{run_basic_geometry_test, run_opengl_text_rendering_test, run_dashboard_performance_test, run_rotating_needle_gauge_test};
-use crate::graphics::digital_display_demo::{render_digital_number, render_digital_speedometer, render_digital_rpm};
 use crate::hardware::hw_providers::*;
 use crate::hardware::GpioInput;
 use crate::hardware::sensor_manager::SensorManager;
@@ -50,13 +49,9 @@ pub fn run_test(name: &str) {
             println!("\n=== Digital Segmented Display Test ===");
             run_graphics_test("Niva Dashboard - Digital Display Test", run_digital_display_test);
         }
-        "font" => {
-            println!("\n=== Digital Font Direct Rendering Test ===");
-            run_graphics_test("Niva Dashboard - Font Test", run_digital_font_test);
-        }
         _ => {
             eprintln!("Unknown test: {}", name);
-            eprintln!("Valid options: basic, gltext, dashboard, needle, gpio, sensors, digital, font");
+            eprintln!("Valid options: basic, gltext, dashboard, needle, gpio, sensors, digital");
             eprintln!("Note: SDL2-based tests (sdl2, advanced, etc.) are disabled after KMS/DRM migration");
             std::process::exit(1);
         }
@@ -193,7 +188,7 @@ fn run_digital_display_test(context: &mut GraphicsContext) -> Result<(), String>
     }
     
     // Test different digital displays
-    
+
     // Time display "10:43"
     if let Err(e) = render_time_example(context, &ui_style, 10, 43) {
         eprintln!("Error rendering time display: {}", e);
@@ -201,7 +196,7 @@ fn run_digital_display_test(context: &mut GraphicsContext) -> Result<(), String>
         println!("✓ Time display rendered successfully");
     }
     
-    // Speed display "0088"
+    // Speed display "088"
     if let Err(e) = render_speed_example(context, &ui_style, 88.0) {
         eprintln!("Error rendering speed display: {}", e);
     } else {
@@ -261,7 +256,10 @@ fn render_time_example(
     hours: i32,
     _minutes: i32
 ) -> Result<(), String> {
-    let time_indicator = DigitalSegmentedIndicator::integer(4); // HHMM format as integer
+    // Create time indicator with inactive segments for realistic 7-segment look
+    let time_indicator = DigitalSegmentedIndicator::integer(4)
+        .with_inactive_segments(true)
+        .with_inactive_intensity(0.95);
     
     // Convert hours to HHMM format (e.g., 10:43 -> 1043)
     let time_as_int = hours * 100 + 43; // Hardcoded minutes for demo
@@ -277,10 +275,13 @@ fn render_time_example(
     let bounds = IndicatorBounds {
         x: 50.0,
         y: 50.0,
-        width: 200.0,
-        height: 60.0,
+        width: 208.0,
+        height: 80.0,
     };
     
+    context.render_rectangle(bounds.x, bounds.y, bounds.width, bounds.height,
+        (1.0, 0.49, 0.0), true, 4.0, 10.0)?;
+
     time_indicator.render(&time_value, bounds, ui_style, context)
 }
 
@@ -290,7 +291,10 @@ fn render_speed_example(
     ui_style: &UIStyle,
     speed_kmh: f32
 ) -> Result<(), String> {
-    let speed_indicator = DigitalSegmentedIndicator::integer(3); // 3-digit speed
+    // Use the speedometer preset with inactive segments
+    let speed_indicator = DigitalSegmentedIndicator::integer(3)
+        .with_inactive_segments(true)
+        .with_inactive_intensity(0.95);
     
     let speed_value = SensorValue::analog(
         speed_kmh,
@@ -300,14 +304,17 @@ fn render_speed_example(
         "Speed",
         "speed_sensor"
     );
-    
+
     let bounds = IndicatorBounds {
         x: 300.0,
         y: 50.0,
         width: 240.0,
-        height: 60.0,
+        height: 80.0,
     };
-    
+
+    context.render_rectangle(bounds.x, bounds.y, bounds.width, bounds.height,
+        (1.0, 0.49, 0.0), true, 4.0, 10.0)?;
+
     speed_indicator.render(&speed_value, bounds, ui_style, context)
 }
 
@@ -317,7 +324,10 @@ fn render_rpm_example(
     ui_style: &UIStyle,
     rpm: f32
 ) -> Result<(), String> {
-    let rpm_indicator = DigitalSegmentedIndicator::integer(4); // 4-digit RPM
+    // Use the tachometer preset with inactive segments
+    let rpm_indicator = DigitalSegmentedIndicator::integer(4)
+        .with_inactive_segments(true)
+        .with_inactive_intensity(0.95);
     
     let rpm_value = SensorValue::analog(
         rpm,
@@ -331,10 +341,13 @@ fn render_rpm_example(
     let bounds = IndicatorBounds {
         x: 50.0,
         y: 150.0,
-        width: 200.0,
-        height: 60.0,
+        width: 208.0,
+        height: 80.0,
     };
     
+    context.render_rectangle(bounds.x, bounds.y, bounds.width, bounds.height,
+        (1.0, 0.49, 0.0), true, 4.0, 10.0)?;
+
     rpm_indicator.render(&rpm_value, bounds, ui_style, context)
 }
 
@@ -344,7 +357,10 @@ fn render_temperature_example(
     ui_style: &UIStyle,
     temp_celsius: f32
 ) -> Result<(), String> {
-    let temp_indicator = DigitalSegmentedIndicator::float(4, 1); // 4 digits total, 1 decimal (XX.X)
+    // Use the temperature preset with inactive segments
+    let temp_indicator = DigitalSegmentedIndicator::float(4, 1)
+        .with_inactive_segments(true)
+        .with_inactive_intensity(0.95);
     
     let temp_value = SensorValue::analog(
         temp_celsius,
@@ -358,9 +374,12 @@ fn render_temperature_example(
     let bounds = IndicatorBounds {
         x: 300.0,
         y: 150.0,
-        width: 160.0,
-        height: 60.0,
+        width: 164.0,
+        height: 80.0,
     };
+
+    context.render_rectangle(bounds.x, bounds.y, bounds.width, bounds.height,
+        (1.0, 0.49, 0.0), true, 4.0, 10.0)?;
     
     temp_indicator.render(&temp_value, bounds, ui_style, context)
 }
@@ -371,7 +390,10 @@ fn render_voltage_example(
     ui_style: &UIStyle,
     voltage: f32
 ) -> Result<(), String> {
-    let voltage_indicator = DigitalSegmentedIndicator::float(4, 2); // 4 digits total, 2 decimals (XX.XX)
+    // Use the voltage preset with inactive segments
+    let voltage_indicator = DigitalSegmentedIndicator::float(5, 2)
+        .with_inactive_segments(true)
+        .with_inactive_intensity(0.95);
     
     let voltage_value = SensorValue::analog(
         voltage,
@@ -385,61 +407,12 @@ fn render_voltage_example(
     let bounds = IndicatorBounds {
         x: 50.0,
         y: 250.0,
-        width: 200.0,
-        height: 60.0,
+        width: 208.0,
+        height: 80.0,
     };
     
+    context.render_rectangle(bounds.x, bounds.y, bounds.width, bounds.height,
+        (1.0, 0.49, 0.0), true, 4.0, 10.0)?;
+    
     voltage_indicator.render(&voltage_value, bounds, ui_style, context)
-}
-
-/// Ultra-simple font rendering test - just digits 0-9 at fixed position
-fn run_digital_font_test(context: &mut GraphicsContext) -> Result<(), String> {
-    println!("=== Simple Font Test: Digits 0-9 ===");
-    
-    unsafe {
-        // Set viewport
-        gl::Viewport(0, 0, context.width, context.height);
-        
-        // Enable blending for text transparency
-        gl::Enable(gl::BLEND);
-        gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-        
-        // Clear screen with dark background
-        gl::ClearColor(0.0, 0.0, 0.0, 1.0);
-        gl::Clear(gl::COLOR_BUFFER_BIT);
-    }
-    
-    // Render just "0123456789" at position 100,100 with DSEG font
-    let dseg_font = "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/DSEG7Classic-Regular.ttf";
-    let white_color = (1.0, 1.0, 1.0);  // Pure white for visibility
-    
-    println!("Rendering '0123456789' at position (100, 100)");
-    println!("Font: {}", dseg_font);
-    println!("Color: white (1.0, 1.0, 1.0)");
-    println!("Size: 32px");
-    
-    match context.render_text_with_font("0123456789", 100.0, 100.0, 2.5, white_color, dseg_font, 32) {
-        Ok(_) => println!("✓ Text rendering completed without error"),
-        Err(e) => {
-            println!("✗ Text rendering failed: {}", e);
-            return Err(e);
-        }
-    }
-    
-    unsafe {
-        // Clean up OpenGL state
-        gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-        gl::BindTexture(gl::TEXTURE_2D, 0);
-        gl::UseProgram(0);
-    }
-    
-    context.swap_buffers();
-    
-    println!("\n--- Test Complete ---");
-    println!("Check the screen at position (100, 100) for white digits 0-9");
-    println!("If you see colored rectangles instead of numbers, there's a glyph rendering issue");
-    
-    // Keep display visible longer
-    thread::sleep(Duration::from_secs(10));
-    Ok(())
 }

@@ -159,6 +159,14 @@ The application supports multiple test modes for development and validation:
 5. GPIO input test
 6. Sensor manager test
 
+## Text Rendering Coordinate System
+The FreeType text rendering system uses a specific coordinate convention that's critical for proper text positioning:
+- `render_text_with_font(x, y, text, font_size, color)` interprets the `y` parameter as the **top edge** of the text line
+- This is different from typical typography baseline positioning
+- For vertical centering, calculate: `center_y - (text_height / 2)`
+- The text height can be obtained from font metrics or estimated as `font_size * 1.2` for most fonts
+- This coordinate system applies to all text rendering operations in the graphics context
+
 ## Notes
 - Focus on reliability and real-time performance
 - Design for automotive environment (vibration, temperature)

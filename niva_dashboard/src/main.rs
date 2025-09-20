@@ -220,8 +220,7 @@ fn main() {
     print!("5. GPIO input test\r\n");
     print!("6. Sensor manager test\r\n");
     print!("7. Digital segmented display test\r\n");
-    print!("8. Simple font rendering test\r\n");
-    print!("Usage: cargo run -- [test={{basic|gltext|dashboard|needle|gpio|sensors|digital|font}}]\r\n");
+    print!("Usage: cargo run -- [test={{basic|gltext|dashboard|needle|gpio|sensors|digital}}]\r\n");
 
     for arg in args {
         let parm = arg.split("=").collect::<Vec<&str>>();

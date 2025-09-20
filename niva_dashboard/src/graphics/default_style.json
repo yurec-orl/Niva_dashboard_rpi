@@ -75,6 +75,12 @@
   "text_primary_font_size": 16,
   "text_secondary_font_size": 14,
   
+  "digital_font_path": "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/DSEG7Classic-Regular.ttf",
+  "digital_font_size": 32,
+  "digital_active_color": "#FFA500",
+  "digital_inactive_color": "#333333",
+  "digital_inactive_intensity": 0.15,
+  
   "indicator_normal_color": "#00FF00",
   "indicator_warning_color": "#FFAA00",
   "indicator_critical_color": "#FF0000",

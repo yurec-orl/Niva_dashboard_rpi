@@ -307,6 +307,9 @@ pub struct GraphicsContext {
     // UI style with brightness control and theming
     pub ui_style: UIStyle,
     
+    // Cached shader programs for performance
+    rectangle_shader: Option<u32>,
+    
     // State
     initialized: bool,
     display_configured: bool,
@@ -333,6 +336,7 @@ impl GraphicsContext {
             height,
             text_renderers: HashMap::new(),
             ui_style: UIStyle::new(),
+            rectangle_shader: None,
             initialized: false,
             display_configured: false,
         };
@@ -978,6 +982,512 @@ impl GraphicsContext {
     }
 
     // =============================================================================
+    // RECTANGLE RENDERING METHODS
+    // =============================================================================
+    
+    /// Render a rectangle with specified properties
+    /// 
+    /// # Arguments
+    /// * `x` - X coordinate of top-left corner
+    /// * `y` - Y coordinate of top-left corner  
+    /// * `width` - Rectangle width
+    /// * `height` - Rectangle height
+    /// * `color` - RGB color as (r, g, b) tuple, values 0.0-1.0
+    /// * `filled` - If true, fills the rectangle; if false, draws outline only
+    /// * `thickness` - Line thickness for outline (ignored if filled=true)
+    /// * `corner_radius` - Corner radius for rounded rectangles (0.0 for sharp corners)
+    pub fn render_rectangle(
+        &mut self,
+        x: f32, 
+        y: f32, 
+        width: f32, 
+        height: f32, 
+        color: (f32, f32, f32),
+        filled: bool,
+        thickness: f32,
+        corner_radius: f32,
+    ) -> Result<(), String> {
+        unsafe {
+            if corner_radius > 0.0 {
+                // Render rounded rectangle
+                if filled {
+                    self.render_filled_rounded_rectangle(x, y, width, height, color, corner_radius)
+                } else {
+                    self.render_rounded_rectangle_outline(x, y, width, height, color, thickness, corner_radius)
+                }
+            } else {
+                // Render regular rectangle
+                if filled {
+                    self.render_filled_rectangle(x, y, width, height, color)
+                } else {
+                    self.render_rectangle_outline(x, y, width, height, color, thickness)
+                }
+            }
+        }
+    }
+    
+    /// Render a filled rectangle (solid color)
+    unsafe fn render_filled_rectangle(
+        &mut self,
+        x: f32, 
+        y: f32, 
+        width: f32, 
+        height: f32, 
+        color: (f32, f32, f32)
+    ) -> Result<(), String> {
+        // Create simple rectangle shader program if needed
+        let shader_program = self.get_or_create_rectangle_shader()?;
+        gl::UseProgram(shader_program);
+        
+        // Set up projection matrix for 2D rendering
+        let projection_matrix = self.create_2d_projection_matrix();
+        let projection_uniform = gl::GetUniformLocation(shader_program, b"projection\0".as_ptr());
+        gl::UniformMatrix4fv(projection_uniform, 1, gl::FALSE, projection_matrix.as_ptr());
+        
+        // Set color uniform
+        let color_uniform = gl::GetUniformLocation(shader_program, b"color\0".as_ptr());
+        gl::Uniform3f(color_uniform, color.0, color.1, color.2);
+        
+        // Define rectangle vertices (2 triangles)
+        let vertices: [f32; 12] = [
+            x,         y,          // Top-left
+            x + width, y,          // Top-right  
+            x,         y + height, // Bottom-left
+            
+            x + width, y,          // Top-right
+            x + width, y + height, // Bottom-right
+            x,         y + height, // Bottom-left
+        ];
+        
+        // Create and bind VAO/VBO
+        let mut vao = 0u32;
+        let mut vbo = 0u32;
+        gl::GenVertexArrays(1, &mut vao);
+        gl::GenBuffers(1, &mut vbo);
+        
+        gl::BindVertexArray(vao);
+        gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+        
+        // Upload vertex data
+        gl::BufferData(
+            gl::ARRAY_BUFFER,
+            (vertices.len() * std::mem::size_of::<f32>()) as isize,
+            vertices.as_ptr() as *const std::ffi::c_void,
+            gl::STATIC_DRAW,
+        );
+        
+        // Set up vertex attributes
+        let position_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr()) as u32;
+        gl::VertexAttribPointer(position_attr, 2, gl::FLOAT, gl::FALSE, 0, std::ptr::null());
+        gl::EnableVertexAttribArray(position_attr);
+        
+        // Render
+        gl::DrawArrays(gl::TRIANGLES, 0, 6);
+        
+        // Clean up
+        gl::DeleteBuffers(1, &vbo);
+        gl::DeleteVertexArrays(1, &vao);
+        
+        Ok(())
+    }
+    
+    /// Render rectangle outline with specified thickness
+    unsafe fn render_rectangle_outline(
+        &mut self,
+        x: f32, 
+        y: f32, 
+        width: f32, 
+        height: f32, 
+        color: (f32, f32, f32),
+        thickness: f32
+    ) -> Result<(), String> {
+        // Draw 4 filled rectangles for the outline
+        let half_thickness = thickness / 2.0;
+        
+        // Top edge
+        self.render_filled_rectangle(x - half_thickness, y - half_thickness, width + thickness, thickness, color)?;
+        
+        // Bottom edge  
+        self.render_filled_rectangle(x - half_thickness, y + height - half_thickness, width + thickness, thickness, color)?;
+        
+        // Left edge
+        self.render_filled_rectangle(x - half_thickness, y + half_thickness, thickness, height - thickness, color)?;
+        
+        // Right edge
+        self.render_filled_rectangle(x + width - half_thickness, y + half_thickness, thickness, height - thickness, color)?;
+        
+        Ok(())
+    }
+    
+    /// Render filled rectangle with rounded corners
+    unsafe fn render_filled_rounded_rectangle(
+        &mut self,
+        x: f32, 
+        y: f32, 
+        width: f32, 
+        height: f32, 
+        color: (f32, f32, f32),
+        corner_radius: f32
+    ) -> Result<(), String> {
+        let radius = corner_radius.min(width / 2.0).min(height / 2.0);
+        
+        // Draw main rectangle (without corners)
+        self.render_filled_rectangle(x + radius, y, width - 2.0 * radius, height, color)?;
+        self.render_filled_rectangle(x, y + radius, radius, height - 2.0 * radius, color)?;
+        self.render_filled_rectangle(x + width - radius, y + radius, radius, height - 2.0 * radius, color)?;
+        
+        // Draw rounded corners using circle segments
+        self.render_circle_segment(x + radius, y + radius, radius, color, 180.0, 270.0)?; // Top-left
+        self.render_circle_segment(x + width - radius, y + radius, radius, color, 270.0, 360.0)?; // Top-right
+        self.render_circle_segment(x + width - radius, y + height - radius, radius, color, 0.0, 90.0)?; // Bottom-right
+        self.render_circle_segment(x + radius, y + height - radius, radius, color, 90.0, 180.0)?; // Bottom-left
+        
+        Ok(())
+    }
+    
+    /// Render rounded rectangle outline
+    unsafe fn render_rounded_rectangle_outline(
+        &mut self,
+        x: f32, 
+        y: f32, 
+        width: f32, 
+        height: f32, 
+        color: (f32, f32, f32),
+        thickness: f32,
+        corner_radius: f32
+    ) -> Result<(), String> {
+        let radius = corner_radius.min(width / 2.0).min(height / 2.0);
+        let half_thickness = thickness / 2.0;
+        
+        // Draw straight edges
+        // Top edge
+        self.render_filled_rectangle(x + radius, y - half_thickness, width - 2.0 * radius, thickness, color)?;
+        // Bottom edge
+        self.render_filled_rectangle(x + radius, y + height - half_thickness, width - 2.0 * radius, thickness, color)?;
+        // Left edge
+        self.render_filled_rectangle(x - half_thickness, y + radius, thickness, height - 2.0 * radius, color)?;
+        // Right edge
+        self.render_filled_rectangle(x + width - half_thickness, y + radius, thickness, height - 2.0 * radius, color)?;
+        
+        // Draw rounded corner outlines using circle arcs
+        self.render_circle_arc_outline(x + radius, y + radius, radius, thickness, color, 180.0, 270.0)?; // Top-left
+        self.render_circle_arc_outline(x + width - radius, y + radius, radius, thickness, color, 270.0, 360.0)?; // Top-right
+        self.render_circle_arc_outline(x + width - radius, y + height - radius, radius, thickness, color, 0.0, 90.0)?; // Bottom-right
+        self.render_circle_arc_outline(x + radius, y + height - radius, radius, thickness, color, 90.0, 180.0)?; // Bottom-left
+        
+        Ok(())
+    }
+    
+    /// Render a filled circle segment (for rounded corners)
+    unsafe fn render_circle_segment(
+        &mut self,
+        center_x: f32, 
+        center_y: f32, 
+        radius: f32, 
+        color: (f32, f32, f32),
+        start_angle: f32, 
+        end_angle: f32
+    ) -> Result<(), String> {
+        let shader_program = self.get_or_create_rectangle_shader()?;
+        gl::UseProgram(shader_program);
+        
+        // Set up projection matrix
+        let projection_matrix = self.create_2d_projection_matrix();
+        let projection_uniform = gl::GetUniformLocation(shader_program, b"projection\0".as_ptr());
+        gl::UniformMatrix4fv(projection_uniform, 1, gl::FALSE, projection_matrix.as_ptr());
+        
+        // Set color uniform
+        let color_uniform = gl::GetUniformLocation(shader_program, b"color\0".as_ptr());
+        gl::Uniform3f(color_uniform, color.0, color.1, color.2);
+        
+        // Generate vertices for circle segment
+        let segments = 16; // Number of triangular segments for smooth curve
+        let mut vertices = Vec::with_capacity((segments + 2) * 2); // Center + arc points
+        
+        // Add center point
+        vertices.push(center_x);
+        vertices.push(center_y);
+        
+        // Add arc points
+        let angle_step = (end_angle - start_angle) / segments as f32;
+        for i in 0..=segments {
+            let angle = (start_angle + i as f32 * angle_step).to_radians();
+            vertices.push(center_x + radius * angle.cos());
+            vertices.push(center_y + radius * angle.sin());
+        }
+        
+        // Create and bind VAO/VBO
+        let mut vao = 0u32;
+        let mut vbo = 0u32;
+        gl::GenVertexArrays(1, &mut vao);
+        gl::GenBuffers(1, &mut vbo);
+        
+        gl::BindVertexArray(vao);
+        gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+        
+        // Upload vertex data
+        gl::BufferData(
+            gl::ARRAY_BUFFER,
+            (vertices.len() * std::mem::size_of::<f32>()) as isize,
+            vertices.as_ptr() as *const std::ffi::c_void,
+            gl::STATIC_DRAW,
+        );
+        
+        // Set up vertex attributes
+        let position_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr()) as u32;
+        gl::VertexAttribPointer(position_attr, 2, gl::FLOAT, gl::FALSE, 0, std::ptr::null());
+        gl::EnableVertexAttribArray(position_attr);
+        
+        // Render as triangle fan
+        gl::DrawArrays(gl::TRIANGLE_FAN, 0, vertices.len() as i32 / 2);
+        
+        // Clean up
+        gl::DeleteBuffers(1, &vbo);
+        gl::DeleteVertexArrays(1, &vao);
+        
+        Ok(())
+    }
+    
+    /// Render a circle arc outline (for rounded corner borders)
+    unsafe fn render_circle_arc_outline(
+        &mut self,
+        center_x: f32, 
+        center_y: f32, 
+        radius: f32, 
+        thickness: f32,
+        color: (f32, f32, f32),
+        start_angle: f32, 
+        end_angle: f32
+    ) -> Result<(), String> {
+        // For thick arcs, we render the difference between outer and inner arcs
+        let outer_radius = radius + thickness / 2.0;
+        let inner_radius = radius - thickness / 2.0;
+        
+        let shader_program = self.get_or_create_rectangle_shader()?;
+        gl::UseProgram(shader_program);
+        
+        // Set up projection matrix
+        let projection_matrix = self.create_2d_projection_matrix();
+        let projection_uniform = gl::GetUniformLocation(shader_program, b"projection\0".as_ptr());
+        gl::UniformMatrix4fv(projection_uniform, 1, gl::FALSE, projection_matrix.as_ptr());
+        
+        // Set color uniform
+        let color_uniform = gl::GetUniformLocation(shader_program, b"color\0".as_ptr());
+        gl::Uniform3f(color_uniform, color.0, color.1, color.2);
+        
+        // Generate vertices for arc ring (triangle strip)
+        let segments = 16;
+        let mut vertices = Vec::with_capacity(segments * 4 * 2); // 2 points per segment * 2 coords
+        
+        let angle_step = (end_angle - start_angle) / (segments - 1) as f32;
+        for i in 0..segments {
+            let angle = (start_angle + i as f32 * angle_step).to_radians();
+            let cos_a = angle.cos();
+            let sin_a = angle.sin();
+            
+            // Inner point
+            vertices.push(center_x + inner_radius * cos_a);
+            vertices.push(center_y + inner_radius * sin_a);
+            
+            // Outer point
+            vertices.push(center_x + outer_radius * cos_a);
+            vertices.push(center_y + outer_radius * sin_a);
+        }
+        
+        // Create and bind VAO/VBO
+        let mut vao = 0u32;
+        let mut vbo = 0u32;
+        gl::GenVertexArrays(1, &mut vao);
+        gl::GenBuffers(1, &mut vbo);
+        
+        gl::BindVertexArray(vao);
+        gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+        
+        // Upload vertex data
+        gl::BufferData(
+            gl::ARRAY_BUFFER,
+            (vertices.len() * std::mem::size_of::<f32>()) as isize,
+            vertices.as_ptr() as *const std::ffi::c_void,
+            gl::STATIC_DRAW,
+        );
+        
+        // Set up vertex attributes
+        let position_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr()) as u32;
+        gl::VertexAttribPointer(position_attr, 2, gl::FLOAT, gl::FALSE, 0, std::ptr::null());
+        gl::EnableVertexAttribArray(position_attr);
+        
+        // Render as triangle strip
+        gl::DrawArrays(gl::TRIANGLE_STRIP, 0, vertices.len() as i32 / 2);
+        
+        // Clean up
+        gl::DeleteBuffers(1, &vbo);
+        gl::DeleteVertexArrays(1, &vao);
+        
+        Ok(())
+    }
+    
+    /// Get or create the rectangle shader program (cached)
+    unsafe fn get_or_create_rectangle_shader(&mut self) -> Result<u32, String> {
+        if let Some(shader) = self.rectangle_shader {
+            Ok(shader)
+        } else {
+            let shader = self.create_rectangle_shader_program()?;
+            self.rectangle_shader = Some(shader);
+            print!("Rectangle shader program cached for reuse\r\n");
+            Ok(shader)
+        }
+    }
+    
+    /// Create shader program for rectangle rendering
+    unsafe fn create_rectangle_shader_program(&self) -> Result<u32, String> {
+        let vertex_shader_source = b"
+attribute vec2 position;
+uniform mat4 projection;
+
+void main() {
+    gl_Position = projection * vec4(position, 0.0, 1.0);
+}
+\0";
+        
+        let fragment_shader_source = b"
+precision mediump float;
+uniform vec3 color;
+
+void main() {
+    gl_FragColor = vec4(color, 1.0);
+}
+\0";
+        
+        // Create and compile vertex shader
+        let vertex_shader = gl::CreateShader(gl::VERTEX_SHADER);
+        if vertex_shader == 0 {
+            return Err("Failed to create rectangle vertex shader".to_string());
+        }
+        
+        let vertex_src_ptr = vertex_shader_source.as_ptr();
+        gl::ShaderSource(vertex_shader, 1, &vertex_src_ptr, std::ptr::null());
+        gl::CompileShader(vertex_shader);
+        
+        let mut compile_status = 0i32;
+        gl::GetShaderiv(vertex_shader, gl::COMPILE_STATUS, &mut compile_status);
+        if compile_status == 0 {
+            gl::DeleteShader(vertex_shader);
+            return Err("Rectangle vertex shader compilation failed".to_string());
+        }
+        
+        // Create and compile fragment shader
+        let fragment_shader = gl::CreateShader(gl::FRAGMENT_SHADER);
+        if fragment_shader == 0 {
+            gl::DeleteShader(vertex_shader);
+            return Err("Failed to create rectangle fragment shader".to_string());
+        }
+        
+        let fragment_src_ptr = fragment_shader_source.as_ptr();
+        gl::ShaderSource(fragment_shader, 1, &fragment_src_ptr, std::ptr::null());
+        gl::CompileShader(fragment_shader);
+        
+        let mut compile_status = 0i32;
+        gl::GetShaderiv(fragment_shader, gl::COMPILE_STATUS, &mut compile_status);
+        if compile_status == 0 {
+            gl::DeleteShader(vertex_shader);
+            gl::DeleteShader(fragment_shader);
+            return Err("Rectangle fragment shader compilation failed".to_string());
+        }
+        
+        // Create and link shader program
+        let program = gl::CreateProgram();
+        if program == 0 {
+            gl::DeleteShader(vertex_shader);
+            gl::DeleteShader(fragment_shader);
+            return Err("Failed to create rectangle shader program".to_string());
+        }
+        
+        gl::AttachShader(program, vertex_shader);
+        gl::AttachShader(program, fragment_shader);
+        gl::LinkProgram(program);
+        
+        let mut link_status = 0i32;
+        gl::GetProgramiv(program, gl::LINK_STATUS, &mut link_status);
+        if link_status == 0 {
+            gl::DeleteShader(vertex_shader);
+            gl::DeleteShader(fragment_shader);
+            gl::DeleteProgram(program);
+            return Err("Rectangle shader program linking failed".to_string());
+        }
+        
+        // Clean up individual shaders (they're now linked to the program)
+        gl::DeleteShader(vertex_shader);
+        gl::DeleteShader(fragment_shader);
+        
+        Ok(program)
+    }
+    
+    /// Create 2D projection matrix for screen coordinates
+    fn create_2d_projection_matrix(&self) -> [f32; 16] {
+        // Create orthographic projection matrix for 2D rendering
+        // Maps screen coordinates (0,0) to (width, height) to NDC (-1,-1) to (1,1)
+        [
+            2.0 / self.width as f32, 0.0,                      0.0, 0.0,
+            0.0,                     -2.0 / self.height as f32, 0.0, 0.0,  // Negative Y to flip coordinates
+            0.0,                     0.0,                      -1.0, 0.0,
+            -1.0,                    1.0,                       0.0, 1.0,
+        ]
+    }
+    
+    // =============================================================================
+    // CONVENIENCE RECTANGLE RENDERING METHODS
+    // =============================================================================
+    
+    /// Render a simple filled rectangle (convenience method)
+    pub fn fill_rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: (f32, f32, f32)) -> Result<(), String> {
+        self.render_rectangle(x, y, width, height, color, true, 0.0, 0.0)
+    }
+    
+    /// Render a simple rectangle outline (convenience method)
+    pub fn stroke_rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: (f32, f32, f32), thickness: f32) -> Result<(), String> {
+        self.render_rectangle(x, y, width, height, color, false, thickness, 0.0)
+    }
+    
+    /// Render a filled rounded rectangle (convenience method)
+    pub fn fill_rounded_rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: (f32, f32, f32), corner_radius: f32) -> Result<(), String> {
+        self.render_rectangle(x, y, width, height, color, true, 0.0, corner_radius)
+    }
+    
+    /// Render a rounded rectangle outline (convenience method)
+    pub fn stroke_rounded_rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: (f32, f32, f32), thickness: f32, corner_radius: f32) -> Result<(), String> {
+        self.render_rectangle(x, y, width, height, color, false, thickness, corner_radius)
+    }
+    
+    /// Render a rectangle using UI style colors (convenience method for dashboard components)
+    pub fn render_ui_rect(&mut self, x: f32, y: f32, width: f32, height: f32, style: &str, filled: bool, thickness: f32) -> Result<(), String> {
+        let color = match style {
+            "primary" => self.ui_style.get_color("global_brand_primary_color", (1.0, 0.0, 0.0)),
+            "secondary" => self.ui_style.get_color("global_brand_secondary_color", (0.5, 0.5, 0.5)), 
+            "accent" => self.ui_style.get_color("global_brand_accent_color", (1.0, 0.4, 0.0)),
+            "warning" => self.ui_style.get_color("text_warning_color", (1.0, 0.67, 0.0)),
+            "error" | "danger" => self.ui_style.get_color("text_error_color", (1.0, 0.0, 0.0)),
+            "critical" => self.ui_style.get_color("indicator_critical_color", (1.0, 0.0, 0.0)),
+            "success" | "normal" => self.ui_style.get_color("indicator_normal_color", (0.0, 1.0, 0.0)),
+            "background" => self.ui_style.get_color("global_background_color", (0.0, 0.0, 0.0)),
+            "text_primary" => self.ui_style.get_color("text_primary_color", (1.0, 1.0, 1.0)),
+            "text_secondary" => self.ui_style.get_color("text_secondary_color", (0.75, 0.75, 0.75)),
+            "gauge_border" => self.ui_style.get_color("gauge_border_color", (1.0, 1.0, 1.0)),
+            "bar_fill" => self.ui_style.get_color("bar_fill_color", (0.0, 1.0, 0.0)),
+            _ => (1.0, 1.0, 1.0), // Default to white
+        };
+        
+        self.render_rectangle(x, y, width, height, color, filled, thickness, 0.0)
+    }
+    
+    /// Cleanup rectangle shader when context is destroyed
+    unsafe fn cleanup_rectangle_shader(&mut self) {
+        if let Some(shader) = self.rectangle_shader.take() {
+            gl::DeleteProgram(shader);
+            print!("Rectangle shader program cleaned up\r\n");
+        }
+    }
+
+    // =============================================================================
     // NEW FONT MANAGEMENT SYSTEM
     // =============================================================================
     
@@ -1105,8 +1615,9 @@ impl Drop for GraphicsContext {
     fn drop(&mut self) {
         unsafe {
             if self.initialized {
-                // Clean up text renderer FIRST while OpenGL context is still valid
+                // Clean up shaders FIRST while OpenGL context is still valid
                 self.cleanup_text_renderer();
+                self.cleanup_rectangle_shader();
                 
                 // Restore previous CRTC configuration
                 if !self.previous_crtc.is_null() {
