@@ -217,7 +217,7 @@ impl UIStyleValue {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UIStyle {
-    values: HashMap<String, UIStyleValue>,
+    values: HashMap<String, HashMap<String, UIStyleValue>>,
 }
 
 impl UIStyle {
@@ -230,13 +230,27 @@ impl UIStyle {
     }
     
     /// Load style from JSON string
+    /// Supports both old flat format and new grouped format
     pub fn from_json(json_str: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let values: HashMap<String, UIStyleValue> = serde_json::from_str(json_str)?;
+        // Try to parse as new grouped format first
+        if let Ok(grouped_values) = serde_json::from_str::<HashMap<String, HashMap<String, UIStyleValue>>>(json_str) {
+            let mut style = UIStyle { values: grouped_values };
+            // Ensure we have a default group
+            if !style.values.contains_key("default") {
+                style.values.insert("default".to_string(), HashMap::new());
+                style.load_defaults();
+            }
+            return Ok(style);
+        }
+        
+        // Fall back to old flat format for backward compatibility
+        let flat_values: HashMap<String, UIStyleValue> = serde_json::from_str(json_str)?;
         let mut style = UIStyle::new(); // Start with defaults
         
-        // Override defaults with loaded values
-        for (key, value) in values {
-            style.values.insert(key, value);
+        // Put flat values into "default" group
+        let default_group = style.values.get_mut("default").unwrap();
+        for (key, value) in flat_values {
+            default_group.insert(key, value);
         }
         
         Ok(style)
@@ -260,19 +274,51 @@ impl UIStyle {
         Ok(())
     }
     
-    /// Get a style value
+    /// Get a style value from specific group, with fallback to "default" group
     pub fn get(&self, key: &str) -> Option<&UIStyleValue> {
-        self.values.get(key)
+        self.get_with_group(key, None)
     }
     
-    /// Set a style value
+    /// Get a style value with optional group parameter
+    pub fn get_with_group(&self, key: &str, group: Option<&str>) -> Option<&UIStyleValue> {
+        // Try specific group first if provided
+        if let Some(group_name) = group {
+            if let Some(group_values) = self.values.get(group_name) {
+                if let Some(value) = group_values.get(key) {
+                    return Some(value);
+                }
+            }
+        }
+        
+        // Fall back to default group
+        self.values.get("default")?.get(key)
+    }
+    
+    /// Set a style value in specific group (defaults to "default" group)
     pub fn set(&mut self, key: &str, value: UIStyleValue) {
-        self.values.insert(key.to_string(), value);
+        self.set_with_group(key, value, None);
+    }
+    
+    /// Set a style value with optional group parameter
+    pub fn set_with_group(&mut self, key: &str, value: UIStyleValue, group: Option<&str>) {
+        let group_name = group.unwrap_or("default");
+        
+        // Ensure group exists
+        if !self.values.contains_key(group_name) {
+            self.values.insert(group_name.to_string(), HashMap::new());
+        }
+        
+        self.values.get_mut(group_name).unwrap().insert(key.to_string(), value);
     }
     
     /// Get color value with brightness applied
     pub fn get_color(&self, key: &str, default: (f32, f32, f32)) -> (f32, f32, f32) {
-        match self.get(key) {
+        self.get_color_with_group(key, default, None)
+    }
+    
+    /// Get color value with optional group parameter and brightness applied
+    pub fn get_color_with_group(&self, key: &str, default: (f32, f32, f32), group: Option<&str>) -> (f32, f32, f32) {
+        match self.get_with_group(key, group) {
             Some(value) => match value.as_color() {
                 Ok((r, g, b)) => {
                     // Apply global brightness
@@ -295,13 +341,23 @@ impl UIStyle {
     
     /// Get color value with alpha and brightness applied
     pub fn get_color_rgba(&self, key: &str, default: (f32, f32, f32, f32)) -> (f32, f32, f32, f32) {
-        let (r, g, b) = self.get_color(key, (default.0, default.1, default.2));
+        self.get_color_rgba_with_group(key, default, None)
+    }
+    
+    /// Get color value with alpha, optional group parameter, and brightness applied
+    pub fn get_color_rgba_with_group(&self, key: &str, default: (f32, f32, f32, f32), group: Option<&str>) -> (f32, f32, f32, f32) {
+        let (r, g, b) = self.get_color_with_group(key, (default.0, default.1, default.2), group);
         (r, g, b, default.3)
     }
     
     /// Get float value with fallback
     pub fn get_float(&self, key: &str, default: f32) -> f32 {
-        match self.get(key) {
+        self.get_float_with_group(key, default, None)
+    }
+    
+    /// Get float value with optional group parameter and fallback
+    pub fn get_float_with_group(&self, key: &str, default: f32, group: Option<&str>) -> f32 {
+        match self.get_with_group(key, group) {
             Some(value) => match value.as_float() {
                 Ok(val) => val,
                 Err(_) => {
@@ -318,7 +374,12 @@ impl UIStyle {
     
     /// Get integer value with fallback
     pub fn get_integer(&self, key: &str, default: u32) -> u32 {
-        match self.get(key) {
+        self.get_integer_with_group(key, default, None)
+    }
+    
+    /// Get integer value with optional group parameter and fallback
+    pub fn get_integer_with_group(&self, key: &str, default: u32, group: Option<&str>) -> u32 {
+        match self.get_with_group(key, group) {
             Some(value) => match value.as_integer() {
                 Ok(val) => val,
                 Err(_) => {
@@ -335,7 +396,12 @@ impl UIStyle {
     
     /// Get boolean value with fallback
     pub fn get_bool(&self, key: &str, default: bool) -> bool {
-        match self.get(key) {
+        self.get_bool_with_group(key, default, None)
+    }
+    
+    /// Get boolean value with optional group parameter and fallback
+    pub fn get_bool_with_group(&self, key: &str, default: bool, group: Option<&str>) -> bool {
+        match self.get_with_group(key, group) {
             Some(value) => match value.as_bool() {
                 Ok(val) => val,
                 Err(_) => {
@@ -352,7 +418,12 @@ impl UIStyle {
     
     /// Get string value with fallback
     pub fn get_string(&self, key: &str, default: &str) -> String {
-        match self.get(key) {
+        self.get_string_with_group(key, default, None)
+    }
+    
+    /// Get string value with optional group parameter and fallback
+    pub fn get_string_with_group(&self, key: &str, default: &str, group: Option<&str>) -> String {
+        match self.get_with_group(key, group) {
             Some(value) => match value.as_string() {
                 Ok(val) => val.to_string(),
                 Err(_) => {
@@ -404,6 +475,9 @@ impl UIStyle {
     
     /// Load default style values
     fn load_defaults(&mut self) {
+        // Ensure default group exists
+        self.values.insert("default".to_string(), HashMap::new());
+        
         // Global defaults
         self.set(GLOBAL_BRIGHTNESS, UIStyleValue::Float(1.0));
         self.set(GLOBAL_CONTRAST, UIStyleValue::Float(1.0));
@@ -732,5 +806,101 @@ mod tests {
         // Test string warning
         let string_val = style.get_string("non_existent_string", "default");
         assert_eq!(string_val, "default");
+    }
+}
+
+// =============================================================================
+// GROUPED STYLE TESTS
+// =============================================================================
+
+#[cfg(test)]
+mod grouped_style_tests {
+    use super::*;
+    
+    #[test]
+    fn test_grouped_style_basic() {
+        let mut style = UIStyle::new();
+        
+        // Test setting values in different groups
+        style.set_with_group("needle_color", UIStyleValue::Color("#FF0000".to_string()), Some("default"));
+        style.set_with_group("needle_color", UIStyleValue::Color("#00FF00".to_string()), Some("fuel_level"));
+        style.set_with_group("needle_color", UIStyleValue::Color("#0000FF".to_string()), Some("engine_temp"));
+        
+        // Test getting with fallback
+        assert_eq!(style.get_with_group("needle_color", Some("fuel_level")).unwrap().as_color().unwrap(), (0.0, 1.0, 0.0));
+        assert_eq!(style.get_with_group("needle_color", Some("engine_temp")).unwrap().as_color().unwrap(), (0.0, 0.0, 1.0));
+        assert_eq!(style.get_with_group("needle_color", Some("nonexistent")).unwrap().as_color().unwrap(), (1.0, 0.0, 0.0)); // fallback to default
+        
+        // Test default getter
+        assert_eq!(style.get("needle_color").unwrap().as_color().unwrap(), (1.0, 0.0, 0.0));
+    }
+    
+    #[test]
+    fn test_grouped_json_serialization() {
+        let json_str = "{\"default\":{\"needle_color\":{\"Color\":\"#FF0000\"},\"gauge_radius\":{\"Float\":80.0}},\"fuel_level\":{\"needle_color\":{\"Color\":\"#00FF00\"}}}";
+        
+        let style = UIStyle::from_json(json_str).unwrap();
+        
+        // Test that groups are loaded correctly
+        assert_eq!(style.get_with_group("needle_color", Some("default")).unwrap().as_color().unwrap(), (1.0, 0.0, 0.0));
+        assert_eq!(style.get_with_group("needle_color", Some("fuel_level")).unwrap().as_color().unwrap(), (0.0, 1.0, 0.0));
+        assert_eq!(style.get_with_group("gauge_radius", Some("fuel_level")).unwrap().as_float().unwrap(), 80.0); // fallback to default
+    }
+    
+    #[test]
+    fn test_backward_compatibility_flat_json() {
+        let json_str = "{\"needle_color\":{\"Color\":\"#FF0000\"},\"gauge_radius\":{\"Float\":80.0}}";
+        
+        let style = UIStyle::from_json(json_str).unwrap();
+        
+        // Old flat format should work and values should go into "default" group
+        assert_eq!(style.get("needle_color").unwrap().as_color().unwrap(), (1.0, 0.0, 0.0));
+        assert_eq!(style.get("gauge_radius").unwrap().as_float().unwrap(), 80.0);
+    }
+
+    #[test]
+    fn test_example_grouped_json_file() {
+        // Test that our example JSON file format works correctly
+        let json_str = "{\"default\":{\"needle_color\":{\"Color\":\"#FF0000\"},\"gauge_radius\":{\"Float\":80.0}},\"speedometer\":{\"needle_color\":{\"Color\":\"#00FF00\"},\"needle_width\":{\"Float\":3.5}}}";
+        
+        let style = UIStyle::from_json(json_str).unwrap();
+        
+        // Test default group values
+        assert_eq!(style.get_with_group("needle_color", Some("default")).unwrap().as_color().unwrap(), (1.0, 0.0, 0.0));
+        assert_eq!(style.get_with_group("gauge_radius", Some("default")).unwrap().as_float().unwrap(), 80.0);
+        
+        // Test speedometer group values
+        assert_eq!(style.get_with_group("needle_color", Some("speedometer")).unwrap().as_color().unwrap(), (0.0, 1.0, 0.0));
+        assert_eq!(style.get_with_group("needle_width", Some("speedometer")).unwrap().as_float().unwrap(), 3.5);
+        
+        // Test fallback from speedometer to default
+        assert_eq!(style.get_with_group("gauge_radius", Some("speedometer")).unwrap().as_float().unwrap(), 80.0);
+        
+        // Test convenience methods work with groups
+        let green = style.get_color_with_group("needle_color", (1.0, 1.0, 1.0), Some("speedometer"));
+        assert_eq!(green, (0.0, 1.0, 0.0));
+        
+        let default_red = style.get_color("needle_color", (1.0, 1.0, 1.0));
+        assert_eq!(default_red, (1.0, 0.0, 0.0));
+    }
+    
+    #[test]
+    fn test_convenience_methods_with_groups() {
+        let mut style = UIStyle::new();
+        
+        style.set_with_group("needle_color", UIStyleValue::Color("#FF6600".to_string()), Some("engine_temp"));
+        style.set_with_group("needle_width", UIStyleValue::Float(5.0), Some("engine_temp"));
+        
+        // Test convenience methods with groups
+        let color = style.get_color_with_group("needle_color", (1.0, 0.0, 0.0), Some("engine_temp"));
+        assert_eq!(color.0, 1.0); // Red component should be 1.0 from #FF6600
+        assert!(color.1 > 0.3 && color.1 < 0.5); // Green component should be around 0.4
+        
+        let width = style.get_float_with_group("needle_width", 2.0, Some("engine_temp"));
+        assert_eq!(width, 5.0);
+        
+        // Test fallback when group doesn't have the value
+        let fallback_width = style.get_float_with_group("nonexistent_key", 2.0, Some("engine_temp"));
+        assert_eq!(fallback_width, 2.0);
     }
 }

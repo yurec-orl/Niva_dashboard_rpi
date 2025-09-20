@@ -331,7 +331,7 @@ impl DigitalSensor for SpeedSensor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hardware::sensor_value::{ValueData, ValueConstraints, ValueMetadata};
+    use crate::hardware::sensor_value::{ValueData, ValueConstraints};
 
     #[test]
     fn test_generic_digital_sensor_creation() {

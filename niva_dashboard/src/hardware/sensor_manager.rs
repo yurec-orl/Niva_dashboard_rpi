@@ -206,7 +206,8 @@ mod tests {
     use crate::hardware::digital_signal_processing::DigitalSignalDebouncer;
     use crate::hardware::analog_signal_processing::AnalogSignalProcessorMovingAverage;
     use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor};
-    use crate::hardware::sensor_value::{ValueConstraints, ValueMetadata};
+    use crate::hardware::sensor_value::ValueConstraints;
+    use rppal::gpio::Level;
     use std::time::Duration;
 
     #[test]
