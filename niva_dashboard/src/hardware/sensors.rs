@@ -233,22 +233,20 @@ impl SpeedSensor {
         // Width: 235mm, Aspect ratio: 75%, Rim: 15 inches
         // Diameter = 15" (381mm) + 2 * (235mm * 0.75) = 733.5mm
         // Circumference = π * 733.5mm = 2.304 meters
+        let metadata = ValueMetadata::new("км/ч", "СКОР", "speed_sensor");
+
         SpeedSensor {
-            speed: SensorValue::empty(),
+            speed: SensorValue::analog(0.0, 0.0, 180.0, &metadata.unit, &metadata.label, &metadata.sensor_id),
             pulse_counter: DigitalSignalProcessorPulsePerSecond::new(),
             pulses_per_revolution: 6, // 6 pulses per wheel rotation
             wheel_circumference_m: 2.304, // meters
             constraints: ValueConstraints::analog(0.0, 180.0),
-            metadata: ValueMetadata {
-                unit: "км/ч".to_string(),
-                label: "СКОР".to_string(),
-                sensor_id: "speed_sensor".to_string(),
-            },
+            metadata,
         }
     }
     
     /// Process a digital input pulse and return current speed
-    pub fn process_pulse(&mut self, pulse: Level) -> f32 {
+    fn process_pulse(&mut self, pulse: Level) -> f32 {
         // Process the pulse through the counter (using DigitalSignalProcessor trait)
         let _ = self.pulse_counter.read(pulse);
         
@@ -262,14 +260,8 @@ impl SpeedSensor {
         self.speed.as_f32()
     }
     
-    /// Get current speed without processing new pulses
-    pub fn current_speed_kmh(&mut self) -> f32 {
-        let pulses_per_second = self.pulse_counter.pulses_per_second();
-        self.calculate_speed_kmh(pulses_per_second)
-    }
-    
     /// Calculate speed in km/h from pulses per second
-    pub fn calculate_speed_kmh(&self, pulses_per_second: f32) -> f32 {
+    fn calculate_speed_kmh(&self, pulses_per_second: f32) -> f32 {
         if pulses_per_second <= 0.0 {
             return 0.0;
         }
@@ -534,8 +526,8 @@ mod tests {
         let mut sensor = SpeedSensor::new();
         
         // Test initial state
-        assert_eq!(sensor.current_speed_kmh(), 0.0);
-        
+        assert_eq!(sensor.value().unwrap().as_f32(), 0.0);
+
         // Simulate pulse sequence (alternating High/Low)
         let mut speed = 0.0;
         for i in 0..12 { // 12 pulses = 2 full revolutions
@@ -563,6 +555,12 @@ mod tests {
         // Test value method
         let value_result = Sensor::value(&sensor);
         assert!(value_result.is_ok());
+        // Check if value type is Analog
+        if let ValueData::Analog(speed) = &value_result.unwrap().value {
+            assert!(*speed >= 0.0 && *speed <= 180.0);
+        } else {
+            panic!("Expected analog speed value");
+        }
     }
 
     #[test]

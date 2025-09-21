@@ -225,10 +225,10 @@ impl MainPage {
         indicators.push(Box::new(DigitalSegmentedIndicator::integer(3).with_inactive_segments(true))); // Speed
         // Centered on screen
         indicator_bounds.push(IndicatorBounds::new(
-            (screen_width - 120.0) / 2.0,
-            screen_height - 80.0,
-            120.0,
-            60.0
+            (screen_width - 200.0) / 2.0,
+            (screen_height - 80.0) / 2.0,
+            200.0,
+            80.0
         ));
 
         IndicatorSet { indicators, inputs, indicator_bounds }
@@ -365,6 +365,7 @@ impl Page for MainPage {
         
         for (i, indicator) in indicators.enumerate() {
             if let Some(sensor_value) = sensor_values.get(i) {
+                //print!("Rendering indicator {} for sensor {:?} with value {:?}\r\n", indicator.indicator_type(), sensor_value.metadata.sensor_id, sensor_value.value);
                 if let Some(bounds) = indicator_bounds.get(i) {
                     indicator.render(sensor_value, bounds.clone(), ui_style, context)?;
                 }

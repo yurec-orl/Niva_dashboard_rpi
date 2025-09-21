@@ -11,7 +11,7 @@ use crate::hardware::sensor_manager::{SensorManager, SensorDigitalInputChain, Se
 use crate::hardware::hw_providers::*;
 use crate::hardware::digital_signal_processing::DigitalSignalDebouncer;
 use crate::hardware::analog_signal_processing::AnalogSignalProcessorMovingAverage;
-use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor};
+use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor, SpeedSensor};
 use crate::hardware::sensor_value::ValueConstraints;
 use rppal::gpio::Level;
 use std::env;
@@ -132,10 +132,9 @@ fn setup_sensors() -> SensorManager {
 
     // Speed sensor (active high, pulse-based)
     let speed_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HWInput::HwSpeed)),
+        Box::new(TestPulseDataProvider::new(HWInput::HwSpeed)),
         vec![Box::new(DigitalSignalDebouncer::new(3, std::time::Duration::from_millis(10)))],
-        Box::new(GenericDigitalSensor::new("HwSpeed".to_string(), "СКОРОСТЬ".to_string(),
-                                           Level::High, ValueConstraints::digital_default())),
+        Box::new(SpeedSensor::new()),
     );
     mgr.add_digital_sensor_chain(speed_chain);
 

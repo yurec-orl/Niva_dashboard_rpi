@@ -182,12 +182,14 @@ impl SensorManager {
         // Read digital sensors
         for input in digital_inputs {
             let value = self.read_digital_sensor(input)?;
+            //print!("Read digital sensor {:?}: {:?}\r\n", input, value);
             self.sensor_values.push((input, value));
         }
 
         // Read analog sensors  
         for input in analog_inputs {
             let value = self.read_analog_sensor(input)?;
+            //print!("Read analog sensor {:?}: {:?}\r\n", input, value);
             self.sensor_values.push((input, value));
         }
 
