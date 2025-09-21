@@ -8,6 +8,8 @@ use crate::hardware::sensor_value::SensorValue;
 use crate::indicators::{Indicator, IndicatorBounds};
 use crate::indicators::text_indicator::{TextIndicator, TextAlignment};
 use crate::indicators::gauge_indicator::GaugeIndicator;
+use crate::indicators::vertical_bar_indicator::VerticalBarIndicator;
+use crate::indicators::digital_segmented_indicator::DigitalSegmentedIndicator;
 use crate::page_framework::events::UIEvent;
 
 struct IndicatorSet {
@@ -102,7 +104,7 @@ impl MainPage {
         IndicatorSet { indicators, inputs, indicator_bounds }
     }
 
-    fn setup_indicators(context: &GraphicsContext) -> IndicatorSet {
+    fn setup_gauge_indicators(context: &GraphicsContext) -> IndicatorSet {
         let mut indicators: Vec<Box<dyn Indicator>> = Vec::new();
         let inputs: Vec<HWInput> = vec![
             HWInput::HwSpeed,
@@ -165,15 +167,83 @@ impl MainPage {
         IndicatorSet { indicators, inputs, indicator_bounds }
     }
 
+    fn setup_bar_indicators(context: &GraphicsContext) -> IndicatorSet {
+        let mut indicators: Vec<Box<dyn Indicator>> = Vec::new();
+        let inputs: Vec<HWInput> = vec![
+            HWInput::HwFuelLvl,
+            HWInput::HwOilPress,
+            HWInput::HwEngineCoolantTemp,
+            HWInput::Hw12v,
+            HWInput::HwSpeed,
+        ];
+        let mut indicator_bounds: Vec<IndicatorBounds> = Vec::new();
+
+        // Layout parameters
+        let screen_width = context.width as f32;
+        let screen_height = context.height as f32;
+        let button_margin = 60.0; // Space for buttons on left/right
+        let top_margin = 80.0;
+        let available_width = screen_width - 2.0 * button_margin;
+        let available_height = screen_height - top_margin - 40.0;
+
+        // Arrange vertical bar indicators in a row
+        let bar_width = 52.0;
+        let bar_height = 200.0;
+        
+        indicators.push(Box::new(VerticalBarIndicator::new(10).with_segment_gap(4.0))); // Fuel Level
+        indicator_bounds.push(IndicatorBounds::new(
+            button_margin + bar_width,
+            top_margin + (available_height - bar_height) / 2.0,
+            bar_width,
+            bar_height
+        ));
+
+        indicators.push(Box::new(VerticalBarIndicator::new(10).with_segment_gap(4.0))); // Oil Pressure
+        indicator_bounds.push(IndicatorBounds::new(
+            button_margin + bar_width * 2.0 + 40.0,
+            top_margin + (available_height - bar_height) / 2.0,
+            bar_width,
+            bar_height
+        ));
+
+        indicators.push(Box::new(VerticalBarIndicator::new(10).with_segment_gap(4.0))); // Engine Coolant Temp
+        indicator_bounds.push(IndicatorBounds::new(
+            available_width - bar_width * 2.0 - 40.0,
+            top_margin + (available_height - bar_height) / 2.0,
+            bar_width,
+            bar_height
+        ));
+
+        indicators.push(Box::new(VerticalBarIndicator::new(10).with_segment_gap(4.0))); // Battery Charge
+        indicator_bounds.push(IndicatorBounds::new(
+            available_width - bar_width,
+            top_margin + (available_height - bar_height) / 2.0,
+            bar_width,
+            bar_height
+        ));
+
+        indicators.push(Box::new(DigitalSegmentedIndicator::integer(3).with_inactive_segments(true))); // Speed
+        // Centered on screen
+        indicator_bounds.push(IndicatorBounds::new(
+            (screen_width - 120.0) / 2.0,
+            screen_height - 80.0,
+            120.0,
+            60.0
+        ));
+
+        IndicatorSet { indicators, inputs, indicator_bounds }
+    }
+
     pub fn new(id: u32, event_sender: EventSender, event_receiver: EventReceiver, context: &GraphicsContext) -> Self {
         let test_indicator_set = Self::setup_test_indicators();
-        let gauge_indicator_set = Self::setup_indicators(context);
+        let gauge_indicator_set = Self::setup_gauge_indicators(context);
+        let bar_indicator_set = Self::setup_bar_indicators(context);
 
         let mut main_page = MainPage {
             base: PageBase::new(id, "Main".to_string()),
             event_sender: event_sender.clone(),
             event_receiver,
-            indicator_sets: vec![gauge_indicator_set, test_indicator_set],
+            indicator_sets: vec![bar_indicator_set, gauge_indicator_set, test_indicator_set],
             current_indicator_set: 0,
         };
 
@@ -262,16 +332,6 @@ impl MainPage {
     fn reset_to_first_indicator_set(&mut self) {
         self.current_indicator_set = 0;
         print!("MainPage: Reset to first indicator set\r\n");
-    }
-
-    // Public method to get current indicator set index (for debugging/status)
-    pub fn current_indicator_set(&self) -> usize {
-        self.current_indicator_set
-    }
-
-    // Public method to get total number of indicator sets
-    pub fn indicator_sets_count(&self) -> usize {
-        self.indicator_sets.len()
     }
 }
 

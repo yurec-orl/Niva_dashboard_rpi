@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 pub const DEFAULT_GLOBAL_FONT_PATH: &str = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf";  // Use monospace for more digital look
 pub const DEFAULT_GLOBAL_FONT_SIZE: u32 = 14;
 
-// Digital Display Fonts (for 7-segment style displays)
+// Digital Display Fonts
 pub const DIGITAL_DISPLAY_FONT_PATH: &str = "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/DSEG7ClassicMini-Regular.ttf";
 pub const DIGITAL_DISPLAY_FONT_ITALIC_PATH: &str = "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/DSEG7ClassicMini-Italic.ttf";
 pub const DIGITAL_DISPLAY_14SEG_FONT_PATH: &str = "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/DSEG14ClassicMini-Regular.ttf";
@@ -40,9 +40,6 @@ pub const DIGITAL_DISPLAY_MONO_FONT_PATH: &str = "/usr/share/fonts/truetype/deja
 pub const GLOBAL_BRIGHTNESS: &str = "global_brightness";
 pub const GLOBAL_CONTRAST: &str = "global_contrast";
 pub const GLOBAL_BACKGROUND_COLOR: &str = "global_background_color";
-pub const GLOBAL_BRAND_PRIMARY_COLOR: &str = "global_brand_primary_color";
-pub const GLOBAL_BRAND_SECONDARY_COLOR: &str = "global_brand_secondary_color";
-pub const GLOBAL_BRAND_ACCENT_COLOR: &str = "global_brand_accent_color";
 pub const GLOBAL_FONT_PATH: &str = "global_font_path";
 pub const GLOBAL_FONT_SIZE: &str = "global_font_size";
 
@@ -111,23 +108,22 @@ pub const GAUGE_CRITICAL_ZONE_ENABLED: &str = "gauge_critical_zone_enabled";
 
 // Bar Indicator Style Elements
 pub const BAR_BACKGROUND_COLOR: &str = "bar_background_color";
+pub const BAR_BACKGROUND_ENABLED: &str = "bar_background_enabled";
 pub const BAR_BORDER_COLOR: &str = "bar_border_color";
+pub const BAR_BORDER_ENABLED: &str = "bar_border_enabled";
 pub const BAR_BORDER_WIDTH: &str = "bar_border_width";
 pub const BAR_CORNER_RADIUS: &str = "bar_corner_radius";
-pub const BAR_WIDTH: &str = "bar_width";
-pub const BAR_HEIGHT: &str = "bar_height";
 
-pub const BAR_FILL_COLOR: &str = "bar_fill_color";
-pub const BAR_FILL_GRADIENT_ENABLED: &str = "bar_fill_gradient_enabled";
-pub const BAR_FILL_GRADIENT_START: &str = "bar_fill_gradient_start";
-pub const BAR_FILL_GRADIENT_END: &str = "bar_fill_gradient_end";
+pub const BAR_EMPTY_COLOR: &str = "bar_empty_color";
+pub const BAR_NORMAL_COLOR: &str = "bar_normal_color";
+pub const BAR_WARNING_COLOR: &str = "bar_warning_color";
+pub const BAR_CRITICAL_COLOR: &str = "bar_critical_color";
 
-pub const BAR_SEGMENTS_ENABLED: &str = "bar_segments_enabled";
+pub const BAR_MARKS_COLOR: &str = "bar_marks_color";
+pub const BAR_MARK_LABELS_COLOR: &str = "bar_mark_labels_color";
+
 pub const BAR_SEGMENT_COUNT: &str = "bar_segment_count";
-pub const BAR_SEGMENT_SPACING: &str = "bar_segment_spacing";
-pub const BAR_SEGMENT_NORMAL_COLOR: &str = "bar_segment_normal_color";
-pub const BAR_SEGMENT_WARNING_COLOR: &str = "bar_segment_warning_color";
-pub const BAR_SEGMENT_CRITICAL_COLOR: &str = "bar_segment_critical_color";
+pub const BAR_SEGMENT_GAP: &str = "bar_segment_gap";
 
 // Text Style Elements
 pub const TEXT_PRIMARY_COLOR: &str = "text_primary_color";
@@ -154,9 +150,13 @@ pub const DIGITAL_DISPLAY_FONT_SIZE: &str = "digital_display_font_size";
 pub const DIGITAL_DISPLAY_SCALE: &str = "digital_display_scale";
 pub const DIGITAL_DISPLAY_ACTIVE_COLOR: &str = "digital_display_active_color";
 pub const DIGITAL_DISPLAY_INACTIVE_COLOR: &str = "digital_display_inactive_color";
+pub const DIGITAL_DISPLAY_INACTIVE_COLOR_BLENDING: &str = "digital_display_inactive_color_blending";
 pub const DIGITAL_DISPLAY_BACKGROUND_COLOR: &str = "digital_display_background_color";
-pub const DIGITAL_DISPLAY_GLOW_ENABLED: &str = "digital_display_glow_enabled";
-pub const DIGITAL_DISPLAY_GLOW_COLOR: &str = "digital_display_glow_color";
+pub const DIGITAL_DISPLAY_BACKGROUND_ENABLED: &str = "digital_display_background_enabled";
+pub const DIGITAL_DISPLAY_BORDER_ENABLED: &str = "digital_display_border_enabled";
+pub const DIGITAL_DISPLAY_BORDER_COLOR: &str = "digital_display_border_color";
+pub const DIGITAL_DISPLAY_BORDER_WIDTH: &str = "digital_display_border_width";
+pub const DIGITAL_DISPLAY_BORDER_RADIUS: &str = "digital_display_border_radius";
 
 // Extended Digital Display Fonts (additional variants)
 pub const DIGITAL_DISPLAY_FONT_ITALIC: &str = "digital_display_font_italic";
@@ -508,9 +508,6 @@ impl UIStyle {
         self.set(GLOBAL_BRIGHTNESS, UIStyleValue::Float(1.0));
         self.set(GLOBAL_CONTRAST, UIStyleValue::Float(1.0));
         self.set(GLOBAL_BACKGROUND_COLOR, UIStyleValue::Color("#000000".to_string()));
-        self.set(GLOBAL_BRAND_PRIMARY_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
-        self.set(GLOBAL_BRAND_SECONDARY_COLOR, UIStyleValue::Color("#808080".to_string()));
-        self.set(GLOBAL_BRAND_ACCENT_COLOR, UIStyleValue::Color("#0080FF".to_string()));
         self.set(GLOBAL_FONT_PATH, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
         self.set(GLOBAL_FONT_SIZE, UIStyleValue::Integer(16));
         
@@ -579,23 +576,23 @@ impl UIStyle {
         
         // Bar defaults
         self.set(BAR_BACKGROUND_COLOR, UIStyleValue::Color("#404040".to_string()));
-        self.set(BAR_BORDER_COLOR, UIStyleValue::Color("#808080".to_string()));
-        self.set(BAR_BORDER_WIDTH, UIStyleValue::Float(1.0));
-        self.set(BAR_CORNER_RADIUS, UIStyleValue::Float(4.0));
-        self.set(BAR_WIDTH, UIStyleValue::Float(200.0));
-        self.set(BAR_HEIGHT, UIStyleValue::Float(20.0));
-        self.set(BAR_FILL_COLOR, UIStyleValue::Color("#00FF00".to_string()));
-        self.set(BAR_FILL_GRADIENT_ENABLED, UIStyleValue::Boolean(true));
-        self.set(BAR_FILL_GRADIENT_START, UIStyleValue::Color("#00FF00".to_string()));
-        self.set(BAR_FILL_GRADIENT_END, UIStyleValue::Color("#FFFF00".to_string()));
-        
-        self.set(BAR_SEGMENTS_ENABLED, UIStyleValue::Boolean(false));
+        self.set(BAR_BACKGROUND_ENABLED, UIStyleValue::Boolean(false));
+        self.set(BAR_BORDER_COLOR, UIStyleValue::Color("#FFA500".to_string()));
+        self.set(BAR_BORDER_ENABLED, UIStyleValue::Boolean(true));
+        self.set(BAR_BORDER_WIDTH, UIStyleValue::Float(4.0));
+        self.set(BAR_CORNER_RADIUS, UIStyleValue::Float(8.0));
+
+        self.set(BAR_EMPTY_COLOR, UIStyleValue::Color("#202020".to_string()));
+        self.set(BAR_NORMAL_COLOR, UIStyleValue::Color("#FF7D00".to_string()));
+        self.set(BAR_WARNING_COLOR, UIStyleValue::Color("#FFFF00".to_string()));
+        self.set(BAR_CRITICAL_COLOR, UIStyleValue::Color("#FF0000".to_string()));
+
+        self.set(BAR_MARKS_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
+        self.set(BAR_MARK_LABELS_COLOR, UIStyleValue::Color("#C0C0C0".to_string()));
+
         self.set(BAR_SEGMENT_COUNT, UIStyleValue::Integer(10));
-        self.set(BAR_SEGMENT_SPACING, UIStyleValue::Float(2.0));
-        self.set(BAR_SEGMENT_NORMAL_COLOR, UIStyleValue::Color("#00FF00".to_string()));
-        self.set(BAR_SEGMENT_WARNING_COLOR, UIStyleValue::Color("#FFAA00".to_string()));
-        self.set(BAR_SEGMENT_CRITICAL_COLOR, UIStyleValue::Color("#FF0000".to_string()));
-        
+        self.set(BAR_SEGMENT_GAP, UIStyleValue::Float(2.0));
+
         // Text defaults
         self.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
         self.set(TEXT_SECONDARY_COLOR, UIStyleValue::Color("#C0C0C0".to_string()));
@@ -631,10 +628,14 @@ impl UIStyle {
         self.set(DIGITAL_DISPLAY_SCALE, UIStyleValue::Float(2.0));
         self.set(DIGITAL_DISPLAY_ACTIVE_COLOR, UIStyleValue::Color("#000000".to_string())); // Black active segments
         self.set(DIGITAL_DISPLAY_INACTIVE_COLOR, UIStyleValue::Color("#996600".to_string())); // Dark amber inactive segments
+        self.set(DIGITAL_DISPLAY_INACTIVE_COLOR_BLENDING, UIStyleValue::Float(0.4));
         self.set(DIGITAL_DISPLAY_BACKGROUND_COLOR, UIStyleValue::Color("#FFA500".to_string())); // Amber background
-        self.set(DIGITAL_DISPLAY_GLOW_ENABLED, UIStyleValue::Boolean(false)); // Disabled by default
-        self.set(DIGITAL_DISPLAY_GLOW_COLOR, UIStyleValue::Color("#FFA500".to_string())); // Amber glow
-        
+        self.set(DIGITAL_DISPLAY_BACKGROUND_ENABLED, UIStyleValue::Boolean(true));
+        self.set(DIGITAL_DISPLAY_BORDER_ENABLED, UIStyleValue::Boolean(true));
+        self.set(DIGITAL_DISPLAY_BORDER_COLOR, UIStyleValue::Color("#FFA500".to_string()));
+        self.set(DIGITAL_DISPLAY_BORDER_WIDTH, UIStyleValue::Float(4.0));
+        self.set(DIGITAL_DISPLAY_BORDER_RADIUS, UIStyleValue::Float(10.0));
+
         // Extended digital display font defaults
         self.set(DIGITAL_DISPLAY_FONT_ITALIC, UIStyleValue::String(DIGITAL_DISPLAY_FONT_ITALIC_PATH.to_string()));
         self.set(DIGITAL_DISPLAY_14SEG_FONT, UIStyleValue::String(DIGITAL_DISPLAY_14SEG_FONT_PATH.to_string()));

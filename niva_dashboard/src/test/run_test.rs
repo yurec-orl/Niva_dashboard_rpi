@@ -258,8 +258,7 @@ fn render_time_example(
 ) -> Result<(), String> {
     // Create time indicator with inactive segments for realistic 7-segment look
     let time_indicator = DigitalSegmentedIndicator::integer(4)
-        .with_inactive_segments(true)
-        .with_inactive_intensity(0.95);
+        .with_inactive_segments(true);
     
     // Convert hours to HHMM format (e.g., 10:43 -> 1043)
     let time_as_int = hours * 100 + 43; // Hardcoded minutes for demo
@@ -278,9 +277,6 @@ fn render_time_example(
         width: 208.0,
         height: 80.0,
     };
-    
-    context.render_rectangle(bounds.x, bounds.y, bounds.width, bounds.height,
-        (1.0, 0.49, 0.0), true, 4.0, 10.0)?;
 
     time_indicator.render(&time_value, bounds, ui_style, context)
 }
@@ -293,8 +289,7 @@ fn render_speed_example(
 ) -> Result<(), String> {
     // Use the speedometer preset with inactive segments
     let speed_indicator = DigitalSegmentedIndicator::integer(3)
-        .with_inactive_segments(true)
-        .with_inactive_intensity(0.95);
+        .with_inactive_segments(true);
     
     let speed_value = SensorValue::analog(
         speed_kmh,
@@ -312,9 +307,6 @@ fn render_speed_example(
         height: 80.0,
     };
 
-    context.render_rectangle(bounds.x, bounds.y, bounds.width, bounds.height,
-        (1.0, 0.49, 0.0), true, 4.0, 10.0)?;
-
     speed_indicator.render(&speed_value, bounds, ui_style, context)
 }
 
@@ -326,8 +318,7 @@ fn render_rpm_example(
 ) -> Result<(), String> {
     // Use the tachometer preset with inactive segments
     let rpm_indicator = DigitalSegmentedIndicator::integer(4)
-        .with_inactive_segments(true)
-        .with_inactive_intensity(0.95);
+        .with_inactive_segments(true);
     
     let rpm_value = SensorValue::analog(
         rpm,
@@ -345,9 +336,6 @@ fn render_rpm_example(
         height: 80.0,
     };
     
-    context.render_rectangle(bounds.x, bounds.y, bounds.width, bounds.height,
-        (1.0, 0.49, 0.0), true, 4.0, 10.0)?;
-
     rpm_indicator.render(&rpm_value, bounds, ui_style, context)
 }
 
@@ -359,8 +347,7 @@ fn render_temperature_example(
 ) -> Result<(), String> {
     // Use the temperature preset with inactive segments
     let temp_indicator = DigitalSegmentedIndicator::float(4, 1)
-        .with_inactive_segments(true)
-        .with_inactive_intensity(0.95);
+        .with_inactive_segments(true);
     
     let temp_value = SensorValue::analog(
         temp_celsius,
@@ -378,9 +365,6 @@ fn render_temperature_example(
         height: 80.0,
     };
 
-    context.render_rectangle(bounds.x, bounds.y, bounds.width, bounds.height,
-        (1.0, 0.49, 0.0), true, 4.0, 10.0)?;
-    
     temp_indicator.render(&temp_value, bounds, ui_style, context)
 }
 
@@ -392,8 +376,7 @@ fn render_voltage_example(
 ) -> Result<(), String> {
     // Use the voltage preset with inactive segments
     let voltage_indicator = DigitalSegmentedIndicator::float(5, 2)
-        .with_inactive_segments(true)
-        .with_inactive_intensity(0.95);
+        .with_inactive_segments(true);
     
     let voltage_value = SensorValue::analog(
         voltage,
@@ -410,9 +393,6 @@ fn render_voltage_example(
         width: 208.0,
         height: 80.0,
     };
-    
-    context.render_rectangle(bounds.x, bounds.y, bounds.width, bounds.height,
-        (1.0, 0.49, 0.0), true, 4.0, 10.0)?;
-    
+
     voltage_indicator.render(&voltage_value, bounds, ui_style, context)
 }

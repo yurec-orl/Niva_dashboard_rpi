@@ -11,8 +11,6 @@ pub struct DigitalSegmentedIndicator {
     decimals: usize,
     /// Whether to show inactive segments (for realistic 7-segment display look)
     show_inactive_segments: bool,
-    /// Color intensity for inactive segments (0.0 = invisible, 1.0 = same as active)
-    inactive_intensity: f32,
 }
 
 impl DigitalSegmentedIndicator {
@@ -24,7 +22,6 @@ impl DigitalSegmentedIndicator {
             digits, 
             decimals,
             show_inactive_segments: true,
-            inactive_intensity: 1.0, // Dim inactive segments to 15% brightness
         }
     }
 
@@ -41,12 +38,6 @@ impl DigitalSegmentedIndicator {
     /// Enable/disable inactive segments display
     pub fn with_inactive_segments(mut self, show: bool) -> Self {
         self.show_inactive_segments = show;
-        self
-    }
-    
-    /// Set inactive segment intensity (0.0 = invisible, 1.0 = same as active)
-    pub fn with_inactive_intensity(mut self, intensity: f32) -> Self {
-        self.inactive_intensity = intensity.clamp(0.0, 1.0);
         self
     }
 
@@ -140,20 +131,42 @@ impl Indicator for DigitalSegmentedIndicator {
         let font_size = style.get_integer(DIGITAL_DISPLAY_FONT_SIZE, 32) as u32;
         let scale = style.get_float(DIGITAL_DISPLAY_SCALE, 2.0);
         
-        // Get colors from style
+        // Render border and background if enabled
+        let background_enabled = style.get_bool(DIGITAL_DISPLAY_BACKGROUND_ENABLED, false);
+        let border_enabled = style.get_bool(DIGITAL_DISPLAY_BORDER_ENABLED, true);
+
+        let mut background_color = style.get_color(DIGITAL_DISPLAY_BACKGROUND_COLOR, (1.0, 0.65, 0.0)); // Amber background
+
+        if background_enabled {
+            context.render_rectangle(
+                bounds.x, bounds.y, bounds.width, bounds.height,
+                background_color, true,
+                1.0,    // Width doesn't matter for filled
+                style.get_float(DIGITAL_DISPLAY_BORDER_RADIUS, 8.0),
+            )?;
+        } else if border_enabled {
+            context.render_rectangle(
+                bounds.x, bounds.y, bounds.width, bounds.height,
+                style.get_color(DIGITAL_DISPLAY_BORDER_COLOR, (1.0, 1.0, 1.0)), false,
+                style.get_float(DIGITAL_DISPLAY_BORDER_WIDTH, 2.0),
+                style.get_float(DIGITAL_DISPLAY_BORDER_RADIUS, 8.0),
+            )?;
+            background_color = (0.0, 0.0, 0.0); // Use black background if only border
+        }
+
         let active_color = style.get_color(DIGITAL_DISPLAY_ACTIVE_COLOR, (0.0, 0.0, 0.0)); // Black by default
 
         let mut inactive_color = style.get_color(DIGITAL_DISPLAY_INACTIVE_COLOR, (0.84, 0.41, 0.0));
-        inactive_color = (
-            inactive_color.0 * self.inactive_intensity,
-            inactive_color.1 * self.inactive_intensity,
-            inactive_color.2 * self.inactive_intensity,
+        inactive_color = blend_colors(
+            background_color,
+            inactive_color,
+            style.get_float(DIGITAL_DISPLAY_INACTIVE_COLOR_BLENDING, 1.0).clamp(0.0, 1.0)
         );
         
-        // Step 1: Render inactive segments as background
+        // Render inactive segments as background
         let (inactive_width, inactive_x) = self.render_inactive_segments(bounds, style, context, &font_path, scale, font_size, inactive_color)?;
 
-        // Step 2: Format and render the active value on top
+        // Format and render the active value on top
         let formatted_value = self.format_value(numeric_value);
 
         // Calculate text position (right-aligned within the inactive pattern)
