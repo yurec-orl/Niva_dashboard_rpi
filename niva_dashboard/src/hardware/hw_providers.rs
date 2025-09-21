@@ -236,6 +236,16 @@ impl HWDigitalProvider for TestPulseDataProvider {
     fn read_digital(&self, input: HWInput) -> Result<Level, String> {
         let current_frequency = self.get_current_frequency();
         
+        // Debug: Log frequency periodically
+        // static mut LAST_LOG: std::time::Instant = unsafe { std::mem::zeroed() };
+        // unsafe {
+        //     let now = std::time::Instant::now();
+        //     if LAST_LOG.elapsed().as_secs() >= 1 {
+        //         println!("TestPulseDataProvider Debug: Current frequency: {:.2} Hz", current_frequency);
+        //         LAST_LOG = now;
+        //     }
+        // }
+        
         // If frequency is essentially zero, return low
         if current_frequency < 0.1 {
             return Ok(Level::Low);

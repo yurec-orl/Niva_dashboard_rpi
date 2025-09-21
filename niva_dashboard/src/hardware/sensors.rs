@@ -253,6 +253,16 @@ impl SpeedSensor {
         // Get current pulses per second
         let pulses_per_second = self.pulse_counter.pulses_per_second();
         
+        // Debug: Log pulse activity
+        // static mut PULSE_COUNT: u32 = 0;
+        // unsafe {
+        //     PULSE_COUNT += 1;
+        //     if PULSE_COUNT % 100 == 0 {
+        //         println!("SpeedSensor Debug: Pulse #{}, Level: {:?}, PPS: {:.2}, Speed: {:.2} km/h", 
+        //                  PULSE_COUNT, pulse, pulses_per_second, self.calculate_speed_kmh(pulses_per_second));
+        //     }
+        // }
+        
         // Calculate and return speed
         self.speed = SensorValue::analog(self.calculate_speed_kmh(pulses_per_second),
             self.constraints.min_value.clone(), self.constraints.max_value.clone(),
@@ -289,6 +299,7 @@ impl Sensor for SpeedSensor {
     }
 
     fn value(&self) -> Result<&SensorValue, String> {
+        //print!("fn value: Returning speed value: {:?}\r\n", self.speed.as_f32());
         Ok(&self.speed)
     }
 
@@ -316,6 +327,7 @@ impl DigitalSensor for SpeedSensor {
 
     fn read(&mut self, input: Level) -> Result<&SensorValue, String> {
         self.process_pulse(input);
+        //print!("fn read: Returning speed value: {:?}\r\n", self.speed.as_f32());
         Ok(&self.speed)
     }
 }

@@ -555,7 +555,7 @@ impl UIStyle {
         self.set(GAUGE_TITLE_OFFSET, UIStyleValue::Float(30.0));
         self.set(GAUGE_TITLE_ENABLED, UIStyleValue::Boolean(true));
         
-        self.set(GAUGE_UNIT_COLOR, UIStyleValue::Color("#C0C0C0".to_string()));
+        self.set(GAUGE_UNIT_COLOR, UIStyleValue::Color("#727272ff".to_string()));
         self.set(GAUGE_UNIT_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
         self.set(GAUGE_UNIT_FONT_SIZE, UIStyleValue::Integer(12));
         self.set(GAUGE_UNIT_OFFSET, UIStyleValue::Float(15.0));
@@ -594,20 +594,20 @@ impl UIStyle {
         self.set(BAR_SEGMENT_GAP, UIStyleValue::Float(2.0));
 
         // Text defaults
-        self.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
-        self.set(TEXT_SECONDARY_COLOR, UIStyleValue::Color("#C0C0C0".to_string()));
+        self.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#FFA500".to_string()));
+        self.set(TEXT_SECONDARY_COLOR, UIStyleValue::Color("#b77700".to_string()));
         self.set(TEXT_ACCENT_COLOR, UIStyleValue::Color("#0080FF".to_string()));
         self.set(TEXT_WARNING_COLOR, UIStyleValue::Color("#FFAA00".to_string()));
         self.set(TEXT_ERROR_COLOR, UIStyleValue::Color("#FF0000".to_string()));
         
         self.set(TEXT_PRIMARY_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
-        self.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(16));
+        self.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(24));
         self.set(TEXT_SECONDARY_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
-        self.set(TEXT_SECONDARY_FONT_SIZE, UIStyleValue::Integer(14));
+        self.set(TEXT_SECONDARY_FONT_SIZE, UIStyleValue::Integer(16));
         self.set(TEXT_MONOSPACE_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf".to_string()));
-        self.set(TEXT_MONOSPACE_FONT_SIZE, UIStyleValue::Integer(14));
+        self.set(TEXT_MONOSPACE_FONT_SIZE, UIStyleValue::Integer(16));
         self.set(TEXT_SMALL_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
-        self.set(TEXT_SMALL_FONT_SIZE, UIStyleValue::Integer(10));
+        self.set(TEXT_SMALL_FONT_SIZE, UIStyleValue::Integer(12));
 
         self.set(TEXT_LINE_SPACING, UIStyleValue::Float(1.2));
         self.set(TEXT_LETTER_SPACING, UIStyleValue::Float(0.0));
@@ -626,11 +626,11 @@ impl UIStyle {
         self.set(DIGITAL_DISPLAY_FONT, UIStyleValue::String(DIGITAL_DISPLAY_FONT_ITALIC_PATH.to_string()));
         self.set(DIGITAL_DISPLAY_FONT_SIZE, UIStyleValue::Integer(32));
         self.set(DIGITAL_DISPLAY_SCALE, UIStyleValue::Float(2.0));
-        self.set(DIGITAL_DISPLAY_ACTIVE_COLOR, UIStyleValue::Color("#000000".to_string())); // Black active segments
+        self.set(DIGITAL_DISPLAY_ACTIVE_COLOR, UIStyleValue::Color("#FFA500".to_string())); // Amber active segments
         self.set(DIGITAL_DISPLAY_INACTIVE_COLOR, UIStyleValue::Color("#996600".to_string())); // Dark amber inactive segments
         self.set(DIGITAL_DISPLAY_INACTIVE_COLOR_BLENDING, UIStyleValue::Float(0.4));
-        self.set(DIGITAL_DISPLAY_BACKGROUND_COLOR, UIStyleValue::Color("#FFA500".to_string())); // Amber background
-        self.set(DIGITAL_DISPLAY_BACKGROUND_ENABLED, UIStyleValue::Boolean(true));
+        self.set(DIGITAL_DISPLAY_BACKGROUND_COLOR, UIStyleValue::Color("#000000".to_string())); // Amber background
+        self.set(DIGITAL_DISPLAY_BACKGROUND_ENABLED, UIStyleValue::Boolean(false));
         self.set(DIGITAL_DISPLAY_BORDER_ENABLED, UIStyleValue::Boolean(true));
         self.set(DIGITAL_DISPLAY_BORDER_COLOR, UIStyleValue::Color("#FFA500".to_string()));
         self.set(DIGITAL_DISPLAY_BORDER_WIDTH, UIStyleValue::Float(4.0));

@@ -130,6 +130,11 @@ impl Default for TextIndicator {
 }
 
 impl Indicator for TextIndicator {
+    fn with_decorators(self, _decorators: Vec<Box<dyn crate::indicators::decorator::Decorator>>) -> Self {
+        // Simple implementation - decorators not yet integrated
+        self
+    }
+
     fn render(
         &self,
         value: &SensorValue,

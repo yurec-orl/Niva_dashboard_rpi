@@ -10,6 +10,7 @@ use crate::indicators::text_indicator::{TextIndicator, TextAlignment};
 use crate::indicators::gauge_indicator::GaugeIndicator;
 use crate::indicators::vertical_bar_indicator::VerticalBarIndicator;
 use crate::indicators::digital_segmented_indicator::DigitalSegmentedIndicator;
+use crate::indicators::decorator::{Decorator, LabelDecorator, DecoratorAlignmentH, DecoratorAlignmentV, VerticalBarGuideDecorator};
 use crate::page_framework::events::UIEvent;
 
 struct IndicatorSet {
@@ -167,7 +168,7 @@ impl MainPage {
         IndicatorSet { indicators, inputs, indicator_bounds }
     }
 
-    fn setup_bar_indicators(context: &GraphicsContext) -> IndicatorSet {
+    fn setup_bar_indicators(context: &GraphicsContext, ui_style: &UIStyle) -> IndicatorSet {
         let mut indicators: Vec<Box<dyn Indicator>> = Vec::new();
         let inputs: Vec<HWInput> = vec![
             HWInput::HwFuelLvl,
@@ -181,7 +182,7 @@ impl MainPage {
         // Layout parameters
         let screen_width = context.width as f32;
         let screen_height = context.height as f32;
-        let button_margin = 60.0; // Space for buttons on left/right
+        let button_margin = 50.0; // Space for buttons on left/right
         let top_margin = 80.0;
         let available_width = screen_width - 2.0 * button_margin;
         let available_height = screen_height - top_margin - 40.0;
@@ -190,7 +191,34 @@ impl MainPage {
         let bar_width = 52.0;
         let bar_height = 200.0;
         
-        indicators.push(Box::new(VerticalBarIndicator::new(10).with_segment_gap(4.0))); // Fuel Level
+        // Fuel indicator
+        indicators.push(Box::new(VerticalBarIndicator::new(10)
+            .with_segment_gap(4.0)
+            .with_decorators(vec![Box::new(LabelDecorator::new(
+                    "ТОПЛ".into(),
+                    ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
+                    ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32,
+                    ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
+                    DecoratorAlignmentH::Center,
+                    DecoratorAlignmentV::Top,
+                )),
+                Box::new(LabelDecorator::new(
+                    "%".into(),
+                    ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
+                    ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32,
+                    ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
+                    DecoratorAlignmentH::Center,
+                    DecoratorAlignmentV::Bottom,
+                )),
+                Box::new(VerticalBarGuideDecorator::new(
+                    vec!["1-".into(), "1/2-".into(), "0-".into()],
+                    ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
+                    ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32,
+                    ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
+                    DecoratorAlignmentH::Left,
+                )),
+            ]))
+        ); // Fuel Level
         indicator_bounds.push(IndicatorBounds::new(
             button_margin + bar_width,
             top_margin + (available_height - bar_height) / 2.0,
@@ -198,23 +226,102 @@ impl MainPage {
             bar_height
         ));
 
-        indicators.push(Box::new(VerticalBarIndicator::new(10).with_segment_gap(4.0))); // Oil Pressure
+        // Oil pressure indicator
+        indicators.push(Box::new(VerticalBarIndicator::new(10)
+            .with_segment_gap(4.0)
+            .with_decorators(vec![Box::new(LabelDecorator::new(
+                    "МАСЛО".into(),
+                    ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
+                    ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 14) as u32,
+                    ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
+                    DecoratorAlignmentH::Center,
+                    DecoratorAlignmentV::Top,
+                )),
+                Box::new(LabelDecorator::new(
+                    "кгс/см²".into(),
+                    ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
+                    ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32,
+                    ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
+                    DecoratorAlignmentH::Center,
+                    DecoratorAlignmentV::Bottom,
+                )),
+                Box::new(VerticalBarGuideDecorator::new(
+                    vec!["8-".into(), "4-".into(), "0-".into()],
+                    ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
+                    ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32,
+                    ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
+                    DecoratorAlignmentH::Left,
+                )),
+            ]))
+        ); // Oil Pressure
         indicator_bounds.push(IndicatorBounds::new(
-            button_margin + bar_width * 2.0 + 40.0,
+            button_margin + bar_width * 2.0 + 50.0,
             top_margin + (available_height - bar_height) / 2.0,
             bar_width,
             bar_height
         ));
 
-        indicators.push(Box::new(VerticalBarIndicator::new(10).with_segment_gap(4.0))); // Engine Coolant Temp
+        indicators.push(Box::new(VerticalBarIndicator::new(10)
+            .with_segment_gap(4.0)
+            .with_decorators(vec![Box::new(LabelDecorator::new(
+                    "ТЕМП".into(),
+                    ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
+                    ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 14) as u32,
+                    ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
+                    DecoratorAlignmentH::Center,
+                    DecoratorAlignmentV::Top,
+                )),
+                Box::new(LabelDecorator::new(
+                    "°C".into(),
+                    ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
+                    ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32,
+                    ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
+                    DecoratorAlignmentH::Center,
+                    DecoratorAlignmentV::Bottom,
+                )),
+                Box::new(VerticalBarGuideDecorator::new(
+                    vec!["120-".into(), "90-".into(), "50-".into()],
+                    ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
+                    ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32,
+                    ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
+                    DecoratorAlignmentH::Left,
+                )),
+            ]))
+        ); // Engine Coolant Temp
         indicator_bounds.push(IndicatorBounds::new(
-            available_width - bar_width * 2.0 - 40.0,
+            available_width - bar_width * 2.0 - 50.0,
             top_margin + (available_height - bar_height) / 2.0,
             bar_width,
             bar_height
         ));
 
-        indicators.push(Box::new(VerticalBarIndicator::new(10).with_segment_gap(4.0))); // Battery Charge
+        indicators.push(Box::new(VerticalBarIndicator::new(10)
+            .with_segment_gap(4.0)
+            .with_decorators(vec![Box::new(LabelDecorator::new(
+                "СЕТЬ".into(),
+                    ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
+                    ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 14) as u32,
+                    ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
+                    DecoratorAlignmentH::Center,
+                    DecoratorAlignmentV::Top,
+                )),
+                Box::new(LabelDecorator::new(
+                    "В".into(),
+                    ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
+                    ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32,
+                    ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
+                    DecoratorAlignmentH::Center,
+                    DecoratorAlignmentV::Bottom,
+                )),
+                Box::new(VerticalBarGuideDecorator::new(
+                    vec!["16-".into(), "12-".into(), "8-".into()],
+                    ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
+                    ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32,
+                    ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
+                    DecoratorAlignmentH::Left,
+                )),
+            ]))
+        ); // Battery Charge
         indicator_bounds.push(IndicatorBounds::new(
             available_width - bar_width,
             top_margin + (available_height - bar_height) / 2.0,
@@ -222,7 +329,18 @@ impl MainPage {
             bar_height
         ));
 
-        indicators.push(Box::new(DigitalSegmentedIndicator::integer(3).with_inactive_segments(true))); // Speed
+        indicators.push(Box::new(DigitalSegmentedIndicator::integer(3)
+            .with_inactive_segments(true)
+            .with_decorators(vec![Box::new(LabelDecorator::new(
+                "км/ч".into(),
+                ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
+                ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32,
+                ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
+                DecoratorAlignmentH::Right,
+                DecoratorAlignmentV::Bottom,
+            ))
+            ]))
+        ); // Speed
         // Centered on screen
         indicator_bounds.push(IndicatorBounds::new(
             (screen_width - 200.0) / 2.0,
@@ -234,10 +352,10 @@ impl MainPage {
         IndicatorSet { indicators, inputs, indicator_bounds }
     }
 
-    pub fn new(id: u32, event_sender: EventSender, event_receiver: EventReceiver, context: &GraphicsContext) -> Self {
+    pub fn new(id: u32, event_sender: EventSender, event_receiver: EventReceiver, context: &GraphicsContext, ui_style: &UIStyle) -> Self {
         let test_indicator_set = Self::setup_test_indicators();
         let gauge_indicator_set = Self::setup_gauge_indicators(context);
-        let bar_indicator_set = Self::setup_bar_indicators(context);
+        let bar_indicator_set = Self::setup_bar_indicators(context, ui_style);
 
         let mut main_page = MainPage {
             base: PageBase::new(id, "Main".to_string()),

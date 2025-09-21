@@ -310,6 +310,14 @@ pub struct GraphicsContext {
     // Cached shader programs for performance
     rectangle_shader: Option<u32>,
     
+    // Bloom post-processing effect
+    bloom_enabled: bool,
+    bloom_intensity: f32,
+    bloom_threshold: f32,
+    bloom_framebuffer: Option<u32>,
+    bloom_texture: Option<u32>,
+    bloom_shader: Option<u32>,
+    
     // State
     initialized: bool,
     display_configured: bool,
@@ -337,6 +345,12 @@ impl GraphicsContext {
             text_renderers: HashMap::new(),
             ui_style: UIStyle::new(),
             rectangle_shader: None,
+            bloom_enabled: true,
+            bloom_intensity: 0.5,  // Increased for more visible glow
+            bloom_threshold: 0.3,  // Lowered to catch more bright pixels
+            bloom_framebuffer: None,
+            bloom_texture: None,
+            bloom_shader: None,
             initialized: false,
             display_configured: false,
         };
@@ -368,6 +382,12 @@ impl GraphicsContext {
         unsafe {
             glViewport(0, 0, context.width, context.height);
             glClearColor(0.0, 0.0, 0.0, 1.0);
+        }
+        
+        // Initialize bloom effect
+        if let Err(e) = context.init_bloom() {
+            print!("Warning: Failed to initialize bloom effect: {}\r\n", e);
+            context.bloom_enabled = false;
         }
         
         context.initialized = true;
@@ -946,31 +966,6 @@ impl GraphicsContext {
     /// Decrease brightness by a step
     pub fn decrease_brightness(&mut self, step: f32) {
         self.ui_style.decrease_brightness(step);
-    }
-
-    // =============================================================================
-    // UI STYLE ACCESS
-    // =============================================================================
-    
-    /// Get a reference to the UI style
-    pub fn style(&self) -> &UIStyle {
-        &self.ui_style
-    }
-    
-    /// Get a mutable reference to the UI style
-    pub fn style_mut(&mut self) -> &mut UIStyle {
-        &mut self.ui_style
-    }
-    
-    /// Load UI style from JSON string
-    pub fn load_style_from_json(&mut self, json_str: &str) -> Result<(), Box<dyn std::error::Error>> {
-        self.ui_style = UIStyle::from_json(json_str)?;
-        Ok(())
-    }
-    
-    /// Save current UI style to JSON string
-    pub fn save_style_to_json(&self) -> Result<String, serde_json::Error> {
-        self.ui_style.to_json()
     }
 
     /// Clear the screen with black
@@ -1602,12 +1597,415 @@ void main() {
         Ok(renderer.get_line_spacing(scale))
     }
     
+    /// Initialize bloom post-processing effect
+    pub fn init_bloom(&mut self) -> Result<(), String> {
+        if self.bloom_framebuffer.is_some() {
+            return Ok(()); // Already initialized
+        }
+        
+        unsafe {
+            // Create framebuffer
+            let mut framebuffer = 0;
+            gl::GenFramebuffers(1, &mut framebuffer);
+            gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer);
+            
+            // Create texture for framebuffer
+            let mut texture = 0;
+            gl::GenTextures(1, &mut texture);
+            gl::BindTexture(gl::TEXTURE_2D, texture);
+            gl::TexImage2D(
+                gl::TEXTURE_2D, 0, gl::RGBA as i32, 
+                self.width, self.height, 0, 
+                gl::RGBA, gl::UNSIGNED_BYTE, 
+                ptr::null()
+            );
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+            
+            // Attach texture to framebuffer
+            gl::FramebufferTexture2D(
+                gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, 
+                gl::TEXTURE_2D, texture, 0
+            );
+            
+            // Check framebuffer completeness
+            if gl::CheckFramebufferStatus(gl::FRAMEBUFFER) != gl::FRAMEBUFFER_COMPLETE {
+                return Err("Failed to create bloom framebuffer".to_string());
+            }
+            
+            // Create bloom shader
+            let shader = self.create_bloom_shader()?;
+            
+            self.bloom_framebuffer = Some(framebuffer);
+            self.bloom_texture = Some(texture);
+            self.bloom_shader = Some(shader);
+            
+            // Restore default framebuffer
+            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+        }
+        
+        print!("✓ Bloom effect initialized\r\n");
+        Ok(())
+    }
+    
+    /// Create bloom post-processing shader
+    fn create_bloom_shader(&self) -> Result<u32, String> {
+        let vertex_shader_source = b"
+            #version 300 es
+            precision mediump float;
+            
+            in vec2 position;
+            in vec2 texCoord;
+            
+            out vec2 vTexCoord;
+            
+            void main() {
+                gl_Position = vec4(position, 0.0, 1.0);
+                vTexCoord = texCoord;
+            }
+        \0";
+        
+        let fragment_shader_source = format!("
+            #version 300 es
+            precision mediump float;
+            
+            in vec2 vTexCoord;
+            out vec4 fragColor;
+            
+            uniform sampler2D uTexture;
+            uniform float uIntensity;
+            uniform float uThreshold;
+            
+            void main() {{
+                vec3 originalColor = texture(uTexture, vTexCoord).rgb;
+                vec2 texelSize = 1.0 / vec2({}, {});
+                
+                vec3 bloom = vec3(0.0);
+                
+                // Simple gaussian-like blur for bloom effect
+                // Sample surrounding pixels with decreasing weights
+                for(int x = -3; x <= 3; x++) {{
+                    for(int y = -3; y <= 3; y++) {{
+                        vec2 offset = vec2(float(x), float(y)) * texelSize;
+                        vec3 sampleColor = texture(uTexture, vTexCoord + offset).rgb;
+                        
+                        // Extract bright pixels above threshold
+                        float brightness = dot(sampleColor, vec3(0.299, 0.587, 0.114));
+                        if(brightness > uThreshold) {{
+                            float distance = length(vec2(float(x), float(y)));
+                            float weight = exp(-distance * 0.5);
+                            bloom += sampleColor * weight * (brightness - uThreshold);
+                        }}
+                    }}
+                }}
+                
+                // Apply bloom with intensity control
+                vec3 finalColor = originalColor + bloom * uIntensity;
+                fragColor = vec4(finalColor, 1.0);
+            }}
+        \0", self.width, self.height);
+        
+        unsafe {
+            // Compile vertex shader
+            let vertex_shader = gl::CreateShader(gl::VERTEX_SHADER);
+            gl::ShaderSource(vertex_shader, 1, &vertex_shader_source.as_ptr(), ptr::null());
+            gl::CompileShader(vertex_shader);
+            
+            // Check compilation
+            let mut success = 0;
+            gl::GetShaderiv(vertex_shader, gl::COMPILE_STATUS, &mut success);
+            if success == 0 {
+                let mut log = [0u8; 512];
+                gl::GetShaderInfoLog(vertex_shader, 512, ptr::null_mut(), log.as_mut_ptr());
+                return Err(format!("Vertex shader compilation failed: {}", 
+                    String::from_utf8_lossy(&log)));
+            }
+            
+            // Compile fragment shader
+            let fragment_shader = gl::CreateShader(gl::FRAGMENT_SHADER);
+            let fragment_source_ptr = fragment_shader_source.as_ptr();
+            gl::ShaderSource(fragment_shader, 1, &fragment_source_ptr, ptr::null());
+            gl::CompileShader(fragment_shader);
+            
+            // Check compilation
+            gl::GetShaderiv(fragment_shader, gl::COMPILE_STATUS, &mut success);
+            if success == 0 {
+                let mut log = [0u8; 512];
+                gl::GetShaderInfoLog(fragment_shader, 512, ptr::null_mut(), log.as_mut_ptr());
+                return Err(format!("Fragment shader compilation failed: {}", 
+                    String::from_utf8_lossy(&log)));
+            }
+            
+            // Link shader program
+            let shader_program = gl::CreateProgram();
+            gl::AttachShader(shader_program, vertex_shader);
+            gl::AttachShader(shader_program, fragment_shader);
+            gl::LinkProgram(shader_program);
+            
+            // Check linking
+            gl::GetProgramiv(shader_program, gl::LINK_STATUS, &mut success);
+            if success == 0 {
+                let mut log = [0u8; 512];
+                gl::GetProgramInfoLog(shader_program, 512, ptr::null_mut(), log.as_mut_ptr());
+                return Err(format!("Shader program linking failed: {}", 
+                    String::from_utf8_lossy(&log)));
+            }
+            
+            // Clean up shaders
+            gl::DeleteShader(vertex_shader);
+            gl::DeleteShader(fragment_shader);
+            
+            Ok(shader_program)
+        }
+    }
+    
+    /// Begin rendering to bloom framebuffer
+    pub fn begin_bloom_render(&self) -> Result<(), String> {
+        if let Some(framebuffer) = self.bloom_framebuffer {
+            unsafe {
+                gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer);
+                gl::Viewport(0, 0, self.width, self.height);
+                gl::ClearColor(0.0, 0.0, 0.0, 1.0);
+                gl::Clear(gl::COLOR_BUFFER_BIT);
+            }
+            Ok(())
+        } else {
+            Err("Bloom not initialized".to_string())
+        }
+    }
+    
+    /// End bloom rendering and apply bloom effect to screen
+    pub fn end_bloom_render(&self) -> Result<(), String> {
+        if let (Some(texture), Some(shader)) = (self.bloom_texture, self.bloom_shader) {
+            unsafe {
+                // Restore default framebuffer
+                gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+                gl::Viewport(0, 0, self.width, self.height);
+                
+                // Use bloom shader
+                gl::UseProgram(shader);
+                
+                // Set uniforms
+                let intensity_loc = gl::GetUniformLocation(shader, b"uIntensity\0".as_ptr());
+                let threshold_loc = gl::GetUniformLocation(shader, b"uThreshold\0".as_ptr());
+                let texture_loc = gl::GetUniformLocation(shader, b"uTexture\0".as_ptr());
+                
+                gl::Uniform1f(intensity_loc, self.bloom_intensity);
+                gl::Uniform1f(threshold_loc, self.bloom_threshold);
+                gl::Uniform1i(texture_loc, 0);
+                
+                // Bind bloom texture
+                gl::ActiveTexture(gl::TEXTURE0);
+                gl::BindTexture(gl::TEXTURE_2D, texture);
+                
+                // Render fullscreen quad
+                self.render_fullscreen_quad();
+            }
+            Ok(())
+        } else {
+            Err("Bloom not initialized".to_string())
+        }
+    }
+    
+    /// Render a fullscreen quad for post-processing
+    fn render_fullscreen_quad(&self) {
+        unsafe {
+            // Simple fullscreen quad vertices
+            let vertices: [f32; 24] = [
+                // Position    // TexCoord
+                -1.0, -1.0,    0.0, 0.0,  // Bottom-left
+                 1.0, -1.0,    1.0, 0.0,  // Bottom-right
+                 1.0,  1.0,    1.0, 1.0,  // Top-right
+                
+                -1.0, -1.0,    0.0, 0.0,  // Bottom-left
+                 1.0,  1.0,    1.0, 1.0,  // Top-right
+                -1.0,  1.0,    0.0, 1.0,  // Top-left
+            ];
+            
+            let mut vbo = 0;
+            let mut vao = 0;
+            
+            gl::GenVertexArrays(1, &mut vao);
+            gl::GenBuffers(1, &mut vbo);
+            
+            gl::BindVertexArray(vao);
+            gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (vertices.len() * std::mem::size_of::<f32>()) as isize,
+                vertices.as_ptr() as *const _,
+                gl::STATIC_DRAW
+            );
+            
+            // Position attribute
+            gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, 4 * std::mem::size_of::<f32>() as i32, ptr::null());
+            gl::EnableVertexAttribArray(0);
+            
+            // TexCoord attribute
+            gl::VertexAttribPointer(1, 2, gl::FLOAT, gl::FALSE, 4 * std::mem::size_of::<f32>() as i32, 
+                (2 * std::mem::size_of::<f32>()) as *const _);
+            gl::EnableVertexAttribArray(1);
+            
+            gl::DrawArrays(gl::TRIANGLES, 0, 6);
+            
+            // Cleanup
+            gl::DeleteVertexArrays(1, &vao);
+            gl::DeleteBuffers(1, &vbo);
+        }
+    }
+    
+    /// Set bloom parameters
+    pub fn set_bloom_intensity(&mut self, intensity: f32) {
+        self.bloom_intensity = intensity.clamp(0.0, 2.0);
+    }
+    
+    pub fn set_bloom_threshold(&mut self, threshold: f32) {
+        self.bloom_threshold = threshold.clamp(0.0, 1.0);
+    }
+    
+    pub fn set_bloom_enabled(&mut self, enabled: bool) {
+        self.bloom_enabled = enabled;
+    }
+
+    /// Begin selective bloom rendering - only elements drawn between this and end_selective_bloom_render will bloom
+    pub fn begin_selective_bloom_render(&self) -> Result<(), String> {
+        if let Some(framebuffer) = self.bloom_framebuffer {
+            unsafe {
+                // Switch to bloom framebuffer and clear it
+                gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer);
+                gl::Clear(gl::COLOR_BUFFER_BIT);
+                gl::ClearColor(0.0, 0.0, 0.0, 1.0); // Clear to black
+            }
+            Ok(())
+        } else {
+            Err("Bloom framebuffer not initialized".to_string())
+        }
+    }
+
+    /// End selective bloom rendering and return to main framebuffer
+    pub fn end_selective_bloom_render(&self) -> Result<(), String> {
+        unsafe {
+            // Return to main framebuffer (0 = screen)
+            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+        }
+        Ok(())
+    }
+
+    /// Apply bloom from selective rendering to the current scene
+    pub fn apply_selective_bloom(&self) -> Result<(), String> {
+        if let (Some(texture), Some(shader)) = (self.bloom_texture, self.bloom_shader) {
+            unsafe {
+                // Use bloom shader
+                gl::UseProgram(shader);
+                
+                // Bind bloom texture
+                gl::ActiveTexture(gl::TEXTURE0);
+                gl::BindTexture(gl::TEXTURE_2D, texture);
+                gl::Uniform1i(gl::GetUniformLocation(shader, b"uTexture\0".as_ptr()), 0);
+                
+                // Set bloom parameters
+                gl::Uniform1f(gl::GetUniformLocation(shader, b"uIntensity\0".as_ptr()), self.bloom_intensity);
+                gl::Uniform1f(gl::GetUniformLocation(shader, b"uThreshold\0".as_ptr()), self.bloom_threshold);
+                
+                // Enable additive blending for bloom overlay
+                gl::Enable(gl::BLEND);
+                gl::BlendFunc(gl::ONE, gl::ONE); // Additive blending
+                
+                // Render fullscreen quad
+                self.render_fullscreen_quad();
+                
+                // Restore normal blending
+                gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+            }
+            Ok(())
+        } else {
+            Err("Bloom not properly initialized".to_string())
+        }
+    }
+
+    /// Draw text with bloom effect
+    pub fn draw_text_with_bloom(&mut self, text: &str, x: f32, y: f32, color: (f32, f32, f32), font_path: &str, font_size: u32) -> Result<(), String> {
+        // First, draw normally to main framebuffer
+        self.render_text_with_font(text, x, y, 1.0, color, font_path, font_size)?;
+        
+        // Then draw to bloom framebuffer for glow effect
+        if self.bloom_enabled {
+            self.begin_selective_bloom_render()?;
+            // Draw with enhanced brightness for bloom
+            let bloom_color = (color.0 * 2.0, color.1 * 2.0, color.2 * 2.0);
+            self.render_text_with_font(text, x, y, 1.0, bloom_color, font_path, font_size)?;
+            self.end_selective_bloom_render()?;
+            self.apply_selective_bloom()?;
+        }
+        
+        Ok(())
+    }
+
+    /// Draw rectangle with bloom effect
+    pub fn draw_rect_with_bloom(&mut self, x: f32, y: f32, width: f32, height: f32, color: (f32, f32, f32)) -> Result<(), String> {
+        // First, draw normally to main framebuffer
+        self.fill_rect(x, y, width, height, color)?;
+        
+        // Then draw to bloom framebuffer for glow effect
+        if self.bloom_enabled {
+            self.begin_selective_bloom_render()?;
+            // Draw with enhanced brightness for bloom
+            let bloom_color = (color.0 * 1.5, color.1 * 1.5, color.2 * 1.5);
+            self.fill_rect(x, y, width, height, bloom_color)?;
+            self.end_selective_bloom_render()?;
+            self.apply_selective_bloom()?;
+        }
+        
+        Ok(())
+    }
+
+    /// Begin custom bloom element group - for complex elements
+    pub fn begin_bloom_element(&self) -> Result<(), String> {
+        if self.bloom_enabled {
+            self.begin_selective_bloom_render()
+        } else {
+            Ok(())
+        }
+    }
+
+    /// End custom bloom element group
+    pub fn end_bloom_element(&self) -> Result<(), String> {
+        if self.bloom_enabled {
+            self.end_selective_bloom_render()?;
+            self.apply_selective_bloom()
+        } else {
+            Ok(())
+        }
+    }
+    
+    pub fn is_bloom_enabled(&self) -> bool {
+        self.bloom_enabled
+    }
+    
     /// Cleanup text renderer before destroying OpenGL context
     fn cleanup_text_renderer(&mut self) {
         if !self.text_renderers.is_empty() {
             print!("Cleaning up {} text renderer(s)...\r\n", self.text_renderers.len());
             self.text_renderers.clear(); // This will trigger Drop for all OpenGLTextRenderer instances
         }
+    }
+    
+    /// Cleanup bloom effect resources
+    fn cleanup_bloom(&mut self) {
+        unsafe {
+            if let Some(framebuffer) = self.bloom_framebuffer.take() {
+                gl::DeleteFramebuffers(1, &framebuffer);
+            }
+            if let Some(texture) = self.bloom_texture.take() {
+                gl::DeleteTextures(1, &texture);
+            }
+            if let Some(shader) = self.bloom_shader.take() {
+                gl::DeleteProgram(shader);
+            }
+        }
+        print!("Cleaned up bloom effect resources\r\n");
     }
 }
 
@@ -1618,6 +2016,7 @@ impl Drop for GraphicsContext {
                 // Clean up shaders FIRST while OpenGL context is still valid
                 self.cleanup_text_renderer();
                 self.cleanup_rectangle_shader();
+                self.cleanup_bloom();
                 
                 // Restore previous CRTC configuration
                 if !self.previous_crtc.is_null() {

@@ -119,6 +119,10 @@ impl DigitalSignalProcessorPulsePerSecond {
         if elapsed >= self.update_interval {
             let elapsed_secs = elapsed.as_secs_f32();
             if elapsed_secs > 0.0 {
+                //let new_pps = self.counter.count() as f32 / elapsed_secs;
+                //println!("PPS Debug: Elapsed: {:.3}s, Count: {}, Old PPS: {:.2}, New PPS: {:.2}", 
+                //         elapsed_secs, self.counter.count(), self.current_pps, new_pps);
+                //self.current_pps = new_pps;
                 self.current_pps = self.counter.count() as f32 / elapsed_secs;
             }
             self.counter.reset();

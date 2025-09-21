@@ -133,7 +133,7 @@ fn setup_sensors() -> SensorManager {
     // Speed sensor (active high, pulse-based)
     let speed_chain = SensorDigitalInputChain::new(
         Box::new(TestPulseDataProvider::new(HWInput::HwSpeed)),
-        vec![Box::new(DigitalSignalDebouncer::new(3, std::time::Duration::from_millis(10)))],
+        vec![], // No signal processors - SpeedSensor handles pulse processing internally
         Box::new(SpeedSensor::new()),
     );
     mgr.add_digital_sensor_chain(speed_chain);

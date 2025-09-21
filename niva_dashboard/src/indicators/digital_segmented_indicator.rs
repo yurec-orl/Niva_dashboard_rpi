@@ -1,10 +1,12 @@
-use crate::indicators::indicator::{Indicator, IndicatorBounds};
+use crate::indicators::indicator::{Indicator, IndicatorBounds, IndicatorBase};
+use crate::indicators::decorator::Decorator;
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
 use crate::hardware::sensor_value::{SensorValue, ValueData};
 
 /// Simple digital numeric indicator using 7-segment fonts
 pub struct DigitalSegmentedIndicator {
+    base: IndicatorBase,
     /// Number of digits to display
     digits: usize,
     /// Number of decimal places (0 for integers)
@@ -19,6 +21,7 @@ impl DigitalSegmentedIndicator {
     /// - decimals: number of decimal places (0 for integers)
     pub fn new(digits: usize, decimals: usize) -> Self {
         Self { 
+            base: IndicatorBase::new(),
             digits, 
             decimals,
             show_inactive_segments: true,
@@ -111,6 +114,11 @@ impl Default for DigitalSegmentedIndicator {
 }
 
 impl Indicator for DigitalSegmentedIndicator {
+    fn with_decorators(mut self, decorators: Vec<Box<dyn crate::indicators::decorator::Decorator>>) -> Self {
+        self.base.decorators = decorators;
+        self
+    }
+
     fn render(
         &self,
         value: &SensorValue,
@@ -118,6 +126,10 @@ impl Indicator for DigitalSegmentedIndicator {
         style: &UIStyle,
         context: &mut GraphicsContext,
     ) -> Result<(), String> {
+
+        // Render decorators first, then the display itself over the decorators
+        self.base.render_decorators(bounds, style, context)?;
+
         // Extract numeric value
         let numeric_value = match &value.value {
             ValueData::Analog(v) => *v,

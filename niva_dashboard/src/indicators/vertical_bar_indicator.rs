@@ -1,10 +1,12 @@
-use crate::indicators::indicator::{Indicator, IndicatorBounds};
+use crate::indicators::indicator::{Indicator, IndicatorBounds, IndicatorBase};
+use crate::indicators::decorator::Decorator;
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
 use crate::hardware::sensor_value::{SensorValue, ValueData};
 
 /// Vertical bar indicator that fills from bottom to top
 pub struct VerticalBarIndicator {
+    base: IndicatorBase,
     /// Number of segments in the bar
     segments: usize,
     /// Gap between segments (in pixels)
@@ -15,6 +17,7 @@ impl VerticalBarIndicator {
     /// Create a new vertical bar indicator
     pub fn new(segments: usize) -> Self {
         Self {
+            base: IndicatorBase::new(),
             segments,
             segment_gap: 2.0, // Default 2px gap between segments
         }
@@ -63,6 +66,11 @@ impl Default for VerticalBarIndicator {
 }
 
 impl Indicator for VerticalBarIndicator {
+    fn with_decorators(mut self, decorators: Vec<Box<dyn Decorator>>) -> Self {
+        self.base.decorators = decorators;
+        self
+    }
+
     fn render(
         &self,
         value: &SensorValue,
@@ -77,6 +85,9 @@ impl Indicator for VerticalBarIndicator {
             ValueData::Percentage(p) => *p,
             _ => return Ok(()), // Skip non-numeric values
         };
+
+        // Render decorators first, then the display itself over the decorators
+        self.base.render_decorators(bounds, style, context)?;
         
         let background_enabled = style.get_bool(BAR_BACKGROUND_ENABLED, true);
         let border_enabled = style.get_bool(BAR_BORDER_ENABLED, true);

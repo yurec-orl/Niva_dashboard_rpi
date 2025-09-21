@@ -1,6 +1,7 @@
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::UIStyle;
 use crate::hardware::sensor_value::{SensorValue, ValueData};
+use crate::indicators::decorator::Decorator;
 
 /// Position and size information for indicator rendering
 #[derive(Debug, Clone, Copy)]
@@ -22,8 +23,34 @@ impl IndicatorBounds {
     }
 }
 
+pub struct IndicatorBase {
+    pub decorators: Vec<Box<dyn Decorator>>,
+}
+
+impl IndicatorBase {
+    pub fn new() -> Self {
+        Self {
+            decorators: Vec::new(),
+        }
+    }
+
+    pub fn render_decorators(
+        &self,
+        bounds: IndicatorBounds,
+        style: &UIStyle,
+        context: &mut GraphicsContext,
+    ) -> Result<(), String> {
+        for decorator in &self.decorators {
+            decorator.render(bounds, style, context)?;
+        }
+        Ok(())
+    }
+}
+
 /// Main indicator trait for rendering various dashboard indicators
 pub trait Indicator {
+    fn with_decorators(self, decorators: Vec<Box<dyn Decorator>>) -> Self where Self: Sized;
+
     /// Render the indicator with the given value, bounds, style and graphics context
     /// 
     /// # Parameters

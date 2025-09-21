@@ -323,7 +323,8 @@ impl PageManager {
         let main_page = Box::new(MainPage::new(MAIN_PAGE_ID,
                                                event_sender.clone(),
                                                self.get_event_receiver(),
-                                               &self.context));
+                                               &self.context,
+                                               &self.ui_style));
 
         let diag_page = Box::new(DiagPage::new(DIAG_PAGE_ID,
                                                event_sender.clone(),
@@ -358,15 +359,31 @@ impl PageManager {
         const FRAME_DURATION: Duration = Duration::from_micros(1_000_000 / TARGET_FPS);
 
         print!("Starting event loop (target: {} FPS)\r\n", TARGET_FPS);
+        self.toggle_bloom();    // Turn off for now
+        // self.set_bloom_intensity(1.0);
+        // let start_time = Instant::now();
         
         while self.running {
             let frame_start = Instant::now();
             
+            // if (Instant::now() - start_time).as_secs() == 5 {
+            //     self.toggle_bloom();
+            // }
+
             // Update FPS counter
             self.fps_counter.update();
             
-            // Clear screen with black
-            self.context.clear_screen();
+            // Begin bloom rendering if enabled
+            let bloom_enabled = self.context.is_bloom_enabled();
+            if bloom_enabled {
+                if let Err(e) = self.context.begin_bloom_render() {
+                    print!("Bloom render error: {}\r\n", e);
+                }
+            } else {
+                // Clear screen with black for normal rendering
+                self.context.clear_screen();
+            }
+            
             unsafe {
                 gl::Enable(gl::BLEND);
                 gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
@@ -383,6 +400,13 @@ impl PageManager {
             
             // Render status line
             self.render_status_line()?;
+            
+            // Apply bloom effect and swap buffers
+            if bloom_enabled {
+                if let Err(e) = self.context.end_bloom_render() {
+                    print!("Bloom end render error: {}\r\n", e);
+                }
+            }
             
             // Swap buffers
             self.context.swap_buffers();
@@ -590,6 +614,25 @@ impl PageManager {
     
     pub fn stop(&mut self) {
         self.running = false;
+    }
+    
+    /// Toggle bloom effect on/off
+    pub fn toggle_bloom(&mut self) {
+        let enabled = !self.context.is_bloom_enabled();
+        self.context.set_bloom_enabled(enabled);
+        print!("Bloom effect {}\r\n", if enabled { "enabled" } else { "disabled" });
+    }
+    
+    /// Set bloom intensity (0.0 to 2.0)
+    pub fn set_bloom_intensity(&mut self, intensity: f32) {
+        self.context.set_bloom_intensity(intensity);
+        print!("Bloom intensity set to {:.1}\r\n", intensity);
+    }
+    
+    /// Set bloom threshold (0.0 to 1.0)
+    pub fn set_bloom_threshold(&mut self, threshold: f32) {
+        self.context.set_bloom_threshold(threshold);
+        print!("Bloom threshold set to {:.1}\r\n", threshold);
     }
 
     // =============================================================================
