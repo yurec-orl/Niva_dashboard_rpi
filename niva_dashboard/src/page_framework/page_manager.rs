@@ -587,12 +587,9 @@ impl PageManager {
         
         // Format status information
         let status_text = format!(
-            "Time: {:.1}s | FPS: {:.1} | Frame: {} | Resolution: {}x{}",
+            "Работа: {:.1}s | КДР/С: {:.1}",
             elapsed.as_secs_f32(),
             fps,
-            frame_count,
-            self.context.width,
-            self.context.height
         );
         
         // Render status line at bottom of screen

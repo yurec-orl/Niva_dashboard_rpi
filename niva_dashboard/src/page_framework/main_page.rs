@@ -8,9 +8,10 @@ use crate::hardware::sensor_value::SensorValue;
 use crate::indicators::{Indicator, IndicatorBounds};
 use crate::indicators::text_indicator::{TextIndicator, TextAlignment};
 use crate::indicators::gauge_indicator::GaugeIndicator;
-use crate::indicators::vertical_bar_indicator::VerticalBarIndicator;
+use crate::indicators::vertical_bar_indicator::{VerticalBarIndicator, VerticalBarScaleDecorator};
 use crate::indicators::digital_segmented_indicator::DigitalSegmentedIndicator;
-use crate::indicators::decorator::{Decorator, LabelDecorator, DecoratorAlignmentH, DecoratorAlignmentV, VerticalBarScaleDecorator};
+use crate::indicators::needle_indicator::{NeedleIndicator, NeedleGaugeMarksDecorator};
+use crate::indicators::decorator::{Decorator, LabelDecorator, ArcDecorator, DecoratorAlignmentH, DecoratorAlignmentV};
 use crate::page_framework::events::UIEvent;
 
 struct IndicatorSet {
@@ -135,7 +136,34 @@ impl MainPage {
         let center_x = screen_width / 2.0 - center_gauge_size / 2.0;
         let center_y = top_margin;
         
-        indicators.push(Box::new(GaugeIndicator::new()));
+        indicators.push(Box::new(NeedleIndicator::new(-225.0f32.to_radians(), 45.0f32.to_radians(),
+            center_gauge_size / 2.0 - 20.0, // Needle length
+            8.0, // Needle base width
+            1.0, // Needle tip width
+            (1.0, 0.0, 0.0) // Red needle color
+        ).with_decorators(vec![Box::new(NeedleGaugeMarksDecorator::new(
+            37, // From 0 to 180 with 10 marks (every 5 km/h)
+            6.0, // Mark length
+            2.0, // Mark thickness
+            (1.0, 1.0, 1.0), // White marks
+            center_gauge_size / 2.0,
+            -225.0f32.to_radians(), 45.0f32.to_radians() // Match needle angles
+            )),
+            Box::new(NeedleGaugeMarksDecorator::new(
+            10, // From 0 to 180 with 10 marks (every 20 km/h)
+            12.0, // Mark length
+            4.0, // Mark thickness
+            (1.0, 1.0, 1.0), // White marks
+            center_gauge_size / 2.0,
+            -225.0f32.to_radians(), 45.0f32.to_radians() // Match needle angles
+            )),
+            Box::new(ArcDecorator::new(
+                center_gauge_size / 2.0, // Radius
+                4.0, // Thickness
+                (1.0, 1.0, 1.0), // White arc
+                -225.0f32.to_radians(), 45.0f32.to_radians()
+            )),
+        ])));
         indicator_bounds.push(IndicatorBounds::new(center_x, center_y, center_gauge_size, center_gauge_size));
 
         // Left side gauges - smaller gauges
@@ -144,12 +172,22 @@ impl MainPage {
         
         // Fuel level gauge (left top)
         let fuel_y = top_margin;
-        indicators.push(Box::new(GaugeIndicator::new()));
+        indicators.push(Box::new(NeedleIndicator::new(-225.0f32.to_radians(), 45.0f32.to_radians(),
+            side_gauge_size / 2.0 - 20.0, // Needle length
+            8.0, // Needle base width
+            1.0, // Needle tip width
+            (1.0, 0.0, 0.0) // Red needle color
+        )));
         indicator_bounds.push(IndicatorBounds::new(left_x, fuel_y, side_gauge_size, side_gauge_size));
         
         // Oil pressure gauge (left bottom)
         let oil_y = fuel_y + side_gauge_size + 20.0;
-        indicators.push(Box::new(GaugeIndicator::new()));
+        indicators.push(Box::new(NeedleIndicator::new(-225.0f32.to_radians(), 45.0f32.to_radians(),
+            side_gauge_size / 2.0 - 20.0, // Needle length
+            8.0, // Needle base width
+            1.0, // Needle tip width
+            (1.0, 0.0, 0.0) // Red needle color
+        )));
         indicator_bounds.push(IndicatorBounds::new(left_x, oil_y, side_gauge_size, side_gauge_size));
 
         // Right side gauges - smaller gauges
@@ -157,12 +195,22 @@ impl MainPage {
         
         // Temperature gauge (right top)
         let temp_y = top_margin;
-        indicators.push(Box::new(GaugeIndicator::new()));
+        indicators.push(Box::new(NeedleIndicator::new(-225.0f32.to_radians(), 45.0f32.to_radians(),
+            side_gauge_size / 2.0 - 20.0, // Needle length
+            8.0, // Needle base width
+            1.0, // Needle tip width
+            (1.0, 0.0, 0.0) // Red needle color
+        )));
         indicator_bounds.push(IndicatorBounds::new(right_x, temp_y, side_gauge_size, side_gauge_size));
         
         // Battery voltage gauge (right bottom)
         let battery_y = temp_y + side_gauge_size + 20.0;
-        indicators.push(Box::new(GaugeIndicator::new()));
+        indicators.push(Box::new(NeedleIndicator::new(-225.0f32.to_radians(), 45.0f32.to_radians(),
+            side_gauge_size / 2.0 - 20.0, // Needle length
+            8.0, // Needle base width
+            1.0, // Needle tip width
+            (1.0, 0.0, 0.0) // Red needle color
+        )));
         indicator_bounds.push(IndicatorBounds::new(right_x, battery_y, side_gauge_size, side_gauge_size));
 
         IndicatorSet { indicators, inputs, indicator_bounds }

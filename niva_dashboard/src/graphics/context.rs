@@ -1165,11 +1165,11 @@ impl GraphicsContext {
         self.render_filled_rectangle(x + width - half_thickness, y + radius, thickness, height - 2.0 * radius, color)?;
         
         // Draw rounded corner outlines using circle arcs
-        self.render_circle_arc_outline(x + radius, y + radius, radius, thickness, color, 180.0, 270.0)?; // Top-left
-        self.render_circle_arc_outline(x + width - radius, y + radius, radius, thickness, color, 270.0, 360.0)?; // Top-right
-        self.render_circle_arc_outline(x + width - radius, y + height - radius, radius, thickness, color, 0.0, 90.0)?; // Bottom-right
-        self.render_circle_arc_outline(x + radius, y + height - radius, radius, thickness, color, 90.0, 180.0)?; // Bottom-left
-        
+        self.render_circle_arc_outline(x + radius, y + radius, radius, thickness, color, 180.0_f32.to_radians(), 270.0_f32.to_radians(), 16)?; // Top-left
+        self.render_circle_arc_outline(x + width - radius, y + radius, radius, thickness, color, 270.0_f32.to_radians(), 360.0_f32.to_radians(), 16)?; // Top-right
+        self.render_circle_arc_outline(x + width - radius, y + height - radius, radius, thickness, color, 0.0_f32.to_radians(), 90.0_f32.to_radians(), 16)?; // Bottom-right
+        self.render_circle_arc_outline(x + radius, y + height - radius, radius, thickness, color, 90.0_f32.to_radians(), 180.0_f32.to_radians(), 16)?; // Bottom-left
+
         Ok(())
     }
     
@@ -1244,7 +1244,7 @@ impl GraphicsContext {
     }
     
     /// Render a circle arc outline (for rounded corner borders)
-    unsafe fn render_circle_arc_outline(
+    pub fn render_circle_arc_outline(
         &mut self,
         center_x: f32, 
         center_y: f32, 
@@ -1252,71 +1252,73 @@ impl GraphicsContext {
         thickness: f32,
         color: (f32, f32, f32),
         start_angle: f32, 
-        end_angle: f32
+        end_angle: f32,
+        segments: usize,
     ) -> Result<(), String> {
-        // For thick arcs, we render the difference between outer and inner arcs
-        let outer_radius = radius + thickness / 2.0;
-        let inner_radius = radius - thickness / 2.0;
-        
-        let shader_program = self.get_or_create_rectangle_shader()?;
-        gl::UseProgram(shader_program);
-        
-        // Set up projection matrix
-        let projection_matrix = self.create_2d_projection_matrix();
-        let projection_uniform = gl::GetUniformLocation(shader_program, b"projection\0".as_ptr());
-        gl::UniformMatrix4fv(projection_uniform, 1, gl::FALSE, projection_matrix.as_ptr());
-        
-        // Set color uniform
-        let color_uniform = gl::GetUniformLocation(shader_program, b"color\0".as_ptr());
-        gl::Uniform3f(color_uniform, color.0, color.1, color.2);
-        
-        // Generate vertices for arc ring (triangle strip)
-        let segments = 16;
-        let mut vertices = Vec::with_capacity(segments * 4 * 2); // 2 points per segment * 2 coords
-        
-        let angle_step = (end_angle - start_angle) / (segments - 1) as f32;
-        for i in 0..segments {
-            let angle = (start_angle + i as f32 * angle_step).to_radians();
-            let cos_a = angle.cos();
-            let sin_a = angle.sin();
+        unsafe {
+            // For thick arcs, we render the difference between outer and inner arcs
+            let outer_radius = radius + thickness / 2.0;
+            let inner_radius = radius - thickness / 2.0;
             
-            // Inner point
-            vertices.push(center_x + inner_radius * cos_a);
-            vertices.push(center_y + inner_radius * sin_a);
+            let shader_program = self.get_or_create_rectangle_shader()?;
+            gl::UseProgram(shader_program);
             
-            // Outer point
-            vertices.push(center_x + outer_radius * cos_a);
-            vertices.push(center_y + outer_radius * sin_a);
+            // Set up projection matrix
+            let projection_matrix = self.create_2d_projection_matrix();
+            let projection_uniform = gl::GetUniformLocation(shader_program, b"projection\0".as_ptr());
+            gl::UniformMatrix4fv(projection_uniform, 1, gl::FALSE, projection_matrix.as_ptr());
+            
+            // Set color uniform
+            let color_uniform = gl::GetUniformLocation(shader_program, b"color\0".as_ptr());
+            gl::Uniform3f(color_uniform, color.0, color.1, color.2);
+            
+            // Generate vertices for arc ring (triangle strip)
+            let mut vertices = Vec::with_capacity(segments * 4 * 2); // 2 points per segment * 2 coords
+            
+            let angle_step = (end_angle - start_angle) / (segments - 1) as f32;
+            for i in 0..segments {
+                let angle = start_angle + i as f32 * angle_step; // Angles already in radians
+                let cos_a = angle.cos();
+                let sin_a = angle.sin();
+                
+                // Inner point
+                vertices.push(center_x + inner_radius * cos_a);
+                vertices.push(center_y + inner_radius * sin_a);
+                
+                // Outer point
+                vertices.push(center_x + outer_radius * cos_a);
+                vertices.push(center_y + outer_radius * sin_a);
+            }
+            
+            // Create and bind VAO/VBO
+            let mut vao = 0u32;
+            let mut vbo = 0u32;
+            gl::GenVertexArrays(1, &mut vao);
+            gl::GenBuffers(1, &mut vbo);
+            
+            gl::BindVertexArray(vao);
+            gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+            
+            // Upload vertex data
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (vertices.len() * std::mem::size_of::<f32>()) as isize,
+                vertices.as_ptr() as *const std::ffi::c_void,
+                gl::STATIC_DRAW,
+            );
+            
+            // Set up vertex attributes
+            let position_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr()) as u32;
+            gl::VertexAttribPointer(position_attr, 2, gl::FLOAT, gl::FALSE, 0, std::ptr::null());
+            gl::EnableVertexAttribArray(position_attr);
+            
+            // Render as triangle strip
+            gl::DrawArrays(gl::TRIANGLE_STRIP, 0, vertices.len() as i32 / 2);
+            
+            // Clean up
+            gl::DeleteBuffers(1, &vbo);
+            gl::DeleteVertexArrays(1, &vao);
         }
-        
-        // Create and bind VAO/VBO
-        let mut vao = 0u32;
-        let mut vbo = 0u32;
-        gl::GenVertexArrays(1, &mut vao);
-        gl::GenBuffers(1, &mut vbo);
-        
-        gl::BindVertexArray(vao);
-        gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
-        
-        // Upload vertex data
-        gl::BufferData(
-            gl::ARRAY_BUFFER,
-            (vertices.len() * std::mem::size_of::<f32>()) as isize,
-            vertices.as_ptr() as *const std::ffi::c_void,
-            gl::STATIC_DRAW,
-        );
-        
-        // Set up vertex attributes
-        let position_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr()) as u32;
-        gl::VertexAttribPointer(position_attr, 2, gl::FLOAT, gl::FALSE, 0, std::ptr::null());
-        gl::EnableVertexAttribArray(position_attr);
-        
-        // Render as triangle strip
-        gl::DrawArrays(gl::TRIANGLE_STRIP, 0, vertices.len() as i32 / 2);
-        
-        // Clean up
-        gl::DeleteBuffers(1, &vbo);
-        gl::DeleteVertexArrays(1, &vao);
         
         Ok(())
     }

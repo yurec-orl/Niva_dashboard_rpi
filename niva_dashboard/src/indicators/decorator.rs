@@ -106,113 +106,54 @@ impl Decorator for LabelDecorator {
     }
 }
 
-/// Decorator for rendering scale marks and labels vertically alongside a vertical bar indicator
-/// Labels are ordered from top to bottom
-/// Scale marks are optional and can be enabled during construction
-pub struct VerticalBarScaleDecorator {
-    labels: Vec<String>,    // Labels for each scale mark - no labels if empty
-    font_path: String,
-    font_size: u32,
+pub struct ArcDecorator {
+    radius: f32,
+    thickness: f32,
     color: (f32, f32, f32),
-    scale_marks: bool,      // Whether to draw scale marks
-    marks_color: (f32, f32, f32),
-    marks_width: f32,
-    marks_thickness: f32,
-    alignment_h: DecoratorAlignmentH,
+    start_angle: f32,
+    end_angle: f32,
 }
 
-impl VerticalBarScaleDecorator {
-    /// Create a new vertical bar scale decorator
-    /// Labels are ordered from top to bottom
+impl ArcDecorator {
     pub fn new(
-        labels: Vec<String>,
-        font_path: String,
-        font_size: u32,
+        radius: f32,
+        thickness: f32,
         color: (f32, f32, f32),
-        alignment_h: DecoratorAlignmentH,
+        start_angle: f32,
+        end_angle: f32,
     ) -> Self {
         Self {
-            labels,
-            scale_marks: false,
-            font_path,
-            font_size,
+            radius,
+            thickness,
             color,
-            marks_color: (1.0, 1.0, 1.0),
-            marks_thickness: 1.0,
-            marks_width: 5.0,
-            alignment_h,
+            start_angle,
+            end_angle,
         }
-    }
-
-    /// Enable scale marks with specified color, width and thickness
-    pub fn with_scale_marks(mut self, color: (f32, f32, f32), width: f32, thickness: f32) -> Self {
-        self.scale_marks = true;
-        self.marks_color = color;
-        self.marks_width = width;
-        self.marks_thickness = thickness;
-        self
     }
 }
 
-impl Decorator for VerticalBarScaleDecorator {
+impl Decorator for ArcDecorator {
     fn render(
         &self,
         bounds: IndicatorBounds,
         _style: &UIStyle,
         context: &mut GraphicsContext,
     ) -> Result<(), String> {
-        let segment_count = self.labels.len();
-        if segment_count == 0 {
-            return Ok(()); // Nothing to render
-        }
+        // Calculate center point
+        let center_x = bounds.x + bounds.width / 2.0;
+        let center_y = bounds.y + bounds.height / 2.0;
         
-        let mut base_x_pos = match self.alignment_h {
-            DecoratorAlignmentH::Left => bounds.x - self.marks_thickness, // 5px margin
-            DecoratorAlignmentH::Right => bounds.x + bounds.width + self.marks_thickness,
-            DecoratorAlignmentH::Center => Err("Center alignment not supported".to_string())?,
-        };
-        let segment_height = bounds.height / segment_count as f32;
-
-        // Draw scale marks if enabled
-        if self.scale_marks {
-            base_x_pos += match self.alignment_h {
-                DecoratorAlignmentH::Left => -(self.marks_width + self.marks_thickness),
-                DecoratorAlignmentH::Right => (self.marks_width + self.marks_thickness),
-                DecoratorAlignmentH::Center => 0.0, // Not applicable
-            };
-
-            for i in 0..segment_count {
-                let y = bounds.y + i as f32 * segment_height + segment_height / 2.0;
-                print!("--------- ({}, {})\r\n", i, y);
-                context.render_rectangle(base_x_pos, y - self.marks_thickness / 2.0,
-                                         self.marks_width, self.marks_thickness,
-                                         self.marks_color, true, 1.0, 0.0)?;
-            }
-            print!("---------{} \r\n", (segment_count - 1) as f32 * segment_height + segment_height / 2.0);
-            context.render_rectangle(base_x_pos, bounds.y + segment_height / 2.0,
-                                     self.marks_thickness,
-                                     (segment_count - 1) as f32 * segment_height,
-                                     self.marks_color, true, 1.0, 0.0)?; // Vertical line
-        }
-
-        for (i, label) in self.labels.iter().enumerate() {
-            let y = bounds.y + i as f32 * segment_height + (segment_height - self.font_size as f32) / 2.0;
-            let x = match self.alignment_h {
-                DecoratorAlignmentH::Left => base_x_pos - 5.0 - context.calculate_text_width_with_font(label, 1.0, &self.font_path, self.font_size)?,
-                DecoratorAlignmentH::Right => base_x_pos + bounds.width + 5.0,
-                DecoratorAlignmentH::Center => Err("Center alignment not supported".to_string())?,
-            };
-            
-            context.render_text_with_font(
-                label,
-                x,
-                y,
-                1.0, // scale
-                self.color,
-                &self.font_path,
-                self.font_size,
-            )?;
-        }
+        // Render the arc
+        context.render_circle_arc_outline(
+            center_x,
+            center_y,
+            self.radius,
+            self.thickness,
+            self.color,
+            self.start_angle,
+            self.end_angle,
+            256, // segments
+        )?;
         
         Ok(())
     }
