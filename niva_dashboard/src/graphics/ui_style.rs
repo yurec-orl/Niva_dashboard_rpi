@@ -526,10 +526,10 @@ impl UIStyle {
         // Page manager defaults
         self.set(PAGE_BUTTON_LABEL_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
         self.set(PAGE_BUTTON_LABEL_FONT_SIZE, UIStyleValue::Integer(14));
-        self.set(PAGE_BUTTON_LABEL_ORIENTATION, UIStyleValue::String("horizontal".to_string()));
+        self.set(PAGE_BUTTON_LABEL_ORIENTATION, UIStyleValue::String("vertical".to_string()));
         self.set(PAGE_BUTTON_LABEL_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
         self.set(PAGE_STATUS_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
-        self.set(PAGE_STATUS_FONT_SIZE, UIStyleValue::Integer(12));
+        self.set(PAGE_STATUS_FONT_SIZE, UIStyleValue::Integer(14));
         self.set(PAGE_STATUS_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
 
         // Gauge defaults

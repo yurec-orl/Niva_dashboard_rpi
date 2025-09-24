@@ -522,34 +522,59 @@ impl PageManager {
         }
     }
     
-    fn render_button_at_position(&mut self, pos: &ButtonPosition, label: &str, label_scale: f32, label_color: (f32, f32, f32)) -> Result<(), String> {
+    fn render_button_at_position(&mut self, pos: &ButtonPosition, label: &str,
+        label_font: &String, label_font_size: u32, label_color: (f32, f32, f32),
+        orientation: &String
+    ) -> Result<(), String> {
         let (x, y) = self.get_button_position(pos);
         
         let render_x = match pos {
             // Right side buttons are right-aligned
             ButtonPosition::Right1 | ButtonPosition::Right2 | 
             ButtonPosition::Right3 | ButtonPosition::Right4 => {
-                let text_width = self.context.calculate_text_width_with_font(
-                    label, 
-                    label_scale,
-                    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                    16
-                )?;
+                let text_width = if orientation == "horizontal" {
+                    self.context.calculate_text_width_with_font(
+                        label,
+                        1.0,
+                        label_font,
+                        label_font_size
+                    )?
+                } else {
+                    self.context.calculate_text_width_with_font_vert(
+                        label,
+                        1.0,
+                        label_font,
+                        label_font_size
+                    )?
+                };
                 x - text_width
             }
             // Left side buttons are left-aligned
             _ => x,
         };
         
-        self.context.render_text_with_font(
-            label, 
-            render_x, 
-            y, 
-            label_scale, 
-            label_color,
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            16
-        )?;
+        if orientation == "horizontal" {
+            self.context.render_text_with_font(
+                label, 
+                render_x, 
+                y, 
+                1.0,
+                label_color,
+                label_font,
+                label_font_size
+            )?;
+            return Ok(());
+        } else {
+            self.context.render_text_with_font_vert(
+                label, 
+                render_x, 
+                y, 
+                1.0,
+                label_color,
+                label_font,
+                label_font_size
+            )?;
+        }
         Ok(())
     }
     
@@ -560,8 +585,10 @@ impl PageManager {
         }
 
         // Render settings
-        let label_scale = 1.2;
-        let label_color = (1.0, 1.0, 1.0);
+        let label_font = self.ui_style.get_string(PAGE_BUTTON_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
+        let label_font_size = self.ui_style.get_integer(PAGE_BUTTON_LABEL_FONT_SIZE, 14);
+        let label_color = self.ui_style.get_color(PAGE_BUTTON_LABEL_COLOR, (1.0, 1.0, 1.0));
+        let orientation = self.ui_style.get_string(PAGE_BUTTON_LABEL_ORIENTATION, "horizontal");
 
         // Collect button data first to avoid borrowing conflicts
         let button_data: Vec<(ButtonPosition, String)> = {
@@ -574,7 +601,7 @@ impl PageManager {
 
         // Now render each button at its fixed position
         for (position, label) in button_data {
-            self.render_button_at_position(&position, &label, label_scale, label_color)?;
+            self.render_button_at_position(&position, &label, &label_font, label_font_size, label_color, &orientation)?;
         }
 
         Ok(())
@@ -586,24 +613,46 @@ impl PageManager {
         let frame_count = self.fps_counter.get_frame_count();
         
         // Format status information
-        let status_text = format!(
-            "Работа: {:.1}s | КДР/С: {:.1}",
-            elapsed.as_secs_f32(),
-            fps,
-        );
+        let total_seconds = elapsed.as_secs();
+        let days = total_seconds / 86400;  // 24 * 60 * 60
+        let hours = (total_seconds % 86400) / 3600;  // 60 * 60
+        let minutes = (total_seconds % 3600) / 60;
+        let seconds = total_seconds % 60;
+
+        let status_text = if days > 0 {
+            format!(
+                "Работа: {}д {:02}:{:02}:{:02} | К/С: {:.1}",
+                days, hours, minutes, seconds,
+                fps,
+            )
+        } else {
+            format!(
+                "Работа: {:02}:{:02}:{:02} | К/С: {:.1}",
+                hours, minutes, seconds,
+                fps,
+            )
+        };
+
+        // Render status line at bottom of screen
+        let status_y = self.context.height as f32 - STATUS_LINE_MARGIN; // 25 pixels from bottom
+        let status_x = 10.0; // 10 pixels from left
         
         // Render status line at bottom of screen
         let status_y = self.context.height as f32 - STATUS_LINE_MARGIN; // 25 pixels from bottom
         let status_x = 10.0; // 10 pixels from left
         
+        let status_font = self.ui_style.get_string(PAGE_STATUS_FONT, DEFAULT_GLOBAL_FONT_PATH);
+        let status_font_size = self.ui_style.get_integer(PAGE_STATUS_FONT_SIZE, 14);
+        let status_color = self.ui_style.get_color(PAGE_STATUS_COLOR, (0.7, 0.7, 0.7));
+
         self.context.render_text_with_font(
             &status_text,
             status_x,
             status_y,
             1.0, // scale
-            (0.7, 0.7, 0.7), // gray color
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            14 // smaller font for status
+            status_color,
+            status_font.as_str(),
+            status_font_size
         )?;
         
         Ok(())

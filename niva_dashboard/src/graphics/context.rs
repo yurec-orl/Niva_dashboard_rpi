@@ -274,6 +274,13 @@ pub enum InputEventType {
     KeyRelease(u32),
 }
 
+/// Text orientation options for rendering
+#[derive(Debug, Clone, Copy)]
+pub enum TextOrientation {
+    Horizontal,  // Normal left-to-right text
+    Vertical,    // Characters stacked vertically (top-to-bottom, not rotated)
+}
+
 /// Graphics context using KMS/DRM backend with OpenGL ES
 pub struct GraphicsContext {
     // DRM/KMS handles
@@ -1508,8 +1515,8 @@ void main() {
         Ok(self.text_renderers.get_mut(&key).unwrap())
     }
     
-    /// Render text using a specific font
-    pub fn render_text_with_font(
+    /// Private method to render text with orientation support
+    fn render_text(
         &mut self, 
         text: &str, 
         x: f32, 
@@ -1517,7 +1524,8 @@ void main() {
         scale: f32, 
         color: (f32, f32, f32),
         font_path: &str,
-        font_size: u32
+        font_size: u32,
+        orientation: TextOrientation
     ) -> Result<(), String> {
         // Apply brightness adjustment to the color
         let adjusted_color = self.ui_style.apply_brightness(color);
@@ -1529,13 +1537,86 @@ void main() {
         // Get the text renderer for this font
         let renderer = self.get_text_renderer(font_path, font_size)?;
         
-        // Render the text
+        // Render the text with orientation
         unsafe {
-            renderer.render_text(text, x, y, scale, adjusted_color, width, height)
+            renderer.render_text(text, x, y, scale, adjusted_color, width, height, orientation)
         }
     }
     
-    /// Calculate text width using a specific font
+    /// Render text using a specific font (horizontal orientation)
+    pub fn render_text_with_font(
+        &mut self, 
+        text: &str, 
+        x: f32, 
+        y: f32, 
+        scale: f32, 
+        color: (f32, f32, f32),
+        font_path: &str,
+        font_size: u32
+    ) -> Result<(), String> {
+        self.render_text(text, x, y, scale, color, font_path, font_size, TextOrientation::Horizontal)
+    }
+    
+    /// Render text using a specific font (vertical orientation)
+    pub fn render_text_with_font_vert(
+        &mut self, 
+        text: &str, 
+        x: f32, 
+        y: f32, 
+        scale: f32, 
+        color: (f32, f32, f32),
+        font_path: &str,
+        font_size: u32
+    ) -> Result<(), String> {
+        self.render_text(text, x, y, scale, color, font_path, font_size, TextOrientation::Vertical)
+    }
+    
+    /// Private method to calculate text width with orientation
+    fn calculate_text_width(
+        &mut self, 
+        text: &str, 
+        scale: f32,
+        font_path: &str,
+        font_size: u32,
+        orientation: TextOrientation
+    ) -> Result<f32, String> {
+        let renderer = self.get_text_renderer(font_path, font_size)?;
+        unsafe {
+            renderer.calculate_text_width(text, scale, orientation)
+        }
+    }
+    
+    /// Private method to calculate text height with orientation
+    fn calculate_text_height(
+        &mut self, 
+        text: &str, 
+        scale: f32,
+        font_path: &str,
+        font_size: u32,
+        orientation: TextOrientation
+    ) -> Result<f32, String> {
+        let renderer = self.get_text_renderer(font_path, font_size)?;
+        unsafe {
+            renderer.calculate_text_height(text, scale, orientation)
+        }
+    }
+    
+    /// Private method to calculate text dimensions with orientation
+    fn calculate_text_dimensions(
+        &mut self, 
+        text: &str, 
+        scale: f32,
+        font_path: &str,
+        font_size: u32,
+        orientation: TextOrientation
+    ) -> Result<(f32, f32), String> {
+        let renderer = self.get_text_renderer(font_path, font_size)?;
+        unsafe {
+            renderer.calculate_text_dimensions(text, scale, orientation)
+        }
+    }
+    
+    /// Calculate text width using a specific font (horizontal orientation)
     pub fn calculate_text_width_with_font(
         &mut self, 
         text: &str, 
@@ -1543,13 +1624,20 @@ void main() {
         font_path: &str,
         font_size: u32
     ) -> Result<f32, String> {
-        let renderer = self.get_text_renderer(font_path, font_size)?;
-        unsafe {
-            renderer.calculate_text_width(text, scale)
-        }
+        self.calculate_text_width(text, scale, font_path, font_size, TextOrientation::Horizontal)
+    }
+
+    pub fn calculate_text_width_with_font_vert(
+        &mut self, 
+        text: &str, 
+        scale: f32,
+        font_path: &str,
+        font_size: u32
+    ) -> Result<f32, String> {
+        self.calculate_text_width(text, scale, font_path, font_size, TextOrientation::Vertical)
     }
     
-    /// Calculate text height using a specific font
+    /// Calculate text height using a specific font (horizontal orientation)
     pub fn calculate_text_height_with_font(
         &mut self, 
         text: &str, 
@@ -1557,13 +1645,20 @@ void main() {
         font_path: &str,
         font_size: u32
     ) -> Result<f32, String> {
-        let renderer = self.get_text_renderer(font_path, font_size)?;
-        unsafe {
-            renderer.calculate_text_height(text, scale)
-        }
+        self.calculate_text_height(text, scale, font_path, font_size, TextOrientation::Horizontal)
     }
-    
-    /// Calculate text dimensions using a specific font
+
+    pub fn calculate_text_height_with_font_vert(
+        &mut self, 
+        text: &str, 
+        scale: f32,
+        font_path: &str,
+        font_size: u32
+    ) -> Result<f32, String> {
+        self.calculate_text_height(text, scale, font_path, font_size, TextOrientation::Vertical)
+    }
+
+    /// Calculate text dimensions using a specific font (horizontal orientation)
     pub fn calculate_text_dimensions_with_font(
         &mut self, 
         text: &str, 
@@ -1571,12 +1666,19 @@ void main() {
         font_path: &str,
         font_size: u32
     ) -> Result<(f32, f32), String> {
-        let renderer = self.get_text_renderer(font_path, font_size)?;
-        unsafe {
-            renderer.calculate_text_dimensions(text, scale)
-        }
+        self.calculate_text_dimensions(text, scale, font_path, font_size, TextOrientation::Horizontal)
     }
-    
+
+    pub fn calculate_text_dimensions_with_font_vert(
+        &mut self, 
+        text: &str, 
+        scale: f32,
+        font_path: &str,
+        font_size: u32
+    ) -> Result<(f32, f32), String> {
+        self.calculate_text_dimensions(text, scale, font_path, font_size, TextOrientation::Vertical)
+    }
+
     /// Get line height for a specific font
     pub fn get_line_height_with_font(
         &mut self, 
@@ -2194,7 +2296,7 @@ void main() {
         Ok(program)
     }
     
-    unsafe fn render_text(&mut self, text: &str, x: f32, y: f32, scale: f32, color: (f32, f32, f32), width: f32, height: f32) -> Result<(), String> {
+    unsafe fn render_text(&mut self, text: &str, x: f32, y: f32, scale: f32, color: (f32, f32, f32), width: f32, height: f32, orientation: TextOrientation) -> Result<(), String> {
         // Use cached program state
         gl::UseProgram(self.shader_program);
         
@@ -2226,10 +2328,30 @@ void main() {
         gl::EnableVertexAttribArray(self.vertex_attr as u32);
         gl::VertexAttribPointer(self.vertex_attr as u32, 4, gl::FLOAT, 0, 0, std::ptr::null());
         
-        // Render each character using cached glyphs
-        let mut cursor_x = x;
-        for ch in text.chars() {
-            cursor_x += self.render_cached_character(ch, cursor_x, y, scale)?;
+        // Render each character using cached glyphs with orientation-based positioning
+        match orientation {
+            TextOrientation::Horizontal => {
+                // Traditional horizontal text - advance cursor in X direction
+                let mut cursor_x = x;
+                for ch in text.chars() {
+                    cursor_x += self.render_cached_character(ch, cursor_x, y, scale)?;
+                }
+            },
+            TextOrientation::Vertical => {
+                // Vertical text - advance cursor in Y direction, characters remain upright
+                let mut cursor_y = y;
+                for ch in text.chars() {
+                    // For vertical text, we need to calculate the character's advance in Y direction
+                    let glyph = self.get_or_cache_glyph(ch)?;
+                    
+                    // Render character at current position
+                    self.render_cached_character(ch, x, cursor_y, scale)?;
+                    
+                    // Advance cursor downward by the character height plus small spacing
+                    let char_height = glyph.height * scale;
+                    cursor_y += char_height + scale * 2.0; // Add some spacing between characters
+                }
+            }
         }
         
         Ok(())
@@ -2338,42 +2460,71 @@ void main() {
     }
     
     /// Calculate the total width of a text string with the current font and scale
-    unsafe fn calculate_text_width(&mut self, text: &str, scale: f32) -> Result<f32, String> {
-        let mut total_width = 0.0;
-        
-        for ch in text.chars() {
-            let glyph = self.get_or_cache_glyph(ch)?;
-            total_width += glyph.advance * scale;
+    unsafe fn calculate_text_width(&mut self, text: &str, scale: f32, orientation: TextOrientation) -> Result<f32, String> {
+        match orientation {
+            TextOrientation::Horizontal => {
+                // For horizontal text, width is the sum of character advances
+                let mut total_width = 0.0;
+                for ch in text.chars() {
+                    let glyph = self.get_or_cache_glyph(ch)?;
+                    total_width += glyph.advance * scale;
+                }
+                Ok(total_width)
+            },
+            TextOrientation::Vertical => {
+                // For vertical text, width is the maximum character width
+                let mut max_width = 0.0;
+                for ch in text.chars() {
+                    let glyph = self.get_or_cache_glyph(ch)?;
+                    let char_width = glyph.width * scale;
+                    if char_width > max_width {
+                        max_width = char_width;
+                    }
+                }
+                Ok(max_width)
+            }
         }
-        
-        Ok(total_width)
     }
     
     /// Calculate the maximum height of a text string with the current font and scale
-    unsafe fn calculate_text_height(&mut self, text: &str, scale: f32) -> Result<f32, String> {
-        let mut max_height = 0.0;
-        let mut max_descent = 0.0;
-        
-        for ch in text.chars() {
-            let glyph = self.get_or_cache_glyph(ch)?;
-            let char_height = glyph.bearing_y * scale;
-            let char_descent = (glyph.height - glyph.bearing_y) * scale;
-            
-            if char_height > max_height {
-                max_height = char_height;
-            }
-            if char_descent > max_descent {
-                max_descent = char_descent;
+    unsafe fn calculate_text_height(&mut self, text: &str, scale: f32, orientation: TextOrientation) -> Result<f32, String> {
+        match orientation {
+            TextOrientation::Horizontal => {
+                // For horizontal text, height is the maximum character height
+                let mut max_height = 0.0;
+                let mut max_descent = 0.0;
+                
+                for ch in text.chars() {
+                    let glyph = self.get_or_cache_glyph(ch)?;
+                    let char_height = glyph.bearing_y * scale;
+                    let char_descent = (glyph.height - glyph.bearing_y) * scale;
+                    
+                    if char_height > max_height {
+                        max_height = char_height;
+                    }
+                    if char_descent > max_descent {
+                        max_descent = char_descent;
+                    }
+                }
+                
+                Ok(max_height + max_descent)
+            },
+            TextOrientation::Vertical => {
+                // For vertical text, height is the sum of character heights plus spacing
+                let mut total_height = 0.0;
+                for ch in text.chars() {
+                    let glyph = self.get_or_cache_glyph(ch)?;
+                    total_height += glyph.height * scale + scale * 2.0; // Add spacing
+                }
+                Ok(total_height)
             }
         }
-        
-        Ok(max_height + max_descent)
     }
     
     /// Calculate both width and height of a text string (convenience function)
-    unsafe fn calculate_text_dimensions(&mut self, text: &str, scale: f32) -> Result<(f32, f32), String> {
-        let width = self.calculate_text_width(text, scale)?;
-        let height = self.calculate_text_height(text, scale)?;
+    unsafe fn calculate_text_dimensions(&mut self, text: &str, scale: f32, orientation: TextOrientation) -> Result<(f32, f32), String> {
+        let width = self.calculate_text_width(text, scale, orientation)?;
+        let height = self.calculate_text_height(text, scale, orientation)?;
         Ok((width, height))
     }
     
