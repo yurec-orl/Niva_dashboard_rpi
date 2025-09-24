@@ -1875,8 +1875,8 @@ void main() {
             unsafe {
                 // Switch to bloom framebuffer and clear it
                 gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer);
-                gl::Clear(gl::COLOR_BUFFER_BIT);
                 gl::ClearColor(0.0, 0.0, 0.0, 1.0); // Clear to black
+                gl::Clear(gl::COLOR_BUFFER_BIT);
             }
             Ok(())
         } else {

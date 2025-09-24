@@ -120,6 +120,9 @@ pub const BAR_WARNING_COLOR: &str = "bar_warning_color";
 pub const BAR_CRITICAL_COLOR: &str = "bar_critical_color";
 
 pub const BAR_MARKS_COLOR: &str = "bar_marks_color";
+pub const BAR_MARKS_WIDTH: &str = "bar_marks_width";
+pub const BAR_MARKS_THICKNESS: &str = "bar_marks_thickness";
+
 pub const BAR_MARK_LABELS_COLOR: &str = "bar_mark_labels_color";
 
 pub const BAR_SEGMENT_COUNT: &str = "bar_segment_count";
@@ -587,17 +590,20 @@ impl UIStyle {
         self.set(BAR_WARNING_COLOR, UIStyleValue::Color("#FFFF00".to_string()));
         self.set(BAR_CRITICAL_COLOR, UIStyleValue::Color("#FF0000".to_string()));
 
-        self.set(BAR_MARKS_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
-        self.set(BAR_MARK_LABELS_COLOR, UIStyleValue::Color("#C0C0C0".to_string()));
+        self.set(BAR_MARKS_COLOR, UIStyleValue::Color("#FF7D00".to_string()));
+        self.set(BAR_MARKS_WIDTH, UIStyleValue::Float(12.0));
+        self.set(BAR_MARKS_THICKNESS, UIStyleValue::Float(4.0));
+
+        self.set(BAR_MARK_LABELS_COLOR, UIStyleValue::Color("#FF7D00".to_string()));
 
         self.set(BAR_SEGMENT_COUNT, UIStyleValue::Integer(10));
         self.set(BAR_SEGMENT_GAP, UIStyleValue::Float(2.0));
 
         // Text defaults
-        self.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#FFA500".to_string()));
+        self.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#FF7D00".to_string()));
         self.set(TEXT_SECONDARY_COLOR, UIStyleValue::Color("#b77700".to_string()));
         self.set(TEXT_ACCENT_COLOR, UIStyleValue::Color("#0080FF".to_string()));
-        self.set(TEXT_WARNING_COLOR, UIStyleValue::Color("#FFAA00".to_string()));
+        self.set(TEXT_WARNING_COLOR, UIStyleValue::Color("#FFFF00".to_string()));
         self.set(TEXT_ERROR_COLOR, UIStyleValue::Color("#FF0000".to_string()));
         
         self.set(TEXT_PRIMARY_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));

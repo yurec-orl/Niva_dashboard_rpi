@@ -10,7 +10,7 @@ use crate::indicators::text_indicator::{TextIndicator, TextAlignment};
 use crate::indicators::gauge_indicator::GaugeIndicator;
 use crate::indicators::vertical_bar_indicator::VerticalBarIndicator;
 use crate::indicators::digital_segmented_indicator::DigitalSegmentedIndicator;
-use crate::indicators::decorator::{Decorator, LabelDecorator, DecoratorAlignmentH, DecoratorAlignmentV, VerticalBarGuideDecorator};
+use crate::indicators::decorator::{Decorator, LabelDecorator, DecoratorAlignmentH, DecoratorAlignmentV, VerticalBarScaleDecorator};
 use crate::page_framework::events::UIEvent;
 
 struct IndicatorSet {
@@ -182,14 +182,57 @@ impl MainPage {
         // Layout parameters
         let screen_width = context.width as f32;
         let screen_height = context.height as f32;
-        let button_margin = 50.0; // Space for buttons on left/right
-        let top_margin = 80.0;
+        let button_margin = 40.0; // Space for buttons on left/right
+        let top_margin = 40.0;
         let available_width = screen_width - 2.0 * button_margin;
         let available_height = screen_height - top_margin - 40.0;
 
         // Arrange vertical bar indicators in a row
         let bar_width = 52.0;
         let bar_height = 200.0;
+
+        let font_path = ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH);
+        let font_size = ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 14) as u32;
+        let text_color = ui_style.get_color(BAR_MARK_LABELS_COLOR, (0.45, 0.45, 0.45));
+        
+        let marks_color = ui_style.get_color(BAR_MARKS_COLOR, (1.0, 0.5, 0.0));
+        let marks_width = ui_style.get_float(BAR_MARKS_WIDTH, 10.0);
+        let marks_thickness = ui_style.get_float(BAR_MARKS_THICKNESS, 4.0);
+
+        // Oil pressure indicator
+        indicators.push(Box::new(VerticalBarIndicator::new(10)
+            .with_segment_gap(4.0)
+            .with_decorators(vec![Box::new(LabelDecorator::new(
+                    "МАСЛО".into(),
+                    font_path.clone(),
+                    font_size,
+                    text_color,
+                    DecoratorAlignmentH::Center,
+                    DecoratorAlignmentV::Top,
+                )),
+                Box::new(LabelDecorator::new(
+                    "кгс/см²".into(),
+                    font_path.clone(),
+                    font_size,
+                    text_color,
+                    DecoratorAlignmentH::Center,
+                    DecoratorAlignmentV::Bottom,
+                )),
+                Box::new(VerticalBarScaleDecorator::new(
+                    vec!["8".into(), "4".into(), "0".into()],
+                    font_path.clone(),
+                    font_size,
+                    text_color,
+                    DecoratorAlignmentH::Left,
+                ).with_scale_marks(marks_color, marks_width, marks_thickness)),
+            ]))
+        ); // Oil Pressure
+        indicator_bounds.push(IndicatorBounds::new(
+            button_margin + bar_width,
+            top_margin,
+            bar_width,
+            bar_height
+        ));
         
         // Fuel indicator
         indicators.push(Box::new(VerticalBarIndicator::new(10)
@@ -210,53 +253,18 @@ impl MainPage {
                     DecoratorAlignmentH::Center,
                     DecoratorAlignmentV::Bottom,
                 )),
-                Box::new(VerticalBarGuideDecorator::new(
-                    vec!["1-".into(), "1/2-".into(), "0-".into()],
+                Box::new(VerticalBarScaleDecorator::new(
+                    vec!["1".into(), "1/2".into(), "0".into()],
                     ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
                     ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32,
                     ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
                     DecoratorAlignmentH::Left,
-                )),
+                ).with_scale_marks(marks_color, marks_width, marks_thickness)),
             ]))
         ); // Fuel Level
         indicator_bounds.push(IndicatorBounds::new(
-            button_margin + bar_width,
-            top_margin + (available_height - bar_height) / 2.0,
-            bar_width,
-            bar_height
-        ));
-
-        // Oil pressure indicator
-        indicators.push(Box::new(VerticalBarIndicator::new(10)
-            .with_segment_gap(4.0)
-            .with_decorators(vec![Box::new(LabelDecorator::new(
-                    "МАСЛО".into(),
-                    ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
-                    ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 14) as u32,
-                    ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
-                    DecoratorAlignmentH::Center,
-                    DecoratorAlignmentV::Top,
-                )),
-                Box::new(LabelDecorator::new(
-                    "кгс/см²".into(),
-                    ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
-                    ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32,
-                    ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
-                    DecoratorAlignmentH::Center,
-                    DecoratorAlignmentV::Bottom,
-                )),
-                Box::new(VerticalBarGuideDecorator::new(
-                    vec!["8-".into(), "4-".into(), "0-".into()],
-                    ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
-                    ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32,
-                    ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
-                    DecoratorAlignmentH::Left,
-                )),
-            ]))
-        ); // Oil Pressure
-        indicator_bounds.push(IndicatorBounds::new(
             button_margin + bar_width * 2.0 + 50.0,
-            top_margin + (available_height - bar_height) / 2.0,
+            top_margin,
             bar_width,
             bar_height
         ));
@@ -279,18 +287,18 @@ impl MainPage {
                     DecoratorAlignmentH::Center,
                     DecoratorAlignmentV::Bottom,
                 )),
-                Box::new(VerticalBarGuideDecorator::new(
+                Box::new(VerticalBarScaleDecorator::new(
                     vec!["120-".into(), "90-".into(), "50-".into()],
                     ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
                     ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32,
                     ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
                     DecoratorAlignmentH::Left,
-                )),
+                ).with_scale_marks(marks_color, marks_width, marks_thickness)),
             ]))
         ); // Engine Coolant Temp
         indicator_bounds.push(IndicatorBounds::new(
             available_width - bar_width * 2.0 - 50.0,
-            top_margin + (available_height - bar_height) / 2.0,
+            top_margin,
             bar_width,
             bar_height
         ));
@@ -313,18 +321,18 @@ impl MainPage {
                     DecoratorAlignmentH::Center,
                     DecoratorAlignmentV::Bottom,
                 )),
-                Box::new(VerticalBarGuideDecorator::new(
+                Box::new(VerticalBarScaleDecorator::new(
                     vec!["16-".into(), "12-".into(), "8-".into()],
                     ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
                     ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32,
                     ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
                     DecoratorAlignmentH::Left,
-                )),
+                ).with_scale_marks(marks_color, marks_width, marks_thickness)),
             ]))
         ); // Battery Charge
         indicator_bounds.push(IndicatorBounds::new(
             available_width - bar_width,
-            top_margin + (available_height - bar_height) / 2.0,
+            top_margin,
             bar_width,
             bar_height
         ));
@@ -344,7 +352,7 @@ impl MainPage {
         // Centered on screen
         indicator_bounds.push(IndicatorBounds::new(
             (screen_width - 200.0) / 2.0,
-            (screen_height - 80.0) / 2.0,
+            top_margin,
             200.0,
             80.0
         ));
@@ -463,17 +471,6 @@ impl Page for MainPage {
     }
 
     fn render(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
-        // Render page title
-        context.render_text_with_font(
-            "Main Page", 
-            400.0, 
-            40.0, 
-            1.0, 
-            ui_style.get_color(TEXT_PRIMARY_COLOR, (1.0, 1.0, 1.0)),
-            ui_style.get_string(TEXT_PRIMARY_FONT, DEFAULT_GLOBAL_FONT_PATH).as_str(),
-            ui_style.get_integer(TEXT_PRIMARY_FONT_SIZE, 24)
-        )?;
-
         // Read sensor values and create SensorValue objects
         let sensor_values = self.get_sensor_values(sensor_manager)?;
 
