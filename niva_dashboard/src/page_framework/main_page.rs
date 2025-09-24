@@ -141,27 +141,34 @@ impl MainPage {
             8.0, // Needle base width
             1.0, // Needle tip width
             (1.0, 0.0, 0.0) // Red needle color
-        ).with_decorators(vec![Box::new(NeedleGaugeMarksDecorator::new(
-            37, // From 0 to 180 with 10 marks (every 5 km/h)
-            6.0, // Mark length
-            2.0, // Mark thickness
-            (1.0, 1.0, 1.0), // White marks
-            center_gauge_size / 2.0,
-            -225.0f32.to_radians(), 45.0f32.to_radians() // Match needle angles
+        ).with_decorators(vec![
+            Box::new(NeedleGaugeMarksDecorator::new(
+                37, // From 0 to 180 with 10 marks (every 5 km/h)
+                6.0, // Mark length
+                2.0, // Mark thickness
+                (1.0, 1.0, 1.0), // White marks
+                center_gauge_size / 2.0,
+                -225.0f32.to_radians(), 45.0f32.to_radians() // Match needle angles
             )),
             Box::new(NeedleGaugeMarksDecorator::new(
-            10, // From 0 to 180 with 10 marks (every 20 km/h)
-            12.0, // Mark length
-            4.0, // Mark thickness
-            (1.0, 1.0, 1.0), // White marks
-            center_gauge_size / 2.0,
-            -225.0f32.to_radians(), 45.0f32.to_radians() // Match needle angles
+                10, // From 0 to 180 with 10 marks (every 20 km/h)
+                12.0, // Mark length
+                4.0, // Mark thickness
+                (1.0, 1.0, 1.0), // White marks
+                center_gauge_size / 2.0,
+                -225.0f32.to_radians(), 45.0f32.to_radians() // Match needle angles
             )),
             Box::new(ArcDecorator::new(
                 center_gauge_size / 2.0, // Radius
                 4.0, // Thickness
                 (1.0, 1.0, 1.0), // White arc
                 -225.0f32.to_radians(), 45.0f32.to_radians()
+            )),
+            Box::new(ArcDecorator::new(
+                center_gauge_size / 2.0, // Radius
+                4.0, // Thickness
+                (0.2, 0.2, 0.2), // Dark grey arc
+                45.0f32.to_radians(), 135.0f32.to_radians()
             )),
         ])));
         indicator_bounds.push(IndicatorBounds::new(center_x, center_y, center_gauge_size, center_gauge_size));
@@ -177,7 +184,37 @@ impl MainPage {
             8.0, // Needle base width
             1.0, // Needle tip width
             (1.0, 0.0, 0.0) // Red needle color
-        )));
+            ).with_decorators(vec![
+                Box::new(NeedleGaugeMarksDecorator::new(
+                    11, // From 0 to 10 with 10 marks (every 1 unit)
+                    6.0, // Mark length
+                    2.0, // Mark thickness
+                    (1.0, 1.0, 1.0), // White marks
+                    side_gauge_size / 2.0,
+                    -225.0f32.to_radians(), 45.0f32.to_radians() // Match needle angles
+                )),
+                Box::new(NeedleGaugeMarksDecorator::new(
+                    6, // From 0 to 10 with 5 marks (every 2 units)
+                    12.0, // Mark length
+                    4.0, // Mark thickness
+                    (1.0, 1.0, 1.0), // White marks
+                    side_gauge_size / 2.0,
+                    -225.0f32.to_radians(), 45.0f32.to_radians() // Match needle angles
+                )),
+                Box::new(ArcDecorator::new(
+                    side_gauge_size / 2.0, // Radius
+                    4.0, // Thickness
+                    (1.0, 1.0, 1.0), // White arc
+                    -225.0f32.to_radians(), 45.0f32.to_radians()
+                )),
+                Box::new(ArcDecorator::new(
+                    side_gauge_size / 2.0, // Radius
+                    4.0, // Thickness
+                    (0.2, 0.2, 0.2), // Dark grey arc
+                    45.0f32.to_radians(), 135.0f32.to_radians()
+                )),
+            ])
+        ));
         indicator_bounds.push(IndicatorBounds::new(left_x, fuel_y, side_gauge_size, side_gauge_size));
         
         // Oil pressure gauge (left bottom)
@@ -187,7 +224,37 @@ impl MainPage {
             8.0, // Needle base width
             1.0, // Needle tip width
             (1.0, 0.0, 0.0) // Red needle color
-        )));
+            ).with_decorators(vec![
+                Box::new(NeedleGaugeMarksDecorator::new(
+                    9, // From 0 to 8 with 8 marks (every 1 unit)
+                    6.0, // Mark length
+                    2.0, // Mark thickness
+                    (1.0, 1.0, 1.0), // White marks
+                    side_gauge_size / 2.0,
+                    -225.0f32.to_radians(), 45.0f32.to_radians() // Match needle angles
+                )),
+                Box::new(NeedleGaugeMarksDecorator::new(
+                    5, // From 0 to 8 with 4 marks (every 2 units)
+                    12.0, // Mark length
+                    4.0, // Mark thickness
+                    (1.0, 1.0, 1.0), // White marks
+                    side_gauge_size / 2.0,
+                    -225.0f32.to_radians(), 45.0f32.to_radians() // Match needle angles
+                )),
+                Box::new(ArcDecorator::new(
+                    side_gauge_size / 2.0, // Radius
+                    4.0, // Thickness
+                    (1.0, 1.0, 1.0), // White arc
+                    -225.0f32.to_radians(), 45.0f32.to_radians()
+                )),
+                Box::new(ArcDecorator::new(
+                    side_gauge_size / 2.0, // Radius
+                    4.0, // Thickness
+                    (0.2, 0.2, 0.2), // Dark grey arc
+                    45.0f32.to_radians(), 135.0f32.to_radians()
+                )),
+            ])
+        ));
         indicator_bounds.push(IndicatorBounds::new(left_x, oil_y, side_gauge_size, side_gauge_size));
 
         // Right side gauges - smaller gauges
@@ -200,7 +267,36 @@ impl MainPage {
             8.0, // Needle base width
             1.0, // Needle tip width
             (1.0, 0.0, 0.0) // Red needle color
-        )));
+        ).with_decorators(vec![
+            Box::new(NeedleGaugeMarksDecorator::new(
+                11, // From 0 to 10 with 10 marks (every 1 unit)
+                6.0, // Mark length
+                2.0, // Mark thickness
+                (1.0, 1.0, 1.0), // White marks
+                side_gauge_size / 2.0,
+                -225.0f32.to_radians(), 45.0f32.to_radians() // Match needle angles
+            )),
+            Box::new(NeedleGaugeMarksDecorator::new(
+                6, // From 0 to 10 with 5 marks (every 2 units)
+                12.0, // Mark length
+                4.0, // Mark thickness
+                (1.0, 1.0, 1.0), // White marks
+                side_gauge_size / 2.0,
+                -225.0f32.to_radians(), 45.0f32.to_radians() // Match needle angles
+            )),
+            Box::new(ArcDecorator::new(
+                side_gauge_size / 2.0, // Radius
+                4.0, // Thickness
+                (1.0, 1.0, 1.0), // White arc
+                -225.0f32.to_radians(), 45.0f32.to_radians()
+            )),
+            Box::new(ArcDecorator::new(
+                side_gauge_size / 2.0, // Radius
+                4.0, // Thickness
+                (0.2, 0.2, 0.2), // Dark grey arc
+                45.0f32.to_radians(), 135.0f32.to_radians()
+            )),
+        ])));
         indicator_bounds.push(IndicatorBounds::new(right_x, temp_y, side_gauge_size, side_gauge_size));
         
         // Battery voltage gauge (right bottom)
@@ -210,7 +306,36 @@ impl MainPage {
             8.0, // Needle base width
             1.0, // Needle tip width
             (1.0, 0.0, 0.0) // Red needle color
-        )));
+        ).with_decorators(vec![
+            Box::new(NeedleGaugeMarksDecorator::new(
+                11, // From 0 to 10 with 10 marks (every 1 unit)
+                6.0, // Mark length
+                2.0, // Mark thickness
+                (1.0, 1.0, 1.0), // White marks
+                side_gauge_size / 2.0,
+                -225.0f32.to_radians(), 45.0f32.to_radians() // Match needle angles
+            )),
+            Box::new(NeedleGaugeMarksDecorator::new(
+                6, // From 0 to 10 with 5 marks (every 2 units)
+                12.0, // Mark length
+                4.0, // Mark thickness
+                (1.0, 1.0, 1.0), // White marks
+                side_gauge_size / 2.0,
+                -225.0f32.to_radians(), 45.0f32.to_radians() // Match needle angles
+            )),
+            Box::new(ArcDecorator::new(
+                side_gauge_size / 2.0, // Radius
+                4.0, // Thickness
+                (1.0, 1.0, 1.0), // White arc
+                -225.0f32.to_radians(), 45.0f32.to_radians()
+            )),
+            Box::new(ArcDecorator::new(
+                side_gauge_size / 2.0, // Radius
+                4.0, // Thickness
+                (0.2, 0.2, 0.2), // Dark grey arc
+                45.0f32.to_radians(), 135.0f32.to_radians()
+            )),
+        ])));
         indicator_bounds.push(IndicatorBounds::new(right_x, battery_y, side_gauge_size, side_gauge_size));
 
         IndicatorSet { indicators, inputs, indicator_bounds }

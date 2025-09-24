@@ -43,6 +43,15 @@ pub const GLOBAL_BACKGROUND_COLOR: &str = "global_background_color";
 pub const GLOBAL_FONT_PATH: &str = "global_font_path";
 pub const GLOBAL_FONT_SIZE: &str = "global_font_size";
 
+// Page manager style elements
+pub const PAGE_BUTTON_LABEL_FONT: &str = "page_button_label_font";
+pub const PAGE_BUTTON_LABEL_FONT_SIZE: &str = "page_button_label_font_size";
+pub const PAGE_BUTTON_LABEL_ORIENTATION: &str = "page_button_label_orientation"; // "horizontal" or "vertical"
+pub const PAGE_BUTTON_LABEL_COLOR: &str = "page_button_label_color";
+pub const PAGE_STATUS_FONT: &str = "page_status_font";
+pub const PAGE_STATUS_FONT_SIZE: &str = "page_status_font_size";
+pub const PAGE_STATUS_COLOR: &str = "page_status_color";
+
 // Gauge Style Elements
 pub const GAUGE_BACKGROUND_COLOR: &str = "gauge_background_color";
 pub const GAUGE_BORDER_COLOR: &str = "gauge_border_color";
@@ -514,6 +523,15 @@ impl UIStyle {
         self.set(GLOBAL_FONT_PATH, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
         self.set(GLOBAL_FONT_SIZE, UIStyleValue::Integer(16));
         
+        // Page manager defaults
+        self.set(PAGE_BUTTON_LABEL_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
+        self.set(PAGE_BUTTON_LABEL_FONT_SIZE, UIStyleValue::Integer(14));
+        self.set(PAGE_BUTTON_LABEL_ORIENTATION, UIStyleValue::String("horizontal".to_string()));
+        self.set(PAGE_BUTTON_LABEL_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
+        self.set(PAGE_STATUS_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
+        self.set(PAGE_STATUS_FONT_SIZE, UIStyleValue::Integer(12));
+        self.set(PAGE_STATUS_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
+
         // Gauge defaults
         self.set(GAUGE_BACKGROUND_COLOR, UIStyleValue::Color("#000000".to_string()));
         self.set(GAUGE_BORDER_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
