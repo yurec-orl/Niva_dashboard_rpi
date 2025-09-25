@@ -75,6 +75,7 @@ pub const GAUGE_MAJOR_MARK_WIDTH: &str = "gauge_major_mark_width";
 pub const GAUGE_MAJOR_MARK_LENGTH: &str = "gauge_major_mark_length";
 pub const GAUGE_MAJOR_MARK_OFFSET: &str = "gauge_major_mark_offset";
 pub const GAUGE_MAJOR_MARK_ENABLED: &str = "gauge_major_mark_enabled";
+pub const GAUGE_MAJOR_MARK_COUNT: &str = "gauge_major_mark_count";
 
 pub const GAUGE_MINOR_MARK_COLOR: &str = "gauge_minor_mark_color";
 pub const GAUGE_MINOR_MARK_WIDTH: &str = "gauge_minor_mark_width";
@@ -542,9 +543,9 @@ impl UIStyle {
         
         // Needle defaults
         self.set(GAUGE_NEEDLE_COLOR, UIStyleValue::Color("#FF0000".to_string()));
-        self.set(GAUGE_NEEDLE_WIDTH, UIStyleValue::Float(4.0));
+        self.set(GAUGE_NEEDLE_WIDTH, UIStyleValue::Float(8.0));
         self.set(GAUGE_NEEDLE_LENGTH, UIStyleValue::Float(0.8));
-        self.set(GAUGE_NEEDLE_TIP_WIDTH, UIStyleValue::Float(1.0));
+        self.set(GAUGE_NEEDLE_TIP_WIDTH, UIStyleValue::Float(2.0));
         self.set(GAUGE_NEEDLE_CENTER_COLOR, UIStyleValue::Color("#404040".to_string()));
         self.set(GAUGE_NEEDLE_CENTER_RADIUS, UIStyleValue::Float(8.0));
         self.set(GAUGE_NEEDLE_SHADOW_ENABLED, UIStyleValue::Boolean(false));
@@ -554,22 +555,23 @@ impl UIStyle {
         // Gauge marks defaults
         self.set(GAUGE_MAJOR_MARK_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
         self.set(GAUGE_MAJOR_MARK_WIDTH, UIStyleValue::Float(2.0));
-        self.set(GAUGE_MAJOR_MARK_LENGTH, UIStyleValue::Float(15.0));
-        self.set(GAUGE_MAJOR_MARK_OFFSET, UIStyleValue::Float(5.0));
+        self.set(GAUGE_MAJOR_MARK_LENGTH, UIStyleValue::Float(16.0));
+        self.set(GAUGE_MAJOR_MARK_OFFSET, UIStyleValue::Float(0.0));
         self.set(GAUGE_MAJOR_MARK_ENABLED, UIStyleValue::Boolean(true));
-        
-        self.set(GAUGE_MINOR_MARK_COLOR, UIStyleValue::Color("#808080".to_string()));
-        self.set(GAUGE_MINOR_MARK_WIDTH, UIStyleValue::Float(1.0));
-        self.set(GAUGE_MINOR_MARK_LENGTH, UIStyleValue::Float(8.0));
-        self.set(GAUGE_MINOR_MARK_OFFSET, UIStyleValue::Float(5.0));
+        self.set(GAUGE_MAJOR_MARK_COUNT, UIStyleValue::Integer(10));
+
+        self.set(GAUGE_MINOR_MARK_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
+        self.set(GAUGE_MINOR_MARK_WIDTH, UIStyleValue::Float(2.0));
+        self.set(GAUGE_MINOR_MARK_LENGTH, UIStyleValue::Float(10.0));
+        self.set(GAUGE_MINOR_MARK_OFFSET, UIStyleValue::Float(0.0));
         self.set(GAUGE_MINOR_MARK_ENABLED, UIStyleValue::Boolean(true));
-        self.set(GAUGE_MINOR_MARK_COUNT, UIStyleValue::Integer(4));
+        self.set(GAUGE_MINOR_MARK_COUNT, UIStyleValue::Integer(37));
         
         // Label defaults
         self.set(GAUGE_LABEL_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
         self.set(GAUGE_LABEL_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
         self.set(GAUGE_LABEL_FONT_SIZE, UIStyleValue::Integer(14));
-        self.set(GAUGE_LABEL_OFFSET, UIStyleValue::Float(40.0));
+        self.set(GAUGE_LABEL_OFFSET, UIStyleValue::Float(-35.0));   // Negative to move inside the gauge
         self.set(GAUGE_LABEL_ENABLED, UIStyleValue::Boolean(true));
         
         self.set(GAUGE_TITLE_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
@@ -581,9 +583,9 @@ impl UIStyle {
         
         self.set(GAUGE_UNIT_COLOR, UIStyleValue::Color("#727272ff".to_string()));
         self.set(GAUGE_UNIT_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
-        self.set(GAUGE_UNIT_FONT_SIZE, UIStyleValue::Integer(12));
+        self.set(GAUGE_UNIT_FONT_SIZE, UIStyleValue::Integer(16));
         self.set(GAUGE_UNIT_OFFSET_H, UIStyleValue::Float(0.0));
-        self.set(GAUGE_UNIT_OFFSET_V, UIStyleValue::Float(20.0));
+        self.set(GAUGE_UNIT_OFFSET_V, UIStyleValue::Float(50.0));
         self.set(GAUGE_UNIT_ENABLED, UIStyleValue::Boolean(true));
         
         // Zone defaults

@@ -1,6 +1,6 @@
 use crate::indicators::{Indicator, IndicatorBounds};
 use crate::indicators::needle_indicator::{NeedleIndicator, NeedleGaugeMarksDecorator, NeedleGaugeMarkLabelsDecorator};
-use crate::indicators::decorator::ArcDecorator;
+use crate::indicators::decorator::{LabelDecorator, ArcDecorator, DecoratorAlignmentH, DecoratorAlignmentV};
 use crate::graphics::ui_style::*;
 use std::f32::consts::PI;
 
@@ -33,20 +33,22 @@ pub fn build_fuel_level_gauge(
     let inactive_arc_color = ui_style.get_color(GAUGE_INACTIVE_ZONE_COLOR, (0.2, 0.2, 0.2));
     let arc_width = ui_style.get_float(GAUGE_INACTIVE_ZONE_WIDTH, 4.0);
 
-    // Style parameters from UI configuration
-    let major_marks_color = ui_style.get_color(GAUGE_MAJOR_MARK_COLOR, (1.0, 1.0, 1.0));
-    let minor_marks_color = ui_style.get_color(GAUGE_MINOR_MARK_COLOR, (1.0, 1.0, 1.0));
-
     // Label styling from UI configuration
     let gauge_labels_font = ui_style.get_string(GAUGE_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
     let gauge_labels_font_size = ui_style.get_integer(GAUGE_LABEL_FONT_SIZE, 10) as u32;
     let gauge_labels_color = ui_style.get_color(GAUGE_LABEL_COLOR, (1.0, 1.0, 1.0));
-    let gauge_labels_offset = ui_style.get_float(GAUGE_LABEL_OFFSET, 30.0);
+    let gauge_labels_offset = ui_style.get_float(GAUGE_LABEL_OFFSET, -35.0);
 
+    // Mark lengths and thicknesses
     let gauge_minor_mark_length = ui_style.get_float(GAUGE_MINOR_MARK_LENGTH, 6.0);
     let gauge_minor_mark_thickness = ui_style.get_float(GAUGE_MINOR_MARK_WIDTH, 2.0);
     let gauge_major_mark_length = ui_style.get_float(GAUGE_MAJOR_MARK_LENGTH, 12.0);
     let gauge_major_mark_thickness = ui_style.get_float(GAUGE_MAJOR_MARK_WIDTH, 4.0);
+    let gauge_major_marks_color = ui_style.get_color(GAUGE_MAJOR_MARK_COLOR, (1.0, 1.0, 1.0));
+    let gauge_minor_marks_color = ui_style.get_color(GAUGE_MINOR_MARK_COLOR, (1.0, 1.0, 1.0));
+
+    let unit_offset_h = ui_style.get_float(GAUGE_UNIT_OFFSET_H, 0.0);
+    let unit_offset_v = ui_style.get_float(GAUGE_UNIT_OFFSET_V, 20.0);
 
     let fuel_gauge = NeedleIndicator::new(
         start_angle,
@@ -56,26 +58,6 @@ pub fn build_fuel_level_gauge(
         needle_tip_width,
         needle_color,
     ).with_decorators(vec![
-        // Fine marks for fuel level readings
-        Box::new(NeedleGaugeMarksDecorator::new(
-            7, // 7 marks for fuel level (0, 1/6, 2/6, 3/6, 4/6, 5/6, 1)
-            gauge_minor_mark_length,
-            gauge_minor_mark_thickness,
-            minor_marks_color,
-            radius,
-            start_angle,
-            end_angle,
-        )),
-        // Major marks for main fuel levels (Empty, Half, Full)
-        Box::new(NeedleGaugeMarksDecorator::new(
-            3, // 3 major marks (Empty, Half, Full)
-            gauge_major_mark_length,
-            gauge_major_mark_thickness,
-            major_marks_color,
-            radius,
-            start_angle,
-            end_angle,
-        )),
         // Active arc (white) covering the valid range
         Box::new(ArcDecorator::new(
             radius,
@@ -92,13 +74,49 @@ pub fn build_fuel_level_gauge(
             end_angle,
             start_angle + 2.0 * PI, // Complete the circle
         )),
+        // Warning zone arc (yellow) at low end
+        Box::new(ArcDecorator::new(
+            radius - gauge_major_mark_length / 2.0,
+            gauge_major_mark_length,    // Thick arc section to mark low fuel
+            ui_style.get_color(GAUGE_WARNING_ZONE_COLOR, (1.0, 1.0, 0.0)),
+            start_angle,
+            start_angle + 45.0f32.to_radians(),
+        )),
+        // Fine marks for fuel level readings
+        Box::new(NeedleGaugeMarksDecorator::new(
+            7, // 7 marks
+            gauge_minor_mark_length,
+            gauge_minor_mark_thickness,
+            gauge_minor_marks_color,
+            radius,
+            start_angle,
+            end_angle,
+        )),
+        // Major marks for main fuel levels (Empty, Half, Full)
+        Box::new(NeedleGaugeMarksDecorator::new(
+            3, // 3 major marks (Empty, Half, Full)
+            gauge_major_mark_length,
+            gauge_major_mark_thickness,
+            gauge_major_marks_color,
+            radius,
+            start_angle,
+            end_angle,
+        )),
+        Box::new(LabelDecorator::new( // Fuel level unit label at bottom
+            "л".to_string(),
+            ui_style.get_string(GAUGE_UNIT_FONT, DEFAULT_GLOBAL_FONT_PATH),
+            ui_style.get_integer(GAUGE_UNIT_FONT_SIZE, 14),
+            ui_style.get_color(GAUGE_UNIT_COLOR, (1.0, 1.0, 1.0)),
+            DecoratorAlignmentH::Center,
+            DecoratorAlignmentV::Center,
+        ).with_offset(unit_offset_h, unit_offset_v)),
         // Fuel level labels
         Box::new(NeedleGaugeMarkLabelsDecorator::new(
-            vec!["0".into(), "1/2".into(), "1".into()], // Empty, Half, Full labels
+            vec!["0".into(), "1/2".into(), "4/4".into()], // Empty, Half, Full labels
             gauge_labels_font,
             gauge_labels_font_size,
             gauge_labels_color,
-            radius - gauge_labels_offset, // Position labels inside the arc
+            radius + gauge_labels_offset, // Negative offset moves labels inside the gauge
             start_angle,
             end_angle,
         )),

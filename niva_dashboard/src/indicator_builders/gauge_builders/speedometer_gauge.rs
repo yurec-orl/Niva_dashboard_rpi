@@ -1,6 +1,6 @@
 use crate::indicators::{Indicator, IndicatorBounds};
-use crate::indicators::needle_indicator::{NeedleIndicator, NeedleGaugeMarksDecorator};
-use crate::indicators::decorator::ArcDecorator;
+use crate::indicators::needle_indicator::{NeedleIndicator, NeedleGaugeMarksDecorator, NeedleGaugeMarkLabelsDecorator};
+use crate::indicators::decorator::{LabelDecorator, ArcDecorator, DecoratorAlignmentH, DecoratorAlignmentV};
 use crate::graphics::ui_style::*;
 use std::f32::consts::PI;
 
@@ -33,14 +33,22 @@ pub fn build_speedometer_gauge(
     let inactive_arc_color = ui_style.get_color(GAUGE_INACTIVE_ZONE_COLOR, (0.2, 0.2, 0.2));
     let arc_width = ui_style.get_float(GAUGE_INACTIVE_ZONE_WIDTH, 4.0);
 
-    // Style parameters from UI configuration
-    let major_marks_color = ui_style.get_color(GAUGE_MAJOR_MARK_COLOR, (1.0, 1.0, 1.0));
-    let minor_marks_color = ui_style.get_color(GAUGE_MINOR_MARK_COLOR, (1.0, 1.0, 1.0));
+    // Label styling from UI configuration
+    let gauge_labels_font = ui_style.get_string(GAUGE_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
+    let gauge_labels_font_size = ui_style.get_integer(GAUGE_LABEL_FONT_SIZE, 10) as u32;
+    let gauge_labels_color = ui_style.get_color(GAUGE_LABEL_COLOR, (1.0, 1.0, 1.0));
+    let gauge_labels_offset = ui_style.get_float(GAUGE_LABEL_OFFSET, -35.0);
 
+    // Mark styling
     let gauge_minor_mark_length = ui_style.get_float(GAUGE_MINOR_MARK_LENGTH, 6.0);
     let gauge_minor_mark_thickness = ui_style.get_float(GAUGE_MINOR_MARK_WIDTH, 2.0);
     let gauge_major_mark_length = ui_style.get_float(GAUGE_MAJOR_MARK_LENGTH, 12.0);
     let gauge_major_mark_thickness = ui_style.get_float(GAUGE_MAJOR_MARK_WIDTH, 4.0);
+    let gauge_major_marks_color = ui_style.get_color(GAUGE_MAJOR_MARK_COLOR, (1.0, 1.0, 1.0));
+    let gauge_minor_marks_color = ui_style.get_color(GAUGE_MINOR_MARK_COLOR, (1.0, 1.0, 1.0));
+
+    let unit_offset_h = ui_style.get_float(GAUGE_UNIT_OFFSET_H, 0.0);
+    let unit_offset_v = ui_style.get_float(GAUGE_UNIT_OFFSET_V, 20.0);
 
     let speedometer = NeedleIndicator::new(
         start_angle,
@@ -55,17 +63,17 @@ pub fn build_speedometer_gauge(
             37, // 37 marks for 0-180 km/h range (every 5 km/h)
             gauge_minor_mark_length,
             gauge_minor_mark_thickness,
-            minor_marks_color,
+            gauge_minor_marks_color,
             radius,
             start_angle,
             end_angle,
         )),
         // Major marks for main intervals (every 20 km/h)
         Box::new(NeedleGaugeMarksDecorator::new(
-            10, // 10 major marks for 0-180 km/h range
+            19, // 19 major marks for 0-180 km/h range
             gauge_major_mark_length,
             gauge_major_mark_thickness,
-            major_marks_color,
+            gauge_major_marks_color,
             radius,
             start_angle,
             end_angle,
@@ -85,6 +93,23 @@ pub fn build_speedometer_gauge(
             inactive_arc_color,
             end_angle,
             start_angle + 2.0 * PI, // Complete the circle
+        )),
+        Box::new(LabelDecorator::new( // Speed label at bottom
+            "км/ч".to_string(),
+            ui_style.get_string(GAUGE_UNIT_FONT, DEFAULT_GLOBAL_FONT_PATH),
+            ui_style.get_integer(GAUGE_UNIT_FONT_SIZE, 14),
+            ui_style.get_color(GAUGE_UNIT_COLOR, (1.0, 1.0, 1.0)),
+            DecoratorAlignmentH::Center,
+            DecoratorAlignmentV::Center,
+        ).with_offset(unit_offset_h, unit_offset_v)), // slight offset to avoid overlap
+        Box::new(NeedleGaugeMarkLabelsDecorator::new(
+            (0..=9).map(|v| (v * 20).to_string()).collect(), // 0, 20, ..., 180 km/h labels
+            gauge_labels_font,
+            gauge_labels_font_size,
+            gauge_labels_color,
+            radius + gauge_labels_offset, // Negative offset moves labels inside the gauge
+            start_angle,
+            end_angle,
         )),
     ]);
 

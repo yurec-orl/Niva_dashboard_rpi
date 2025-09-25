@@ -1,6 +1,6 @@
 use crate::indicators::{Indicator, IndicatorBounds};
-use crate::indicators::needle_indicator::{NeedleIndicator, NeedleGaugeMarksDecorator};
-use crate::indicators::decorator::ArcDecorator;
+use crate::indicators::needle_indicator::{NeedleIndicator, NeedleGaugeMarksDecorator, NeedleGaugeMarkLabelsDecorator};
+use crate::indicators::decorator::{LabelDecorator, ArcDecorator, DecoratorAlignmentH, DecoratorAlignmentV};
 use crate::graphics::ui_style::*;
 use std::f32::consts::PI;
 
@@ -33,6 +33,12 @@ pub fn build_temperature_gauge(
     let inactive_arc_color = ui_style.get_color(GAUGE_INACTIVE_ZONE_COLOR, (0.2, 0.2, 0.2));
     let arc_width = ui_style.get_float(GAUGE_INACTIVE_ZONE_WIDTH, 4.0);
 
+    // Label styling from UI configuration
+    let gauge_labels_font = ui_style.get_string(GAUGE_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
+    let gauge_labels_font_size = ui_style.get_integer(GAUGE_LABEL_FONT_SIZE, 10) as u32;
+    let gauge_labels_color = ui_style.get_color(GAUGE_LABEL_COLOR, (1.0, 1.0, 1.0));
+    let gauge_labels_offset = ui_style.get_float(GAUGE_LABEL_OFFSET, -35.0);
+
     // Style parameters from UI configuration
     let major_marks_color = ui_style.get_color(GAUGE_MAJOR_MARK_COLOR, (1.0, 1.0, 1.0));
     let minor_marks_color = ui_style.get_color(GAUGE_MINOR_MARK_COLOR, (1.0, 1.0, 1.0));
@@ -42,6 +48,9 @@ pub fn build_temperature_gauge(
     let gauge_major_mark_length = ui_style.get_float(GAUGE_MAJOR_MARK_LENGTH, 12.0);
     let gauge_major_mark_thickness = ui_style.get_float(GAUGE_MAJOR_MARK_WIDTH, 4.0);
 
+    let unit_offset_h = ui_style.get_float(GAUGE_UNIT_OFFSET_H, 0.0);
+    let unit_offset_v = ui_style.get_float(GAUGE_UNIT_OFFSET_V, 20.0);
+
     let temperature_gauge = NeedleIndicator::new(
         start_angle,
         end_angle,
@@ -50,6 +59,30 @@ pub fn build_temperature_gauge(
         needle_tip_width,
         needle_color,
     ).with_decorators(vec![
+        // Active arc (white) covering the valid range
+        Box::new(ArcDecorator::new(
+            radius,
+            arc_width,
+            arc_color,
+            start_angle,
+            end_angle,
+        )),
+        // Inactive arc (dark grey) for the remaining circle
+        Box::new(ArcDecorator::new(
+            radius,
+            arc_width, // Arc thickness
+            inactive_arc_color,
+            end_angle,
+            start_angle + 2.0 * PI, // Complete the circle
+        )),
+        // Critical temperature zone arc (red) at high end
+        Box::new(ArcDecorator::new(
+            radius - gauge_major_mark_length / 2.0,
+            gauge_major_mark_length,    // Thick arc section to mark critical temp
+            ui_style.get_color(GAUGE_CRITICAL_ZONE_COLOR, (1.0, 0.0, 0.0)),
+            end_angle - 45.0f32.to_radians(), // Start a bit before the end angle
+            end_angle,
+        )),
         // Fine marks for temperature readings (50-120°C)
         Box::new(NeedleGaugeMarksDecorator::new(
             7, // 7 marks for temperature range
@@ -70,21 +103,23 @@ pub fn build_temperature_gauge(
             start_angle,
             end_angle,
         )),
-        // Active arc (white) covering the valid range
-        Box::new(ArcDecorator::new(
-            radius,
-            arc_width,
-            arc_color,
+        Box::new(LabelDecorator::new( // Temperature unit label at bottom
+            "°C".to_string(),
+            ui_style.get_string(GAUGE_UNIT_FONT, DEFAULT_GLOBAL_FONT_PATH),
+            ui_style.get_integer(GAUGE_UNIT_FONT_SIZE, 14),
+            ui_style.get_color(GAUGE_UNIT_COLOR, (1.0, 1.0, 1.0)),
+            DecoratorAlignmentH::Center,
+            DecoratorAlignmentV::Center,
+        ).with_offset(unit_offset_h, unit_offset_v)),
+        // Temperature level labels
+        Box::new(NeedleGaugeMarkLabelsDecorator::new(
+            vec!["50".into(), "90".into(), "130".into()], // Temperature labels in °C
+            gauge_labels_font,
+            gauge_labels_font_size,
+            gauge_labels_color,
+            radius + gauge_labels_offset, // Negative offset moves labels inside the gauge
             start_angle,
             end_angle,
-        )),
-        // Inactive arc (dark grey) for the remaining circle
-        Box::new(ArcDecorator::new(
-            radius,
-            arc_width, // Arc thickness
-            inactive_arc_color,
-            end_angle,
-            start_angle + 2.0 * PI, // Complete the circle
         )),
     ]);
 

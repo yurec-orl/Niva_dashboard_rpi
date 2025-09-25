@@ -516,11 +516,8 @@ impl NeedleGaugeMarkLabelsDecorator {
         let cos_a = angle.cos();
         let sin_a = angle.sin();
         
-        // Position labels slightly outside the marks
-        let label_radius = self.radius + 15.0; // Add some offset from the marks
-        
-        let x = center_x + cos_a * label_radius;
-        let y = center_y + sin_a * label_radius;
+        let x = center_x + cos_a * self.radius;
+        let y = center_y + sin_a * self.radius;
         
         (x, y)
     }

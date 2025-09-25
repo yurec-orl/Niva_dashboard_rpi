@@ -35,6 +35,8 @@ pub struct LabelDecorator {
     color: (f32, f32, f32),
     alignment_h: DecoratorAlignmentH,
     alignment_v: DecoratorAlignmentV,
+    offset_h: f32,
+    offset_v: f32,
 }
 
 impl LabelDecorator {
@@ -54,7 +56,15 @@ impl LabelDecorator {
             color,
             alignment_h,
             alignment_v,
+            offset_h: 0.0,
+            offset_v: 0.0,
         }
+    }
+
+    pub fn with_offset(mut self, offset_h: f32, offset_v: f32) -> Self {
+        self.offset_h = offset_h;
+        self.offset_v = offset_v;
+        self
     }
 
     /// Calculate label position based on bounds and alignment
@@ -77,7 +87,7 @@ impl LabelDecorator {
             DecoratorAlignmentH::Center => bounds.x + (bounds.width - text_width) / 2.0,
         };
         
-        Ok((x, y))
+        Ok((x + self.offset_h, y + self.offset_v))
     }
 }
 
