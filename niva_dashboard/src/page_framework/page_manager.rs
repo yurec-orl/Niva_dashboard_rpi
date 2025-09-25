@@ -8,6 +8,7 @@ use crate::hardware::sensor_manager::SensorManager;
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
+use std::fs;
 
 const STATUS_LINE_MARGIN: f32 = 25.0;
 
@@ -444,9 +445,9 @@ impl PageManager {
             }
 
             // Exit condition (for now, run for 30 seconds)
-            if self.start_time.elapsed() > Duration::from_secs(10) {
-                self.running = false;
-            }
+            //if self.start_time.elapsed() > Duration::from_secs(10) {
+            //    self.running = false;
+            //}
         }
         
         print!("Event loop finished\r\n");
@@ -613,6 +614,9 @@ impl PageManager {
         let fps = self.fps_counter.get_fps();
         let frame_count = self.fps_counter.get_frame_count();
         
+        // Get memory information
+        let (mem_total, mem_available) = self.get_memory_info().unwrap_or((0, 0));
+        
         // Format status information
         let total_seconds = elapsed.as_secs();
         let days = total_seconds / 86400;  // 24 * 60 * 60
@@ -622,15 +626,17 @@ impl PageManager {
 
         let status_text = if days > 0 {
             format!(
-                "Работа: {}д {:02}:{:02}:{:02} | К/С: {:.1}",
+                "Работа: {}д {:02}:{:02}:{:02} | К/С: {:.1} | Пам: {}/{}МБ",
                 days, hours, minutes, seconds,
                 fps,
+                mem_available, mem_total
             )
         } else {
             format!(
-                "Работа: {:02}:{:02}:{:02} | К/С: {:.1}",
+                "Работа: {:02}:{:02}:{:02} | К/С: {:.1} | Пам: {}/{}МБ",
                 hours, minutes, seconds,
                 fps,
+                mem_available, mem_total
             )
         };
 
@@ -709,6 +715,36 @@ impl PageManager {
         self.context.decrease_brightness(0.1);
         let current = self.get_brightness();
         print!("Brightness decreased to: {:.1}%\r\n", current * 100.0);
+    }
+
+    // =============================================================================
+    // Memory Information
+    // =============================================================================
+
+    /// Get system memory information (available memory in MB)
+    fn get_memory_info(&self) -> Result<(u32, u32), String> {
+        // Read memory information from /proc/meminfo
+        let meminfo = fs::read_to_string("/proc/meminfo")
+            .map_err(|e| format!("Failed to read /proc/meminfo: {}", e))?;
+        
+        let mut mem_total = 0;
+        let mut mem_available = 0;
+        
+        for line in meminfo.lines() {
+            if line.starts_with("MemTotal:") {
+                mem_total = line.split_whitespace()
+                    .nth(1)
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .unwrap_or(0) / 1024; // Convert KB to MB
+            } else if line.starts_with("MemAvailable:") {
+                mem_available = line.split_whitespace()
+                    .nth(1)
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .unwrap_or(0) / 1024; // Convert KB to MB
+            }
+        }
+        
+        Ok((mem_total, mem_available))
     }
 
 }
