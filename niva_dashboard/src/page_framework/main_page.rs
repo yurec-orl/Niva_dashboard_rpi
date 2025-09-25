@@ -7,12 +7,11 @@ use crate::hardware::hw_providers::{*};
 use crate::hardware::sensor_value::SensorValue;
 use crate::indicators::{Indicator, IndicatorBounds};
 use crate::indicators::text_indicator::{TextIndicator, TextAlignment};
-use crate::indicators::gauge_indicator::GaugeIndicator;
-use crate::indicators::vertical_bar_indicator::{VerticalBarIndicator, VerticalBarScaleDecorator};
-use crate::indicators::digital_segmented_indicator::DigitalSegmentedIndicator;
-use crate::indicators::needle_indicator::{NeedleIndicator, NeedleGaugeMarksDecorator, NeedleGaugeMarkLabelsDecorator};
-use crate::indicators::decorator::{Decorator, LabelDecorator, ArcDecorator, DecoratorAlignmentH, DecoratorAlignmentV};
-use crate::gauge_builders::{build_speedometer_gauge, build_fuel_level_gauge, build_oil_pressure_gauge, build_temperature_gauge, build_voltage_gauge};
+use crate::indicator_builders::{
+    build_speedometer_gauge, build_fuel_level_gauge, build_oil_pressure_gauge, build_temperature_gauge, build_voltage_gauge,
+    build_oil_pressure_bar, build_fuel_level_bar, build_temperature_bar, build_voltage_bar,
+    build_speed_digital
+};
 use crate::page_framework::events::UIEvent;
 
 struct IndicatorSet {
@@ -176,8 +175,8 @@ impl MainPage {
     fn setup_bar_indicators(context: &GraphicsContext, ui_style: &UIStyle) -> IndicatorSet {
         let mut indicators: Vec<Box<dyn Indicator>> = Vec::new();
         let inputs: Vec<HWInput> = vec![
-            HWInput::HwFuelLvl,
             HWInput::HwOilPress,
+            HWInput::HwFuelLvl,
             HWInput::HwEngineCoolantTemp,
             HWInput::Hw12v,
             HWInput::HwSpeed,
@@ -190,177 +189,65 @@ impl MainPage {
         let button_margin = 40.0; // Space for buttons on left/right
         let top_margin = 40.0;
         let available_width = screen_width - 2.0 * button_margin;
-        let available_height = screen_height - top_margin - 40.0;
-
+        
         // Arrange vertical bar indicators in a row
         let bar_width = 52.0;
         let bar_height = 200.0;
 
-        let font_path = ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH);
-        let font_size = ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 14) as u32;
-        let text_color = ui_style.get_color(BAR_MARK_LABELS_COLOR, (0.45, 0.45, 0.45));
-        
-        let marks_color = ui_style.get_color(BAR_MARKS_COLOR, (1.0, 0.5, 0.0));
-        let marks_width = ui_style.get_float(BAR_MARKS_WIDTH, 10.0);
-        let marks_thickness = ui_style.get_float(BAR_MARKS_THICKNESS, 4.0);
-
-        // Oil pressure indicator
-        indicators.push(Box::new(VerticalBarIndicator::new(10)
-            .with_segment_gap(4.0)
-            .with_decorators(vec![Box::new(LabelDecorator::new(
-                    "МАСЛО".into(),
-                    font_path.clone(),
-                    font_size,
-                    text_color,
-                    DecoratorAlignmentH::Center,
-                    DecoratorAlignmentV::Top,
-                )),
-                Box::new(LabelDecorator::new(
-                    "кгс/см²".into(),
-                    font_path.clone(),
-                    font_size,
-                    text_color,
-                    DecoratorAlignmentH::Center,
-                    DecoratorAlignmentV::Bottom,
-                )),
-                Box::new(VerticalBarScaleDecorator::new(
-                    vec!["8".into(), "4".into(), "0".into()],
-                    font_path.clone(),
-                    font_size,
-                    text_color,
-                    DecoratorAlignmentH::Left,
-                ).with_scale_marks(marks_color, marks_width, marks_thickness)),
-            ]))
-        ); // Oil Pressure
-        indicator_bounds.push(IndicatorBounds::new(
+        // Oil pressure indicator (leftmost)
+        let (oil_pressure_bar, oil_pressure_bounds) = build_oil_pressure_bar(
             button_margin + bar_width,
             top_margin,
             bar_width,
-            bar_height
-        ));
+            bar_height,
+            ui_style
+        );
+        indicators.push(oil_pressure_bar);
+        indicator_bounds.push(oil_pressure_bounds);
         
-        // Fuel indicator
-        indicators.push(Box::new(VerticalBarIndicator::new(10)
-            .with_segment_gap(4.0)
-            .with_decorators(vec![Box::new(LabelDecorator::new(
-                    "ТОПЛ".into(),
-                    ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
-                    ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32,
-                    ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
-                    DecoratorAlignmentH::Center,
-                    DecoratorAlignmentV::Top,
-                )),
-                Box::new(LabelDecorator::new(
-                    "%".into(),
-                    ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
-                    ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32,
-                    ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
-                    DecoratorAlignmentH::Center,
-                    DecoratorAlignmentV::Bottom,
-                )),
-                Box::new(VerticalBarScaleDecorator::new(
-                    vec!["1".into(), "1/2".into(), "0".into()],
-                    ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
-                    ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32,
-                    ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
-                    DecoratorAlignmentH::Left,
-                ).with_scale_marks(marks_color, marks_width, marks_thickness)),
-            ]))
-        ); // Fuel Level
-        indicator_bounds.push(IndicatorBounds::new(
+        // Fuel level indicator
+        let (fuel_level_bar, fuel_level_bounds) = build_fuel_level_bar(
             button_margin + bar_width * 2.0 + 50.0,
             top_margin,
             bar_width,
-            bar_height
-        ));
+            bar_height,
+            ui_style
+        );
+        indicators.push(fuel_level_bar);
+        indicator_bounds.push(fuel_level_bounds);
 
-        indicators.push(Box::new(VerticalBarIndicator::new(10)
-            .with_segment_gap(4.0)
-            .with_decorators(vec![Box::new(LabelDecorator::new(
-                    "ТЕМП".into(),
-                    ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
-                    ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 14) as u32,
-                    ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
-                    DecoratorAlignmentH::Center,
-                    DecoratorAlignmentV::Top,
-                )),
-                Box::new(LabelDecorator::new(
-                    "°C".into(),
-                    ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
-                    ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32,
-                    ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
-                    DecoratorAlignmentH::Center,
-                    DecoratorAlignmentV::Bottom,
-                )),
-                Box::new(VerticalBarScaleDecorator::new(
-                    vec!["120-".into(), "90-".into(), "50-".into()],
-                    ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
-                    ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32,
-                    ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
-                    DecoratorAlignmentH::Left,
-                ).with_scale_marks(marks_color, marks_width, marks_thickness)),
-            ]))
-        ); // Engine Coolant Temp
-        indicator_bounds.push(IndicatorBounds::new(
+        // Temperature indicator
+        let (temperature_bar, temperature_bounds) = build_temperature_bar(
             available_width - bar_width * 2.0 - 50.0,
             top_margin,
             bar_width,
-            bar_height
-        ));
+            bar_height,
+            ui_style
+        );
+        indicators.push(temperature_bar);
+        indicator_bounds.push(temperature_bounds);
 
-        indicators.push(Box::new(VerticalBarIndicator::new(10)
-            .with_segment_gap(4.0)
-            .with_decorators(vec![Box::new(LabelDecorator::new(
-                "СЕТЬ".into(),
-                    ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
-                    ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 14) as u32,
-                    ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
-                    DecoratorAlignmentH::Center,
-                    DecoratorAlignmentV::Top,
-                )),
-                Box::new(LabelDecorator::new(
-                    "В".into(),
-                    ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
-                    ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32,
-                    ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
-                    DecoratorAlignmentH::Center,
-                    DecoratorAlignmentV::Bottom,
-                )),
-                Box::new(VerticalBarScaleDecorator::new(
-                    vec!["16-".into(), "12-".into(), "8-".into()],
-                    ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
-                    ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32,
-                    ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
-                    DecoratorAlignmentH::Left,
-                ).with_scale_marks(marks_color, marks_width, marks_thickness)),
-            ]))
-        ); // Battery Charge
-        indicator_bounds.push(IndicatorBounds::new(
+        // Voltage indicator (rightmost)
+        let (voltage_bar, voltage_bounds) = build_voltage_bar(
             available_width - bar_width,
             top_margin,
             bar_width,
-            bar_height
-        ));
+            bar_height,
+            ui_style
+        );
+        indicators.push(voltage_bar);
+        indicator_bounds.push(voltage_bounds);
 
-        indicators.push(Box::new(DigitalSegmentedIndicator::integer(3)
-            .with_inactive_segments(true)
-            .with_decorators(vec![Box::new(LabelDecorator::new(
-                "км/ч".into(),
-                ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH),
-                ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32,
-                ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45)),
-                DecoratorAlignmentH::Right,
-                DecoratorAlignmentV::Bottom,
-            ))
-            ]))
-        ); // Speed
-        // Centered on screen
-        indicator_bounds.push(IndicatorBounds::new(
+        // Speed digital display (centered)
+        let (speed_digital, speed_bounds) = build_speed_digital(
             (screen_width - 200.0) / 2.0,
             top_margin,
             200.0,
-            80.0
-        ));
+            80.0,
+            ui_style
+        );
+        indicators.push(speed_digital);
+        indicator_bounds.push(speed_bounds);
 
         IndicatorSet { indicators, inputs, indicator_bounds }
     }
