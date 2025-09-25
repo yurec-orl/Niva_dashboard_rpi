@@ -7,7 +7,7 @@
 //! Example JSON format:
 //! ```json
 //! {
-//!   "needle_color": "#FF0000",
+//!   "GAUGE_NEEDLE_COLOR": "#FF0000",
 //!   "gauge_background_color": "#000000",
 //!   "gauge_mark_font": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 //!   "gauge_mark_font_size": 14,
@@ -59,15 +59,15 @@ pub const GAUGE_BORDER_WIDTH: &str = "gauge_border_width";
 pub const GAUGE_RADIUS: &str = "gauge_radius";
 
 // Gauge Needle
-pub const NEEDLE_COLOR: &str = "needle_color";
-pub const NEEDLE_WIDTH: &str = "needle_width";
-pub const NEEDLE_LENGTH: &str = "needle_length";
-pub const NEEDLE_TIP_WIDTH: &str = "needle_tip_width";
-pub const NEEDLE_CENTER_COLOR: &str = "needle_center_color";
-pub const NEEDLE_CENTER_RADIUS: &str = "needle_center_radius";
-pub const NEEDLE_SHADOW_ENABLED: &str = "needle_shadow_enabled";
-pub const NEEDLE_SHADOW_COLOR: &str = "needle_shadow_color";
-pub const NEEDLE_GLOW_ENABLED: &str = "needle_glow_enabled";
+pub const GAUGE_NEEDLE_COLOR: &str = "GAUGE_NEEDLE_COLOR";
+pub const GAUGE_NEEDLE_WIDTH: &str = "GAUGE_NEEDLE_WIDTH";
+pub const GAUGE_NEEDLE_LENGTH: &str = "GAUGE_NEEDLE_LENGTH";
+pub const GAUGE_NEEDLE_TIP_WIDTH: &str = "GAUGE_NEEDLE_TIP_WIDTH";
+pub const GAUGE_NEEDLE_CENTER_COLOR: &str = "GAUGE_NEEDLE_CENTER_COLOR";
+pub const GAUGE_NEEDLE_CENTER_RADIUS: &str = "GAUGE_NEEDLE_CENTER_RADIUS";
+pub const GAUGE_NEEDLE_SHADOW_ENABLED: &str = "GAUGE_NEEDLE_SHADOW_ENABLED";
+pub const GAUGE_NEEDLE_SHADOW_COLOR: &str = "GAUGE_NEEDLE_SHADOW_COLOR";
+pub const GAUGE_NEEDLE_GLOW_ENABLED: &str = "GAUGE_NEEDLE_GLOW_ENABLED";
 
 // Gauge Marks
 pub const GAUGE_MAJOR_MARK_COLOR: &str = "gauge_major_mark_color";
@@ -93,27 +93,29 @@ pub const GAUGE_LABEL_ENABLED: &str = "gauge_label_enabled";
 pub const GAUGE_TITLE_COLOR: &str = "gauge_title_color";
 pub const GAUGE_TITLE_FONT: &str = "gauge_title_font";
 pub const GAUGE_TITLE_FONT_SIZE: &str = "gauge_title_font_size";
-pub const GAUGE_TITLE_OFFSET: &str = "gauge_title_offset";
+pub const GAUGE_TITLE_OFFSET_H: &str = "gauge_title_offset_h";
+pub const GAUGE_TITLE_OFFSET_V: &str = "gauge_title_offset_v";
 pub const GAUGE_TITLE_ENABLED: &str = "gauge_title_enabled";
 
 pub const GAUGE_UNIT_COLOR: &str = "gauge_unit_color";
 pub const GAUGE_UNIT_FONT: &str = "gauge_unit_font";
 pub const GAUGE_UNIT_FONT_SIZE: &str = "gauge_unit_font_size";
-pub const GAUGE_UNIT_OFFSET: &str = "gauge_unit_offset";
+pub const GAUGE_UNIT_OFFSET_H: &str = "gauge_unit_offset_h";
+pub const GAUGE_UNIT_OFFSET_V: &str = "gauge_unit_offset_v";
 pub const GAUGE_UNIT_ENABLED: &str = "gauge_unit_enabled";
 
 // Gauge Zones
 pub const GAUGE_WARNING_ZONE_COLOR: &str = "gauge_warning_zone_color";
-pub const GAUGE_WARNING_ZONE_START: &str = "gauge_warning_zone_start";
-pub const GAUGE_WARNING_ZONE_END: &str = "gauge_warning_zone_end";
 pub const GAUGE_WARNING_ZONE_WIDTH: &str = "gauge_warning_zone_width";
 pub const GAUGE_WARNING_ZONE_ENABLED: &str = "gauge_warning_zone_enabled";
 
 pub const GAUGE_CRITICAL_ZONE_COLOR: &str = "gauge_critical_zone_color";
-pub const GAUGE_CRITICAL_ZONE_START: &str = "gauge_critical_zone_start";
-pub const GAUGE_CRITICAL_ZONE_END: &str = "gauge_critical_zone_end";
 pub const GAUGE_CRITICAL_ZONE_WIDTH: &str = "gauge_critical_zone_width";
 pub const GAUGE_CRITICAL_ZONE_ENABLED: &str = "gauge_critical_zone_enabled";
+
+pub const GAUGE_INACTIVE_ZONE_COLOR: &str = "gauge_inactive_zone_color";
+pub const GAUGE_INACTIVE_ZONE_WIDTH: &str = "gauge_inactive_zone_width";
+pub const GAUGE_INACTIVE_ZONE_ENABLED: &str = "gauge_inactive_zone_enabled";
 
 // Bar Indicator Style Elements
 pub const BAR_BACKGROUND_COLOR: &str = "bar_background_color";
@@ -525,7 +527,7 @@ impl UIStyle {
         
         // Page manager defaults
         self.set(PAGE_BUTTON_LABEL_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
-        self.set(PAGE_BUTTON_LABEL_FONT_SIZE, UIStyleValue::Integer(14));
+        self.set(PAGE_BUTTON_LABEL_FONT_SIZE, UIStyleValue::Integer(16));
         self.set(PAGE_BUTTON_LABEL_ORIENTATION, UIStyleValue::String("vertical".to_string()));
         self.set(PAGE_BUTTON_LABEL_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
         self.set(PAGE_STATUS_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
@@ -539,15 +541,15 @@ impl UIStyle {
         self.set(GAUGE_RADIUS, UIStyleValue::Float(80.0));
         
         // Needle defaults
-        self.set(NEEDLE_COLOR, UIStyleValue::Color("#FF0000".to_string()));
-        self.set(NEEDLE_WIDTH, UIStyleValue::Float(4.0));
-        self.set(NEEDLE_LENGTH, UIStyleValue::Float(0.8));
-        self.set(NEEDLE_TIP_WIDTH, UIStyleValue::Float(1.0));
-        self.set(NEEDLE_CENTER_COLOR, UIStyleValue::Color("#404040".to_string()));
-        self.set(NEEDLE_CENTER_RADIUS, UIStyleValue::Float(8.0));
-        self.set(NEEDLE_SHADOW_ENABLED, UIStyleValue::Boolean(false));
-        self.set(NEEDLE_SHADOW_COLOR, UIStyleValue::Color("#000000".to_string()));
-        self.set(NEEDLE_GLOW_ENABLED, UIStyleValue::Boolean(false));
+        self.set(GAUGE_NEEDLE_COLOR, UIStyleValue::Color("#FF0000".to_string()));
+        self.set(GAUGE_NEEDLE_WIDTH, UIStyleValue::Float(4.0));
+        self.set(GAUGE_NEEDLE_LENGTH, UIStyleValue::Float(0.8));
+        self.set(GAUGE_NEEDLE_TIP_WIDTH, UIStyleValue::Float(1.0));
+        self.set(GAUGE_NEEDLE_CENTER_COLOR, UIStyleValue::Color("#404040".to_string()));
+        self.set(GAUGE_NEEDLE_CENTER_RADIUS, UIStyleValue::Float(8.0));
+        self.set(GAUGE_NEEDLE_SHADOW_ENABLED, UIStyleValue::Boolean(false));
+        self.set(GAUGE_NEEDLE_SHADOW_COLOR, UIStyleValue::Color("#000000".to_string()));
+        self.set(GAUGE_NEEDLE_GLOW_ENABLED, UIStyleValue::Boolean(false));
 
         // Gauge marks defaults
         self.set(GAUGE_MAJOR_MARK_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
@@ -567,34 +569,36 @@ impl UIStyle {
         self.set(GAUGE_LABEL_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
         self.set(GAUGE_LABEL_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
         self.set(GAUGE_LABEL_FONT_SIZE, UIStyleValue::Integer(14));
-        self.set(GAUGE_LABEL_OFFSET, UIStyleValue::Float(25.0));
+        self.set(GAUGE_LABEL_OFFSET, UIStyleValue::Float(40.0));
         self.set(GAUGE_LABEL_ENABLED, UIStyleValue::Boolean(true));
         
         self.set(GAUGE_TITLE_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
         self.set(GAUGE_TITLE_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf".to_string()));
         self.set(GAUGE_TITLE_FONT_SIZE, UIStyleValue::Integer(16));
-        self.set(GAUGE_TITLE_OFFSET, UIStyleValue::Float(30.0));
+        self.set(GAUGE_TITLE_OFFSET_H, UIStyleValue::Float(0.0));
+        self.set(GAUGE_TITLE_OFFSET_V, UIStyleValue::Float(-20.0));
         self.set(GAUGE_TITLE_ENABLED, UIStyleValue::Boolean(true));
         
         self.set(GAUGE_UNIT_COLOR, UIStyleValue::Color("#727272ff".to_string()));
         self.set(GAUGE_UNIT_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
         self.set(GAUGE_UNIT_FONT_SIZE, UIStyleValue::Integer(12));
-        self.set(GAUGE_UNIT_OFFSET, UIStyleValue::Float(15.0));
+        self.set(GAUGE_UNIT_OFFSET_H, UIStyleValue::Float(0.0));
+        self.set(GAUGE_UNIT_OFFSET_V, UIStyleValue::Float(20.0));
         self.set(GAUGE_UNIT_ENABLED, UIStyleValue::Boolean(true));
         
         // Zone defaults
         self.set(GAUGE_WARNING_ZONE_COLOR, UIStyleValue::Color("#FFAA00".to_string()));
-        self.set(GAUGE_WARNING_ZONE_START, UIStyleValue::Float(75.0));
-        self.set(GAUGE_WARNING_ZONE_END, UIStyleValue::Float(90.0));
-        self.set(GAUGE_WARNING_ZONE_WIDTH, UIStyleValue::Float(5.0));
+        self.set(GAUGE_WARNING_ZONE_WIDTH, UIStyleValue::Float(4.0));
         self.set(GAUGE_WARNING_ZONE_ENABLED, UIStyleValue::Boolean(false));
         
         self.set(GAUGE_CRITICAL_ZONE_COLOR, UIStyleValue::Color("#FF0000".to_string()));
-        self.set(GAUGE_CRITICAL_ZONE_START, UIStyleValue::Float(90.0));
-        self.set(GAUGE_CRITICAL_ZONE_END, UIStyleValue::Float(100.0));
-        self.set(GAUGE_CRITICAL_ZONE_WIDTH, UIStyleValue::Float(5.0));
+        self.set(GAUGE_CRITICAL_ZONE_WIDTH, UIStyleValue::Float(4.0));
         self.set(GAUGE_CRITICAL_ZONE_ENABLED, UIStyleValue::Boolean(false));
         
+        self.set(GAUGE_INACTIVE_ZONE_COLOR, UIStyleValue::Color("#202020".to_string()));
+        self.set(GAUGE_INACTIVE_ZONE_WIDTH, UIStyleValue::Float(4.0));
+        self.set(GAUGE_INACTIVE_ZONE_ENABLED, UIStyleValue::Boolean(true));
+
         // Bar defaults
         self.set(BAR_BACKGROUND_COLOR, UIStyleValue::Color("#404040".to_string()));
         self.set(BAR_BACKGROUND_ENABLED, UIStyleValue::Boolean(false));
@@ -789,14 +793,14 @@ mod tests {
     #[test]
     fn test_json_serialization() {
         let mut style = UIStyle::new();
-        style.set(NEEDLE_COLOR, UIStyleValue::Color("#FF0000".to_string()));
+        style.set(GAUGE_NEEDLE_COLOR, UIStyleValue::Color("#FF0000".to_string()));
         style.set(GAUGE_BORDER_WIDTH, UIStyleValue::Float(2.5));
         style.set(GAUGE_LABEL_ENABLED, UIStyleValue::Boolean(true));
         
         let json = style.to_json().unwrap();
         let loaded_style = UIStyle::from_json(&json).unwrap();
         
-        assert_eq!(loaded_style.get_color(NEEDLE_COLOR, (0.0, 0.0, 0.0)), (1.0, 0.0, 0.0));
+        assert_eq!(loaded_style.get_color(GAUGE_NEEDLE_COLOR, (0.0, 0.0, 0.0)), (1.0, 0.0, 0.0));
         assert_eq!(loaded_style.get_float(GAUGE_BORDER_WIDTH, 0.0), 2.5);
         assert_eq!(loaded_style.get_bool(GAUGE_LABEL_ENABLED, false), true);
     }
@@ -805,9 +809,9 @@ mod tests {
     fn test_brightness_application() {
         let mut style = UIStyle::new();
         style.set(GLOBAL_BRIGHTNESS, UIStyleValue::Float(0.5));
-        style.set(NEEDLE_COLOR, UIStyleValue::Color("#FF0000".to_string()));
+        style.set(GAUGE_NEEDLE_COLOR, UIStyleValue::Color("#FF0000".to_string()));
         
-        let color = style.get_color(NEEDLE_COLOR, (0.0, 0.0, 0.0));
+        let color = style.get_color(GAUGE_NEEDLE_COLOR, (0.0, 0.0, 0.0));
         assert_eq!(color, (0.5, 0.0, 0.0)); // Should be dimmed
     }
 

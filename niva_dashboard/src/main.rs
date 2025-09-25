@@ -3,6 +3,7 @@ mod graphics;
 mod page_framework;
 mod test;
 mod indicators;
+mod gauge_builders;
 
 use crate::test::run_test::run_test;
 use crate::graphics::context::GraphicsContext;

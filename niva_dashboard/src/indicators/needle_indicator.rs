@@ -480,7 +480,7 @@ impl Decorator for NeedleGaugeMarksDecorator {
     }
 }
 
-struct NeedleGaugeMarkLabelsDecorator {
+pub struct NeedleGaugeMarkLabelsDecorator {
     labels: Vec<String>,
     font_path: String,
     font_size: u32,
@@ -488,4 +488,101 @@ struct NeedleGaugeMarkLabelsDecorator {
     radius: f32,
     start_angle: f32,
     end_angle: f32,
+}
+
+impl NeedleGaugeMarkLabelsDecorator {
+    pub fn new(
+        labels: Vec<String>,
+        font_path: String,
+        font_size: u32,
+        color: (f32, f32, f32),
+        radius: f32,
+        start_angle: f32,
+        end_angle: f32,
+    ) -> Self {
+        Self {
+            labels,
+            font_path,
+            font_size,
+            color,
+            radius,
+            start_angle,
+            end_angle,
+        }
+    }
+
+    /// Calculate the position for a label at a specific angle
+    fn calculate_label_position(&self, center_x: f32, center_y: f32, angle: f32) -> (f32, f32) {
+        let cos_a = angle.cos();
+        let sin_a = angle.sin();
+        
+        // Position labels slightly outside the marks
+        let label_radius = self.radius + 15.0; // Add some offset from the marks
+        
+        let x = center_x + cos_a * label_radius;
+        let y = center_y + sin_a * label_radius;
+        
+        (x, y)
+    }
+}
+
+impl Decorator for NeedleGaugeMarkLabelsDecorator {
+    fn render(
+        &self,
+        bounds: IndicatorBounds,
+        _style: &UIStyle,
+        context: &mut GraphicsContext,
+    ) -> Result<(), String> {
+        if self.labels.is_empty() {
+            return Ok(());
+        }
+
+        // Calculate center position
+        let center_x = bounds.x + bounds.width / 2.0;
+        let center_y = bounds.y + bounds.height / 2.0;
+
+        // Calculate angle step between labels
+        let angle_range = self.end_angle - self.start_angle;
+        let angle_step = if self.labels.len() > 1 {
+            angle_range / (self.labels.len() - 1) as f32
+        } else {
+            0.0
+        };
+
+        // Render each label at its calculated position
+        for (i, label) in self.labels.iter().enumerate() {
+            let angle = self.start_angle + (i as f32) * angle_step;
+            
+            // Normalize angle to 0-2π range
+            let normalized_angle = if angle < 0.0 {
+                angle + 2.0 * PI
+            } else {
+                angle % (2.0 * PI)
+            };
+
+            // Calculate label position
+            let (label_x, label_y) = self.calculate_label_position(center_x, center_y, normalized_angle);
+
+            // Center the text at the calculated position
+            // Estimate text width and height for centering
+            let estimated_text_width = label.len() as f32 * self.font_size as f32 * 0.6; // Rough estimate
+            let estimated_text_height = self.font_size as f32;
+            
+            let centered_x = label_x - estimated_text_width / 2.0;
+            let centered_y = label_y - estimated_text_height / 2.0; // Adjust for baseline positioning
+
+            // Render the text label using the graphics context
+            context.render_text_with_font(
+                label,
+                centered_x,
+                centered_y,
+                1.0, // scale
+                self.color,
+                &self.font_path,
+                self.font_size,
+            )?;
+        }
+
+        Ok(())
+    }
 }

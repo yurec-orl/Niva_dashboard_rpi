@@ -10,8 +10,9 @@ use crate::indicators::text_indicator::{TextIndicator, TextAlignment};
 use crate::indicators::gauge_indicator::GaugeIndicator;
 use crate::indicators::vertical_bar_indicator::{VerticalBarIndicator, VerticalBarScaleDecorator};
 use crate::indicators::digital_segmented_indicator::DigitalSegmentedIndicator;
-use crate::indicators::needle_indicator::{NeedleIndicator, NeedleGaugeMarksDecorator};
+use crate::indicators::needle_indicator::{NeedleIndicator, NeedleGaugeMarksDecorator, NeedleGaugeMarkLabelsDecorator};
 use crate::indicators::decorator::{Decorator, LabelDecorator, ArcDecorator, DecoratorAlignmentH, DecoratorAlignmentV};
+use crate::gauge_builders::{build_speedometer_gauge, build_fuel_level_gauge, build_oil_pressure_gauge, build_temperature_gauge, build_voltage_gauge};
 use crate::page_framework::events::UIEvent;
 
 struct IndicatorSet {
@@ -106,7 +107,7 @@ impl MainPage {
         IndicatorSet { indicators, inputs, indicator_bounds }
     }
 
-    fn setup_gauge_indicators(context: &GraphicsContext) -> IndicatorSet {
+    fn setup_gauge_indicators(context: &GraphicsContext, ui_style: &UIStyle) -> IndicatorSet {
         let mut indicators: Vec<Box<dyn Indicator>> = Vec::new();
         let inputs: Vec<HWInput> = vec![
             HWInput::HwSpeed,
@@ -126,217 +127,48 @@ impl MainPage {
         let screen_height = context.height as f32;
         
         // Layout parameters
-        let button_margin = 120.0; // Space for buttons on left/right
-        let top_margin = 80.0;
-        let available_width = screen_width - 2.0 * button_margin;
-        let available_height = screen_height - top_margin - 40.0;
+        let button_margin = 60.0; // Space for buttons on left/right
+        let top_margin = 40.0;
 
         // Central speedometer - large gauge (RPM/Speed)
-        let center_gauge_size = 260.0;
-        let center_x = screen_width / 2.0 - center_gauge_size / 2.0;
-        let center_y = top_margin;
+        let center_gauge_radius = 150.0;
+        let center_x = screen_width / 2.0;
+        let center_y = top_margin + center_gauge_radius;
         
-        indicators.push(Box::new(NeedleIndicator::new(-225.0f32.to_radians(), 45.0f32.to_radians(),
-            center_gauge_size / 2.0 - 20.0, // Needle length
-            8.0, // Needle base width
-            1.0, // Needle tip width
-            (1.0, 0.0, 0.0) // Red needle color
-        ).with_decorators(vec![
-            Box::new(NeedleGaugeMarksDecorator::new(
-                37, // From 0 to 180 with 10 marks (every 5 km/h)
-                6.0, // Mark length
-                2.0, // Mark thickness
-                (1.0, 1.0, 1.0), // White marks
-                center_gauge_size / 2.0,
-                -225.0f32.to_radians(), 45.0f32.to_radians() // Match needle angles
-            )),
-            Box::new(NeedleGaugeMarksDecorator::new(
-                10, // From 0 to 180 with 10 marks (every 20 km/h)
-                12.0, // Mark length
-                4.0, // Mark thickness
-                (1.0, 1.0, 1.0), // White marks
-                center_gauge_size / 2.0,
-                -225.0f32.to_radians(), 45.0f32.to_radians() // Match needle angles
-            )),
-            Box::new(ArcDecorator::new(
-                center_gauge_size / 2.0, // Radius
-                4.0, // Thickness
-                (1.0, 1.0, 1.0), // White arc
-                -225.0f32.to_radians(), 45.0f32.to_radians()
-            )),
-            Box::new(ArcDecorator::new(
-                center_gauge_size / 2.0, // Radius
-                4.0, // Thickness
-                (0.2, 0.2, 0.2), // Dark grey arc
-                45.0f32.to_radians(), 135.0f32.to_radians()
-            )),
-        ])));
-        indicator_bounds.push(IndicatorBounds::new(center_x, center_y, center_gauge_size, center_gauge_size));
+        let (speedometer, speedometer_bounds) = build_speedometer_gauge(center_x, center_y, center_gauge_radius, ui_style);
+        indicators.push(speedometer);
+        indicator_bounds.push(speedometer_bounds);
 
         // Left side gauges - smaller gauges
-        let side_gauge_size = 120.0;
-        let left_x = button_margin;
+        let side_gauge_radius = 90.0;
+        let left_x = button_margin + side_gauge_radius;
         
         // Fuel level gauge (left top)
-        let fuel_y = top_margin;
-        indicators.push(Box::new(NeedleIndicator::new(-225.0f32.to_radians(), 45.0f32.to_radians(),
-            side_gauge_size / 2.0 - 20.0, // Needle length
-            8.0, // Needle base width
-            1.0, // Needle tip width
-            (1.0, 0.0, 0.0) // Red needle color
-            ).with_decorators(vec![
-                Box::new(NeedleGaugeMarksDecorator::new(
-                    11, // From 0 to 10 with 10 marks (every 1 unit)
-                    6.0, // Mark length
-                    2.0, // Mark thickness
-                    (1.0, 1.0, 1.0), // White marks
-                    side_gauge_size / 2.0,
-                    -225.0f32.to_radians(), 45.0f32.to_radians() // Match needle angles
-                )),
-                Box::new(NeedleGaugeMarksDecorator::new(
-                    6, // From 0 to 10 with 5 marks (every 2 units)
-                    12.0, // Mark length
-                    4.0, // Mark thickness
-                    (1.0, 1.0, 1.0), // White marks
-                    side_gauge_size / 2.0,
-                    -225.0f32.to_radians(), 45.0f32.to_radians() // Match needle angles
-                )),
-                Box::new(ArcDecorator::new(
-                    side_gauge_size / 2.0, // Radius
-                    4.0, // Thickness
-                    (1.0, 1.0, 1.0), // White arc
-                    -225.0f32.to_radians(), 45.0f32.to_radians()
-                )),
-                Box::new(ArcDecorator::new(
-                    side_gauge_size / 2.0, // Radius
-                    4.0, // Thickness
-                    (0.2, 0.2, 0.2), // Dark grey arc
-                    45.0f32.to_radians(), 135.0f32.to_radians()
-                )),
-            ])
-        ));
-        indicator_bounds.push(IndicatorBounds::new(left_x, fuel_y, side_gauge_size, side_gauge_size));
+        let fuel_y = top_margin + side_gauge_radius;
+        let (fuel_gauge, fuel_bounds) = build_fuel_level_gauge(left_x, fuel_y, side_gauge_radius, ui_style);
+        indicators.push(fuel_gauge);
+        indicator_bounds.push(fuel_bounds);
         
         // Oil pressure gauge (left bottom)
-        let oil_y = fuel_y + side_gauge_size + 20.0;
-        indicators.push(Box::new(NeedleIndicator::new(-225.0f32.to_radians(), 45.0f32.to_radians(),
-            side_gauge_size / 2.0 - 20.0, // Needle length
-            8.0, // Needle base width
-            1.0, // Needle tip width
-            (1.0, 0.0, 0.0) // Red needle color
-            ).with_decorators(vec![
-                Box::new(NeedleGaugeMarksDecorator::new(
-                    9, // From 0 to 8 with 8 marks (every 1 unit)
-                    6.0, // Mark length
-                    2.0, // Mark thickness
-                    (1.0, 1.0, 1.0), // White marks
-                    side_gauge_size / 2.0,
-                    -225.0f32.to_radians(), 45.0f32.to_radians() // Match needle angles
-                )),
-                Box::new(NeedleGaugeMarksDecorator::new(
-                    5, // From 0 to 8 with 4 marks (every 2 units)
-                    12.0, // Mark length
-                    4.0, // Mark thickness
-                    (1.0, 1.0, 1.0), // White marks
-                    side_gauge_size / 2.0,
-                    -225.0f32.to_radians(), 45.0f32.to_radians() // Match needle angles
-                )),
-                Box::new(ArcDecorator::new(
-                    side_gauge_size / 2.0, // Radius
-                    4.0, // Thickness
-                    (1.0, 1.0, 1.0), // White arc
-                    -225.0f32.to_radians(), 45.0f32.to_radians()
-                )),
-                Box::new(ArcDecorator::new(
-                    side_gauge_size / 2.0, // Radius
-                    4.0, // Thickness
-                    (0.2, 0.2, 0.2), // Dark grey arc
-                    45.0f32.to_radians(), 135.0f32.to_radians()
-                )),
-            ])
-        ));
-        indicator_bounds.push(IndicatorBounds::new(left_x, oil_y, side_gauge_size, side_gauge_size));
+        let oil_y = fuel_y + side_gauge_radius * 2.0 + 20.0;
+        let (oil_gauge, oil_bounds) = build_oil_pressure_gauge(left_x, oil_y, side_gauge_radius, ui_style);
+        indicators.push(oil_gauge);
+        indicator_bounds.push(oil_bounds);
 
         // Right side gauges - smaller gauges
-        let right_x = screen_width - button_margin - side_gauge_size;
+        let right_x = screen_width - button_margin - side_gauge_radius;
         
         // Temperature gauge (right top)
-        let temp_y = top_margin;
-        indicators.push(Box::new(NeedleIndicator::new(-225.0f32.to_radians(), 45.0f32.to_radians(),
-            side_gauge_size / 2.0 - 20.0, // Needle length
-            8.0, // Needle base width
-            1.0, // Needle tip width
-            (1.0, 0.0, 0.0) // Red needle color
-        ).with_decorators(vec![
-            Box::new(NeedleGaugeMarksDecorator::new(
-                11, // From 0 to 10 with 10 marks (every 1 unit)
-                6.0, // Mark length
-                2.0, // Mark thickness
-                (1.0, 1.0, 1.0), // White marks
-                side_gauge_size / 2.0,
-                -225.0f32.to_radians(), 45.0f32.to_radians() // Match needle angles
-            )),
-            Box::new(NeedleGaugeMarksDecorator::new(
-                6, // From 0 to 10 with 5 marks (every 2 units)
-                12.0, // Mark length
-                4.0, // Mark thickness
-                (1.0, 1.0, 1.0), // White marks
-                side_gauge_size / 2.0,
-                -225.0f32.to_radians(), 45.0f32.to_radians() // Match needle angles
-            )),
-            Box::new(ArcDecorator::new(
-                side_gauge_size / 2.0, // Radius
-                4.0, // Thickness
-                (1.0, 1.0, 1.0), // White arc
-                -225.0f32.to_radians(), 45.0f32.to_radians()
-            )),
-            Box::new(ArcDecorator::new(
-                side_gauge_size / 2.0, // Radius
-                4.0, // Thickness
-                (0.2, 0.2, 0.2), // Dark grey arc
-                45.0f32.to_radians(), 135.0f32.to_radians()
-            )),
-        ])));
-        indicator_bounds.push(IndicatorBounds::new(right_x, temp_y, side_gauge_size, side_gauge_size));
+        let temp_y = top_margin + side_gauge_radius;
+        let (temp_gauge, temp_bounds) = build_temperature_gauge(right_x, temp_y, side_gauge_radius, ui_style);
+        indicators.push(temp_gauge);
+        indicator_bounds.push(temp_bounds);
         
         // Battery voltage gauge (right bottom)
-        let battery_y = temp_y + side_gauge_size + 20.0;
-        indicators.push(Box::new(NeedleIndicator::new(-225.0f32.to_radians(), 45.0f32.to_radians(),
-            side_gauge_size / 2.0 - 20.0, // Needle length
-            8.0, // Needle base width
-            1.0, // Needle tip width
-            (1.0, 0.0, 0.0) // Red needle color
-        ).with_decorators(vec![
-            Box::new(NeedleGaugeMarksDecorator::new(
-                11, // From 0 to 10 with 10 marks (every 1 unit)
-                6.0, // Mark length
-                2.0, // Mark thickness
-                (1.0, 1.0, 1.0), // White marks
-                side_gauge_size / 2.0,
-                -225.0f32.to_radians(), 45.0f32.to_radians() // Match needle angles
-            )),
-            Box::new(NeedleGaugeMarksDecorator::new(
-                6, // From 0 to 10 with 5 marks (every 2 units)
-                12.0, // Mark length
-                4.0, // Mark thickness
-                (1.0, 1.0, 1.0), // White marks
-                side_gauge_size / 2.0,
-                -225.0f32.to_radians(), 45.0f32.to_radians() // Match needle angles
-            )),
-            Box::new(ArcDecorator::new(
-                side_gauge_size / 2.0, // Radius
-                4.0, // Thickness
-                (1.0, 1.0, 1.0), // White arc
-                -225.0f32.to_radians(), 45.0f32.to_radians()
-            )),
-            Box::new(ArcDecorator::new(
-                side_gauge_size / 2.0, // Radius
-                4.0, // Thickness
-                (0.2, 0.2, 0.2), // Dark grey arc
-                45.0f32.to_radians(), 135.0f32.to_radians()
-            )),
-        ])));
-        indicator_bounds.push(IndicatorBounds::new(right_x, battery_y, side_gauge_size, side_gauge_size));
+        let battery_y = temp_y + side_gauge_radius * 2.0 + 20.0;
+        let (voltage_gauge, voltage_bounds) = build_voltage_gauge(right_x, battery_y, side_gauge_radius, ui_style);
+        indicators.push(voltage_gauge);
+        indicator_bounds.push(voltage_bounds);
 
         IndicatorSet { indicators, inputs, indicator_bounds }
     }
@@ -535,7 +367,7 @@ impl MainPage {
 
     pub fn new(id: u32, smart_event_sender: SmartEventSender, event_receiver: EventReceiver, context: &GraphicsContext, ui_style: &UIStyle) -> Self {
         let test_indicator_set = Self::setup_test_indicators();
-        let gauge_indicator_set = Self::setup_gauge_indicators(context);
+        let gauge_indicator_set = Self::setup_gauge_indicators(context, ui_style);
         let bar_indicator_set = Self::setup_bar_indicators(context, ui_style);
 
         let mut main_page = MainPage {

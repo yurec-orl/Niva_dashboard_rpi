@@ -47,7 +47,7 @@ impl Indicator for GaugeIndicator {
         let max_value = value.constraints.max_value;
         
         // Get colors from UIStyle using constants
-        let needle_color = style.get_color_rgba(NEEDLE_COLOR, (1.0, 0.0, 0.0, 1.0));
+        let needle_color = style.get_color_rgba(GAUGE_NEEDLE_COLOR, (1.0, 0.0, 0.0, 1.0));
         let border_color = style.get_color_rgba(GAUGE_BORDER_COLOR, (0.4, 0.4, 0.5, 1.0));
         let mark_color = style.get_color_rgba(GAUGE_MAJOR_MARK_COLOR, (0.9, 0.9, 1.0, 1.0));
         let text_color = style.get_color_rgba(GAUGE_LABEL_COLOR, (1.0, 1.0, 1.0, 1.0));
@@ -57,7 +57,7 @@ impl Indicator for GaugeIndicator {
         let mark_color = (mark_color.0, mark_color.1, mark_color.2);
         let text_color = (text_color.0, text_color.1, text_color.2);
 
-        let needle_glow = style.get_bool(NEEDLE_GLOW_ENABLED, false);
+        let needle_glow = style.get_bool(GAUGE_NEEDLE_GLOW_ENABLED, false);
 
         let start_angle = -225.0f32.to_radians(); // Start at bottom-left
         let end_angle = 45.0f32.to_radians();     // End at bottom-right (270 degrees total)
