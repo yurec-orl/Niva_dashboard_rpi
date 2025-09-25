@@ -1,7 +1,7 @@
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
 use crate::page_framework::diag_page::DiagPage;
-use crate::page_framework::events::{UIEvent, EventSender, EventReceiver, EventBus, create_event_bus};
+use crate::page_framework::events::{UIEvent, EventSender, EventReceiver, EventBus, SmartEventSender, create_event_bus};
 use crate::page_framework::input::{InputHandler, ButtonState};
 use crate::page_framework::main_page::MainPage;
 use crate::hardware::sensor_manager::SensorManager;
@@ -180,10 +180,10 @@ pub struct PageManager {
     // Map hardware keys with UI buttons positions.
     buttons_map: HashMap<char, ButtonPosition>,
 
-    // Event system for UI communication (MPMC).
+    // Event system for UI communication (dual-channel).
     event_bus: EventBus,
-    event_receiver: EventReceiver,
-    event_sender: EventSender,
+    global_event_receiver: EventReceiver,  // PageManager listens to global events
+    smart_event_sender: SmartEventSender,  // Smart sender routes events automatically
 
     fps_counter: FpsCounter,
     start_time: Instant,
@@ -204,10 +204,10 @@ impl PageManager {
         buttons_map.insert('7', ButtonPosition::Right3);
         buttons_map.insert('8', ButtonPosition::Right4);
 
-        // Create event bus and get sender/receiver
+        // Create event bus with dual-channel system
         let event_bus = create_event_bus();
-        let event_sender = event_bus.sender();
-        let event_receiver = event_bus.receiver();
+        let global_event_receiver = event_bus.global_receiver();
+        let smart_event_sender = event_bus.smart_sender();
 
         PageManager {
             context,
@@ -219,8 +219,8 @@ impl PageManager {
             input_handler: InputHandler::new(),
             buttons_map,
             event_bus,
-            event_receiver,
-            event_sender,
+            global_event_receiver,
+            smart_event_sender,
             fps_counter: FpsCounter::new(),
             start_time: Instant::now(),
             running: false,
@@ -235,14 +235,14 @@ impl PageManager {
         self.pg_id
     }
 
-    /// Get a new event receiver for pages (MPMC allows multiple receivers)
+    /// Get a new event receiver for pages (page-specific events only)
     pub fn get_event_receiver(&self) -> EventReceiver {
-        self.event_bus.receiver()
+        self.event_bus.page_receiver()
     }
 
-    /// Get the event sender for UI components
-    pub fn get_event_sender(&self) -> EventSender {
-        self.event_sender.clone()
+    /// Get the smart event sender for UI components (auto-routes events)
+    pub fn get_smart_event_sender(&self) -> SmartEventSender {
+        self.smart_event_sender.clone()
     }
 
     fn get_page(&self, id: u32) -> Option<&Box<dyn Page>> {
@@ -316,18 +316,18 @@ impl PageManager {
 
     // Set up pages and buttons.
     pub fn setup(&mut self) -> Result<(), String> {
-        // Get event sender for button callbacks
-        let event_sender = self.event_sender.clone();
+        // Get smart event sender for button callbacks
+        let smart_sender = self.smart_event_sender.clone();
 
         // Create and add pages first to get their IDs
         let main_page = Box::new(MainPage::new(MAIN_PAGE_ID,
-                                               event_sender.clone(),
+                                               smart_sender.clone(),
                                                self.get_event_receiver(),
                                                &self.context,
                                                &self.ui_style));
 
         let diag_page = Box::new(DiagPage::new(DIAG_PAGE_ID,
-                                               event_sender.clone(),
+                                               smart_sender.clone(),
                                                self.get_event_receiver()));
 
         self.add_page(main_page);
@@ -432,14 +432,15 @@ impl PageManager {
                 }
             }
 
+            // Process global UI events (PageManager events only)
+            // With dual-channel system, PageManager only receives global events
+            while let Ok(event) = self.global_event_receiver.try_recv() {
+                self.handle_ui_event(event);
+            }
+
             // Let the current page process its own events
             if let Some(current_page) = self.get_current_page_mut() {
                 current_page.process_events();
-            }
-
-            // Process UI events from buttons and other sources (PageManager events)
-            while let Ok(event) = self.event_receiver.try_recv() {
-                self.handle_ui_event(event);
             }
 
             // Exit condition (for now, run for 30 seconds)

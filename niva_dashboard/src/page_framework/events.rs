@@ -38,33 +38,67 @@ pub enum UIEvent {
     OscToggleChannel(u8),
 }
 
-/// Event bus that manages MPMC communication
+/// Event bus that manages dual-channel communication for global and page events
 pub struct EventBus {
-    sender: Sender<UIEvent>,
-    receiver: Receiver<UIEvent>,
+    // Global events channel (only PageManager listens)
+    global_sender: Sender<UIEvent>,
+    global_receiver: Receiver<UIEvent>,
+    // Page events channel (only current page listens)  
+    page_sender: Sender<UIEvent>,
+    page_receiver: Receiver<UIEvent>,
 }
 
 impl EventBus {
     /// Create a new event bus with bounded capacity
     pub fn new(capacity: usize) -> Self {
-        let (sender, receiver) = bounded(capacity);
-        Self { sender, receiver }
+        let (global_sender, global_receiver) = bounded(capacity);
+        let (page_sender, page_receiver) = bounded(capacity);
+        Self { 
+            global_sender, 
+            global_receiver,
+            page_sender,
+            page_receiver
+        }
     }
     
     /// Create a new event bus with unbounded capacity
     pub fn unbounded() -> Self {
-        let (sender, receiver) = crossbeam_channel::unbounded();
-        Self { sender, receiver }
+        let (global_sender, global_receiver) = crossbeam_channel::unbounded();
+        let (page_sender, page_receiver) = crossbeam_channel::unbounded();
+        Self { 
+            global_sender, 
+            global_receiver,
+            page_sender,
+            page_receiver
+        }
     }
     
-    /// Get a sender that can be cloned and distributed
-    pub fn sender(&self) -> EventSender {
-        EventSender::new(self.sender.clone())
+    /// Get a sender for global events (handled by PageManager)
+    pub fn global_sender(&self) -> EventSender {
+        EventSender::new(self.global_sender.clone())
     }
     
-    /// Get a receiver that can be cloned for multiple consumers
-    pub fn receiver(&self) -> EventReceiver {
-        EventReceiver::new(self.receiver.clone())
+    /// Get a receiver for global events (PageManager only)
+    pub fn global_receiver(&self) -> EventReceiver {
+        EventReceiver::new(self.global_receiver.clone())
+    }
+    
+    /// Get a sender for page-specific events
+    pub fn page_sender(&self) -> EventSender {
+        EventSender::new(self.page_sender.clone())
+    }
+    
+    /// Get a receiver for page-specific events (current page only)
+    pub fn page_receiver(&self) -> EventReceiver {
+        EventReceiver::new(self.page_receiver.clone())
+    }
+    
+    /// Get a smart sender that routes events to appropriate channels
+    pub fn smart_sender(&self) -> SmartEventSender {
+        SmartEventSender::new(
+            EventSender::new(self.global_sender.clone()),
+            EventSender::new(self.page_sender.clone())
+        )
     }
 }
 
@@ -128,6 +162,51 @@ impl EventReceiver {
     /// Create a non-blocking iterator over received events
     pub fn try_iter(&self) -> crossbeam_channel::TryIter<UIEvent> {
         self.receiver.try_iter()
+    }
+}
+
+/// Smart sender that routes events to appropriate channels based on event type
+#[derive(Clone)]
+pub struct SmartEventSender {
+    global_sender: EventSender,
+    page_sender: EventSender,
+}
+
+impl SmartEventSender {
+    pub fn new(global_sender: EventSender, page_sender: EventSender) -> Self {
+        Self { global_sender, page_sender }
+    }
+    
+    /// Send an event to the appropriate channel based on event type
+    pub fn send(&self, event: UIEvent) {
+        match event {
+            // Global events go to PageManager
+            UIEvent::Shutdown |
+            UIEvent::Restart |
+            UIEvent::BrightnessUp |
+            UIEvent::BrightnessDown |
+            UIEvent::SetBrightness(_) |
+            UIEvent::SwitchToPage(_) => {
+                self.global_sender.send(event);
+            }
+            // Page-specific events go to current page
+            UIEvent::NextIndicatorSet |
+            UIEvent::PreviousIndicatorSet |
+            UIEvent::ButtonPressed(_) |
+            UIEvent::ShowSensorInfo |
+            UIEvent::ShowECUInfo |
+            UIEvent::ShowOSCInfo |
+            UIEvent::ShowLog |
+            UIEvent::OscStart |
+            UIEvent::OscStop |
+            UIEvent::OscSetSampleRate(_) |
+            UIEvent::OscSetTimeScale(_) |
+            UIEvent::OscSetVoltageScale(_) |
+            UIEvent::OscSetTriggerLevel(_) |
+            UIEvent::OscToggleChannel(_) => {
+                self.page_sender.send(event);
+            }
+        }
     }
 }
 

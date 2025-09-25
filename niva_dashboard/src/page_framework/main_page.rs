@@ -1,7 +1,7 @@
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
 use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition, DIAG_PAGE_ID};
-use crate::page_framework::events::{EventSender, EventReceiver};
+use crate::page_framework::events::{EventSender, EventReceiver, SmartEventSender};
 use crate::hardware::sensor_manager::SensorManager;
 use crate::hardware::hw_providers::{*};
 use crate::hardware::sensor_value::SensorValue;
@@ -25,7 +25,7 @@ pub struct MainPage {
     current_indicator_set: usize,
     indicator_sets: Vec<IndicatorSet>,
     event_receiver: EventReceiver,
-    event_sender: EventSender,
+    smart_event_sender: SmartEventSender,
 }
 
 impl MainPage {
@@ -533,14 +533,14 @@ impl MainPage {
         IndicatorSet { indicators, inputs, indicator_bounds }
     }
 
-    pub fn new(id: u32, event_sender: EventSender, event_receiver: EventReceiver, context: &GraphicsContext, ui_style: &UIStyle) -> Self {
+    pub fn new(id: u32, smart_event_sender: SmartEventSender, event_receiver: EventReceiver, context: &GraphicsContext, ui_style: &UIStyle) -> Self {
         let test_indicator_set = Self::setup_test_indicators();
         let gauge_indicator_set = Self::setup_gauge_indicators(context);
         let bar_indicator_set = Self::setup_bar_indicators(context, ui_style);
 
         let mut main_page = MainPage {
             base: PageBase::new(id, "Main".to_string()),
-            event_sender: event_sender.clone(),
+            smart_event_sender: smart_event_sender.clone(),
             event_receiver,
             indicator_sets: vec![bar_indicator_set, gauge_indicator_set, test_indicator_set],
             current_indicator_set: 0,
@@ -554,30 +554,30 @@ impl MainPage {
 
     // Setup default buttons for main page using event system
     fn setup_buttons(&mut self) {
-        let event_sender = self.event_sender.clone();
+        let smart_sender = self.smart_event_sender.clone();
         let buttons = vec![
             PageButton::new(ButtonPosition::Left1, "ВИД+".into(), Box::new({
-                let sender = event_sender.clone();
+                let sender = smart_sender.clone();
                 move || sender.send(UIEvent::NextIndicatorSet)
             }) as Box<dyn FnMut()>),
             PageButton::new(ButtonPosition::Left2, "ВИД-".into(), Box::new({
-                let sender = event_sender.clone();
+                let sender = smart_sender.clone();
                 move || sender.send(UIEvent::PreviousIndicatorSet)
             }) as Box<dyn FnMut()>),
             PageButton::new(ButtonPosition::Left4, "ВЫХ".into(), Box::new({
-                let sender = event_sender.clone();
+                let sender = smart_sender.clone();
                 move || sender.send(UIEvent::Shutdown)
             }) as Box<dyn FnMut()>),
             PageButton::new(ButtonPosition::Right1, "ЯРК+".into(), Box::new({
-                let sender = event_sender.clone();
+                let sender = smart_sender.clone();
                 move || sender.send(UIEvent::BrightnessUp)
             }) as Box<dyn FnMut()>),
             PageButton::new(ButtonPosition::Right2, "ЯРК-".into(), Box::new({
-                let sender = event_sender.clone();
+                let sender = smart_sender.clone();
                 move || sender.send(UIEvent::BrightnessDown)
             }) as Box<dyn FnMut()>),
             PageButton::new(ButtonPosition::Right4, "ДИАГ".into(), Box::new({
-                let sender = event_sender.clone();
+                let sender = smart_sender.clone();
                 move || sender.send(UIEvent::SwitchToPage(DIAG_PAGE_ID))
             }) as Box<dyn FnMut()>),
         ];
@@ -695,10 +695,10 @@ impl Page for MainPage {
                         _ => {} // Ignore unknown actions
                     }
                 }
-                // Let other events pass through to the page manager
+                // With dual-channel system, MainPage only receives page-specific events
+                // Global events go directly to PageManager via global channel
                 _ => {
-                    // Re-send event to page manager for global handling
-                    self.event_sender.send(event);
+                    print!("MainPage: Ignoring unknown page event: {:?}\r\n", event);
                 }
             }
         }
