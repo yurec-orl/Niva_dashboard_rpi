@@ -1,8 +1,14 @@
 use crate::indicators::indicator::{Indicator, IndicatorBounds, IndicatorBase};
-use crate::indicators::decorator::{Decorator, DecoratorAlignmentH, DecoratorAlignmentV};
+use crate::indicators::decorator::{Decorator, DecoratorAlignmentH};
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
 use crate::hardware::sensor_value::{SensorValue, ValueData};
+use std::sync::Once;
+use gl;
+
+// Cached shader programs
+static mut VERTICAL_BAR_SHADER_PROGRAM: u32 = 0;
+static VERTICAL_BAR_SHADER_INIT: Once = Once::new();
 
 /// Vertical bar indicator that fills from bottom to top
 pub struct VerticalBarIndicator {
@@ -56,6 +62,106 @@ impl VerticalBarIndicator {
         
         // Default normal color
         style.get_color("bar_normal_color", (0.0, 1.0, 0.0)) // Green for normal
+    }
+
+    /// Get cached shader program for batch rendering
+    unsafe fn get_vertical_bar_shader() -> u32 {
+        VERTICAL_BAR_SHADER_INIT.call_once(|| {
+            let vertex_shader_source = b"
+attribute vec2 position;
+attribute vec3 color;
+varying vec3 v_color;
+void main() {
+    gl_Position = vec4(position, 0.0, 1.0);
+    v_color = color;
+}
+\0";
+
+            let fragment_shader_source = b"
+precision mediump float;
+varying vec3 v_color;
+void main() {
+    gl_FragColor = vec4(v_color, 1.0);
+}
+\0";
+
+            // Create vertex shader
+            let vertex_shader = gl::CreateShader(gl::VERTEX_SHADER);
+            let vertex_src_ptr = vertex_shader_source.as_ptr();
+            gl::ShaderSource(vertex_shader, 1, &vertex_src_ptr, std::ptr::null());
+            gl::CompileShader(vertex_shader);
+
+            // Create fragment shader
+            let fragment_shader = gl::CreateShader(gl::FRAGMENT_SHADER);
+            let fragment_src_ptr = fragment_shader_source.as_ptr();
+            gl::ShaderSource(fragment_shader, 1, &fragment_src_ptr, std::ptr::null());
+            gl::CompileShader(fragment_shader);
+
+            // Create program
+            let program = gl::CreateProgram();
+            gl::AttachShader(program, vertex_shader);
+            gl::AttachShader(program, fragment_shader);
+            gl::LinkProgram(program);
+
+            // Clean up shaders
+            gl::DeleteShader(vertex_shader);
+            gl::DeleteShader(fragment_shader);
+
+            VERTICAL_BAR_SHADER_PROGRAM = program;
+        });
+        VERTICAL_BAR_SHADER_PROGRAM
+    }
+
+    /// Calculate vertices for a single rectangle segment (returns 30 floats: 6 vertices × 5 components each)
+    fn calculate_segment_vertices(&self, x: f32, y: f32, width: f32, height: f32, 
+                                 color: (f32, f32, f32), screen_w: f32, screen_h: f32) -> [f32; 30] {
+        // Convert screen coordinates to normalized coordinates (-1 to 1)
+        let x1_norm = x / screen_w * 2.0 - 1.0;
+        let y1_norm = 1.0 - y / screen_h * 2.0;
+        let x2_norm = (x + width) / screen_w * 2.0 - 1.0;
+        let y2_norm = 1.0 - (y + height) / screen_h * 2.0;
+
+        // Return vertices for two triangles forming a rectangle
+        [
+            // First triangle: top-left -> top-right -> bottom-left
+            x1_norm, y1_norm, color.0, color.1, color.2,
+            x2_norm, y1_norm, color.0, color.1, color.2,
+            x1_norm, y2_norm, color.0, color.1, color.2,
+            // Second triangle: top-right -> bottom-right -> bottom-left  
+            x2_norm, y1_norm, color.0, color.1, color.2,
+            x2_norm, y2_norm, color.0, color.1, color.2,
+            x1_norm, y2_norm, color.0, color.1, color.2,
+        ]
+    }
+
+    /// Render all segments in a single batched draw call for optimal performance
+    unsafe fn render_batched_segments(&self, vertices: &[f32], shader_program: u32) {
+        // Create and bind VBO for all segments
+        let mut vbo = 0;
+        gl::GenBuffers(1, &mut vbo);
+        gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+        gl::BufferData(
+            gl::ARRAY_BUFFER, 
+            (vertices.len() * std::mem::size_of::<f32>()) as isize, 
+            vertices.as_ptr() as *const _, 
+            gl::STATIC_DRAW
+        );
+
+        // Set up vertex attributes
+        let pos_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr());
+        let color_attr = gl::GetAttribLocation(shader_program, b"color\0".as_ptr());
+
+        gl::EnableVertexAttribArray(pos_attr as u32);
+        gl::VertexAttribPointer(pos_attr as u32, 2, gl::FLOAT, gl::FALSE, 20, std::ptr::null());
+        gl::EnableVertexAttribArray(color_attr as u32);
+        gl::VertexAttribPointer(color_attr as u32, 3, gl::FLOAT, gl::FALSE, 20, (8) as *const _);
+
+        // Single draw call for all segments
+        let vertex_count = (vertices.len() / 5) as i32; // 5 floats per vertex
+        gl::DrawArrays(gl::TRIANGLES, 0, vertex_count);
+
+        // Clean up
+        gl::DeleteBuffers(1, &vbo);
     }
 }
 
@@ -138,25 +244,46 @@ impl Indicator for VerticalBarIndicator {
         // Get background color for empty segments
         let empty_color = style.get_color("bar_empty_color", (0.2, 0.2, 0.2)); // Dark gray for empty
         
-        // Render each segment from bottom to top
-        for i in 0..self.segments {
-            let segment_index_from_bottom = self.segments - 1 - i; // Bottom segment = 0, top segment = segments-1
-            
-            // Calculate segment position (from top of available area)
-            let segment_y = segments_start_y + (i as f32 * (segment_height + self.segment_gap));
-            
-            // Determine if this segment should be filled
-            let is_filled = segment_index_from_bottom < filled_segments;
-            
-            // Get appropriate color
-            let color = if is_filled {
-                self.get_segment_color(segment_index_from_bottom, normalized_value, value, style)
-            } else {
-                empty_color
-            };
-            
-            // Render the segment as a filled rectangle
-            context.fill_rect(segments_start_x, segment_y, segment_width, segment_height, color)?;
+        unsafe {
+            // Enable blending for smooth rendering
+            gl::Enable(gl::BLEND);
+            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+
+            // Get cached shader program for batch rendering
+            let shader_program = Self::get_vertical_bar_shader();
+            gl::UseProgram(shader_program);
+
+            // Build all vertices in a single buffer for batch rendering
+            let mut all_vertices = Vec::with_capacity(self.segments * 6 * 5); // 6 vertices per segment, 5 floats per vertex
+
+            // Generate vertices for each segment from bottom to top
+            for i in 0..self.segments {
+                let segment_index_from_bottom = self.segments - 1 - i; // Bottom segment = 0, top segment = segments-1
+                
+                // Calculate segment position (from top of available area)
+                let segment_y = segments_start_y + (i as f32 * (segment_height + self.segment_gap));
+                
+                // Determine if this segment should be filled
+                let is_filled = segment_index_from_bottom < filled_segments;
+                
+                // Get appropriate color
+                let color = if is_filled {
+                    self.get_segment_color(segment_index_from_bottom, normalized_value, value, style)
+                } else {
+                    empty_color
+                };
+                
+                // Calculate segment vertices and append to batch buffer
+                let segment_vertices = self.calculate_segment_vertices(
+                    segments_start_x, segment_y, segment_width, segment_height, 
+                    color, context.width as f32, context.height as f32
+                );
+                
+                all_vertices.extend_from_slice(&segment_vertices);
+            }
+
+            // Single batched draw call for all segments
+            self.render_batched_segments(&all_vertices, shader_program);
         }
         
         Ok(())
