@@ -193,6 +193,17 @@ pub const ANIMATION_NEEDLE_SPEED: &str = "animation_needle_speed";
 pub const ANIMATION_BAR_SPEED: &str = "animation_bar_speed";
 pub const ANIMATION_SMOOTH_ENABLED: &str = "animation_smooth_enabled";
 
+// Alerts settings
+pub const ALERT_FONT_PATH: &str = "alert_font_path";
+pub const ALERT_FONT_SIZE: &str = "alert_font_size";
+pub const ALERT_WARNING_COLOR: &str = "alert_warning_color";
+pub const ALERT_CRITICAL_COLOR: &str = "alert_critical_color";
+pub const ALERT_BACKGROUND_COLOR: &str = "alert_background_color";
+pub const ALERT_BORDER_COLOR: &str = "alert_border_color";
+pub const ALERT_BORDER_WIDTH: &str = "alert_border_width";
+pub const ALERT_BORDER_OUTER_MARGIN: &str = "alert_border_margin";
+pub const ALERT_SOUND_PATH: &str = "alert_sound_path";
+
 // =============================================================================
 // STYLE VALUE TYPES
 // =============================================================================
@@ -675,6 +686,17 @@ impl UIStyle {
         self.set(ANIMATION_NEEDLE_SPEED, UIStyleValue::Float(1.0));
         self.set(ANIMATION_BAR_SPEED, UIStyleValue::Float(1.0));
         self.set(ANIMATION_SMOOTH_ENABLED, UIStyleValue::Boolean(true));
+
+        // Alerts defaults
+        self.set(ALERT_FONT_PATH, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf".to_string()));
+        self.set(ALERT_FONT_SIZE, UIStyleValue::Integer(32));
+        self.set(ALERT_WARNING_COLOR, UIStyleValue::Color("#FFFF00".to_string()));
+        self.set(ALERT_CRITICAL_COLOR, UIStyleValue::Color("#FF0000".to_string()));
+        self.set(ALERT_BACKGROUND_COLOR, UIStyleValue::Color("#000000".to_string()));
+        self.set(ALERT_BORDER_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
+        self.set(ALERT_BORDER_WIDTH, UIStyleValue::Float(4.0));
+        self.set(ALERT_BORDER_OUTER_MARGIN, UIStyleValue::Float(8.0));
+        self.set(ALERT_SOUND_PATH, UIStyleValue::String("".to_string())); // No sound by default
     }
 }
 

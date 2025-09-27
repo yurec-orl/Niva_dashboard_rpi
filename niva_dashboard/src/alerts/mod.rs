@@ -1,2 +1,3 @@
 pub mod alert_manager;
-pub mod watchdogs;
+pub mod watchdog;
+pub mod alert;
