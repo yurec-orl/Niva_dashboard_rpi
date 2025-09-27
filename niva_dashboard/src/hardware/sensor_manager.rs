@@ -62,6 +62,8 @@ use crate::hardware::analog_signal_processing::AnalogSignalProcessor;
 use crate::hardware::digital_signal_processing::DigitalSignalProcessor;
 use crate::hardware::sensor_value::SensorValue;
 
+use std::collections::HashMap;
+
 // Sensor management - chains hardware providers, signal processors, and logical sensors
 pub struct SensorDigitalInputChain {
     hw_provider: Box<dyn HWDigitalProvider>,
@@ -109,7 +111,7 @@ impl SensorAnalogInputChain {
 pub struct SensorManager {
     digital_sensors: Vec<SensorDigitalInputChain>,
     analog_sensors: Vec<SensorAnalogInputChain>,
-    sensor_values: Vec<(HWInput, SensorValue)>,
+    sensor_values: HashMap<HWInput, SensorValue>,
 }
 
 impl SensorManager {
@@ -117,7 +119,7 @@ impl SensorManager {
         SensorManager {
             digital_sensors: Vec::new(),
             analog_sensors: Vec::new(),
-            sensor_values: Vec::new(),
+            sensor_values: HashMap::new(),
         }
     }
 
@@ -183,21 +185,25 @@ impl SensorManager {
         for input in digital_inputs {
             let value = self.read_digital_sensor(input)?;
             //print!("Read digital sensor {:?}: {:?}\r\n", input, value);
-            self.sensor_values.push((input, value));
+            self.sensor_values.insert(input, value);
         }
 
         // Read analog sensors  
         for input in analog_inputs {
             let value = self.read_analog_sensor(input)?;
             //print!("Read analog sensor {:?}: {:?}\r\n", input, value);
-            self.sensor_values.push((input, value));
+            self.sensor_values.insert(input, value);
         }
 
         Ok(())
     }
 
-    pub fn get_sensor_values(&self) -> &Vec<(HWInput, SensorValue)> {
+    pub fn get_sensor_values(&self) -> &HashMap<HWInput, SensorValue> {
         &self.sensor_values
+    }
+
+    pub fn get_sensor_value(&self, input: &HWInput) -> Option<&SensorValue> {
+        self.sensor_values.get(input)
     }
 }
 

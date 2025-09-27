@@ -1,9 +1,37 @@
 use crate::indicators::indicator::{Indicator, IndicatorBounds};
 use crate::graphics::context::GraphicsContext;
-use crate::graphics::ui_style::{UIStyle, TEXT_PRIMARY_FONT, TEXT_PRIMARY_FONT_SIZE, TEXT_PRIMARY_COLOR, TEXT_WARNING_COLOR, TEXT_ERROR_COLOR};
+use crate::graphics::ui_style::UIStyle;
 use crate::hardware::sensor_value::{SensorValue, ValueData};
 
-/// Simple text indicator that displays sensor values as formatted text
+/// Context-agnostic text indicator that displays sensor values as formatted text.
+/// 
+/// ## Design Philosophy
+/// This indicator is completely detached from context - it doesn't know what it represents
+/// or which style values to use. All styling parameters (fonts, colors, sizes) must be 
+/// provided externally during construction, making it a pure rendering component.
+/// 
+/// ## Benefits
+/// - **Performance**: No runtime style lookups, all values are pre-resolved
+/// - **Flexibility**: Can be styled independently without knowledge of UI context
+/// - **Testability**: Easy to test with known style parameters
+/// - **Reusability**: Same component can be used with different styling systems
+/// 
+/// ## Usage
+/// ```rust
+/// // All styling must be provided upfront
+/// let indicator = TextIndicator::new(
+///     1,                                    // precision
+///     true,                                 // show_unit
+///     false,                                // show_label
+///     TextAlignment::Center,                // alignment
+///     "/path/to/font.ttf".to_string(),     // font_path
+///     24,                                   // font_size
+///     1.0,                                  // scale
+///     (1.0, 1.0, 1.0),                     // primary_color
+///     (1.0, 0.65, 0.0),                    // warning_color
+///     (1.0, 0.0, 0.0),                     // error_color
+/// );
+/// ```
 pub struct TextIndicator {
     /// Format precision for floating point values
     precision: usize,
@@ -13,6 +41,18 @@ pub struct TextIndicator {
     show_label: bool,
     /// Text alignment within bounds
     alignment: TextAlignment,
+    /// Font path for text rendering
+    font_path: String,
+    /// Font size for text rendering
+    font_size: u32,
+    /// Text scale factor
+    scale: f32,
+    /// Primary text color (RGB)
+    primary_color: (f32, f32, f32),
+    /// Warning text color (RGB)
+    warning_color: (f32, f32, f32),
+    /// Error text color (RGB)
+    error_color: (f32, f32, f32),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -23,37 +63,39 @@ pub enum TextAlignment {
 }
 
 impl TextIndicator {
-    /// Create a new text indicator with default settings
-    pub fn new() -> Self {
-        Self {
-            precision: 1,
-            show_unit: true,
-            show_label: false,
-            alignment: TextAlignment::Center,
-        }
-    }
-    
-    /// Create a text indicator with custom settings
-    pub fn with_config(
+    /// Create a new text indicator with all styling parameters provided externally
+    pub fn new(
         precision: usize,
         show_unit: bool,
         show_label: bool,
         alignment: TextAlignment,
+        font_path: String,
+        font_size: u32,
+        scale: f32,
+        primary_color: (f32, f32, f32),
+        warning_color: (f32, f32, f32),
+        error_color: (f32, f32, f32),
     ) -> Self {
         Self {
             precision,
             show_unit,
             show_label,
             alignment,
+            font_path,
+            font_size,
+            scale,
+            primary_color,
+            warning_color,
+            error_color,
         }
     }
-    
+
     /// Format the sensor value as a display string (without label)
     fn format_value(&self, value: &SensorValue) -> String {
         let value_str = match value.value {
-            ValueData::Empty => "N/A".to_string(),
+            ValueData::Empty => "---".to_string(),
             ValueData::Digital(b) => {
-                if b { "ON".to_string() } else { "OFF".to_string() }
+                if b { "ВКЛ".to_string() } else { "ВЫКЛ".to_string() }
             }
             ValueData::Analog(v) => {
                 format!("{:.prec$}", v, prec = self.precision)
@@ -90,13 +132,13 @@ impl TextIndicator {
     }
     
     /// Get text color based on value status
-    fn get_text_color(&self, value: &SensorValue) -> &'static str {
+    fn get_text_color(&self, value: &SensorValue) -> (f32, f32, f32) {
         if value.is_critical() {
-            TEXT_ERROR_COLOR
+            self.error_color
         } else if value.is_warning() {
-            TEXT_WARNING_COLOR
+            self.warning_color
         } else {
-            TEXT_PRIMARY_COLOR
+            self.primary_color
         }
     }
     
@@ -123,12 +165,6 @@ impl TextIndicator {
     }
 }
 
-impl Default for TextIndicator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Indicator for TextIndicator {
     fn with_decorators(self, _decorators: Vec<Box<dyn crate::indicators::decorator::Decorator>>) -> Self {
         // Simple implementation - decorators not yet integrated
@@ -139,27 +175,23 @@ impl Indicator for TextIndicator {
         &self,
         value: &SensorValue,
         bounds: IndicatorBounds,
-        style: &UIStyle,
+        _style: &UIStyle,
         context: &mut GraphicsContext,
     ) -> Result<(), String> {
         // Get label and value texts
         let label_text = self.get_label(value);
         let value_text = self.format_value(value);
         
-        // Get style parameters
-        let font_path = style.get_string(TEXT_PRIMARY_FONT, "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf");
-        let font_size = style.get_integer(TEXT_PRIMARY_FONT_SIZE, 24) as u32;
-        let text_color = style.get_color(self.get_text_color(value), (1.0, 1.0, 1.0)); // Default to white
-        
-        let scale = 1.0; // Default scale factor
+        // Use stored style parameters (no lookup needed)
+        let text_color = self.get_text_color(value);
         
         // Calculate text dimensions
         let label_width = if !label_text.is_empty() {
             context.calculate_text_width_with_font(
                 &label_text,
-                scale,
-                &font_path,
-                font_size,
+                self.scale,
+                &self.font_path,
+                self.font_size,
             )?
         } else {
             0.0
@@ -167,13 +199,13 @@ impl Indicator for TextIndicator {
         
         let value_width = context.calculate_text_width_with_font(
             &value_text,
-            scale,
-            &font_path,
-            font_size,
+            self.scale,
+            &self.font_path,
+            self.font_size,
         )?;
         
         // Get font height for positioning
-        let font_height = context.get_line_height_with_font(scale, &font_path, font_size)?;
+        let font_height = context.get_line_height_with_font(self.scale, &self.font_path, self.font_size)?;
         
         // Calculate positions for both texts
         let ((label_x, label_y), (value_x, value_y)) = self.calculate_text_positions(
@@ -189,10 +221,10 @@ impl Indicator for TextIndicator {
                 &label_text,
                 label_x,
                 label_y,
-                scale,
+                self.scale,
                 text_color,
-                &font_path,
-                font_size,
+                &self.font_path,
+                self.font_size,
             )?;
         }
         
@@ -201,10 +233,10 @@ impl Indicator for TextIndicator {
             &value_text,
             value_x,
             value_y,
-            scale,
+            self.scale,
             text_color,
-            &font_path,
-            font_size,
+            &self.font_path,
+            self.font_size,
         )?;
         
         Ok(())

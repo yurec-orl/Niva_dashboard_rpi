@@ -1,4 +1,5 @@
 use crossbeam_channel::{bounded, Sender, Receiver};
+use crate::hardware::hw_providers::HWInput;
 
 /// Events that can be triggered by UI components
 #[derive(Debug, Clone)]
@@ -36,6 +37,9 @@ pub enum UIEvent {
     OscSetVoltageScale(f32),
     OscSetTriggerLevel(f32),
     OscToggleChannel(u8),
+
+    // Alert events
+    AlertTriggered(HWInput, String, u32), // (source, message, timeout in milliseconds)
 }
 
 /// Event bus that manages dual-channel communication for global and page events
@@ -186,7 +190,8 @@ impl SmartEventSender {
             UIEvent::BrightnessUp |
             UIEvent::BrightnessDown |
             UIEvent::SetBrightness(_) |
-            UIEvent::SwitchToPage(_) => {
+            UIEvent::SwitchToPage(_) |
+            UIEvent::AlertTriggered(_, _, _) => {
                 self.global_sender.send(event);
             }
             // Page-specific events go to current page

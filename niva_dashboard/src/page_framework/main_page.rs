@@ -29,7 +29,26 @@ pub struct MainPage {
 }
 
 impl MainPage {
-    fn setup_test_indicators() -> IndicatorSet {
+    pub fn new(id: u32, smart_event_sender: SmartEventSender, event_receiver: EventReceiver, context: &GraphicsContext, ui_style: &UIStyle) -> Self {
+        let test_indicator_set = Self::setup_test_indicators(ui_style);
+        let gauge_indicator_set = Self::setup_gauge_indicators(context, ui_style);
+        let bar_indicator_set = Self::setup_bar_indicators(context, ui_style);
+
+        let mut main_page = MainPage {
+            base: PageBase::new(id, "Main".to_string()),
+            smart_event_sender: smart_event_sender.clone(),
+            event_receiver,
+            indicator_sets: vec![bar_indicator_set, gauge_indicator_set, test_indicator_set],
+            current_indicator_set: 0,
+        };
+
+        // Set up default buttons for the main page
+        main_page.setup_buttons();
+        
+        main_page
+    }
+
+    fn setup_test_indicators(ui_style: &UIStyle) -> IndicatorSet {
         let mut indicators: Vec<Box<dyn Indicator>> = Vec::new();
         let inputs: Vec<HWInput> = vec![
             HWInput::Hw12v,
@@ -81,27 +100,58 @@ impl MainPage {
             bounds
         };
 
-        // Digital sensors (12 total) - all use basic configuration
+        let indicator_font = ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH);
+        let indicator_font_size = ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32;
+        let indicator_color = ui_style.get_color(TEXT_SECONDARY_COLOR, (1.0, 1.0, 1.0));
+        let indicator_warning_color = ui_style.get_color(TEXT_WARNING_COLOR, (1.0, 1.0, 0.0));
+        let indicator_error_color = ui_style.get_color(TEXT_ERROR_COLOR, (1.0, 0.0, 0.0));
+
+        // Digital sensors (12 total)
         for _ in 0..12 {
-            indicators.push(Box::new(TextIndicator::with_config(0, true, true, TextAlignment::Center)));
+            indicators.push(Box::new(TextIndicator::new(
+                0, true, true, TextAlignment::Center,
+                indicator_font.clone(),
+                indicator_font_size, 1.0,
+                indicator_color, indicator_warning_color, indicator_error_color,
+            )));
             indicator_bounds.push(create_bounds_and_advance(&mut col, &mut row));
         }
 
         // Analog sensors (4 total) - with different precision settings
         // 12V (1 decimal place)
-        indicators.push(Box::new(TextIndicator::with_config(1, true, true, TextAlignment::Center)));
+        indicators.push(Box::new(TextIndicator::new(
+            1, true, true, TextAlignment::Center,
+            indicator_font.clone(),
+            indicator_font_size, 1.0,
+            indicator_color, indicator_warning_color, indicator_error_color,
+        )));
         indicator_bounds.push(create_bounds_and_advance(&mut col, &mut row));
 
         // Fuel Level (1 decimal place)
-        indicators.push(Box::new(TextIndicator::with_config(1, true, true, TextAlignment::Center)));
+        indicators.push(Box::new(TextIndicator::new(
+            1, true, true, TextAlignment::Center,
+            indicator_font.clone(),
+            indicator_font_size, 1.0,
+            indicator_color, indicator_warning_color, indicator_error_color,
+        )));
         indicator_bounds.push(create_bounds_and_advance(&mut col, &mut row));
 
         // Oil Pressure (2 decimal places)
-        indicators.push(Box::new(TextIndicator::with_config(2, true, true, TextAlignment::Center)));
+        indicators.push(Box::new(TextIndicator::new(
+            2, true, true, TextAlignment::Center,
+            indicator_font.clone(),
+            indicator_font_size, 1.0,
+            indicator_color, indicator_warning_color, indicator_error_color,
+        )));
         indicator_bounds.push(create_bounds_and_advance(&mut col, &mut row));
 
         // Temperature (1 decimal place)
-        indicators.push(Box::new(TextIndicator::with_config(1, true, true, TextAlignment::Center)));
+        indicators.push(Box::new(TextIndicator::new(
+            1, true, true, TextAlignment::Center,
+            indicator_font.clone(),
+            indicator_font_size, 1.0,
+            indicator_color, indicator_warning_color, indicator_error_color,
+        )));
         indicator_bounds.push(create_bounds_and_advance(&mut col, &mut row));
         IndicatorSet { indicators, inputs, indicator_bounds }
     }
@@ -252,25 +302,6 @@ impl MainPage {
         IndicatorSet { indicators, inputs, indicator_bounds }
     }
 
-    pub fn new(id: u32, smart_event_sender: SmartEventSender, event_receiver: EventReceiver, context: &GraphicsContext, ui_style: &UIStyle) -> Self {
-        let test_indicator_set = Self::setup_test_indicators();
-        let gauge_indicator_set = Self::setup_gauge_indicators(context, ui_style);
-        let bar_indicator_set = Self::setup_bar_indicators(context, ui_style);
-
-        let mut main_page = MainPage {
-            base: PageBase::new(id, "Main".to_string()),
-            smart_event_sender: smart_event_sender.clone(),
-            event_receiver,
-            indicator_sets: vec![bar_indicator_set, gauge_indicator_set, test_indicator_set],
-            current_indicator_set: 0,
-        };
-
-        // Set up default buttons for the main page
-        main_page.setup_buttons();
-        
-        main_page
-    }
-
     // Setup default buttons for main page using event system
     fn setup_buttons(&mut self) {
         let smart_sender = self.smart_event_sender.clone();
@@ -302,30 +333,6 @@ impl MainPage {
         ];
 
         self.base.set_buttons(buttons);
-    }
-
-    // Helper method to read sensor values directly from sensor manager
-    fn get_sensor_values(&self, sensor_manager: &SensorManager) -> Result<Vec<SensorValue>, String> {
-        // Get sensor data from hardware (now returns Vec<(HWInput, SensorValue)>)
-        let sensor_values_vec = sensor_manager.get_sensor_values();
-
-        // Get current indicator set inputs in order
-        let current_inputs = &self.indicator_sets[self.current_indicator_set].inputs;
-        
-        // Map sensor values to match the order of current indicator inputs
-        let mut ordered_sensor_values = Vec::new();
-        for input in current_inputs {
-            // Find the sensor value for this input
-            if let Some((_, sensor_value)) = sensor_values_vec.iter().find(|(hw_input, _)| hw_input == input) {
-                ordered_sensor_values.push(sensor_value.clone());
-            } else {
-                // Log missing sensor and use a default value to maintain array alignment
-                eprintln!("Warning: Missing sensor data for {:?}, using default", input);
-                ordered_sensor_values.push(SensorValue::digital(false, format!("{:?}", input), format!("{:?}", input)));
-            }
-        }
-
-        Ok(ordered_sensor_values)
     }
 
     // Event handler methods for indicator set navigation
@@ -364,14 +371,15 @@ impl Page for MainPage {
 
     fn render(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
         // Read sensor values and create SensorValue objects
-        let sensor_values = self.get_sensor_values(sensor_manager)?;
+        let sensor_values = sensor_manager.get_sensor_values();
 
         // Render each indicator with its corresponding sensor value
         let indicators = self.indicator_sets[self.current_indicator_set].indicators.iter();
+        let current_inputs = &self.indicator_sets[self.current_indicator_set].inputs;
         let indicator_bounds = &self.indicator_sets[self.current_indicator_set].indicator_bounds;
         
         for (i, indicator) in indicators.enumerate() {
-            if let Some(sensor_value) = sensor_values.get(i) {
+            if let Some(sensor_value) = sensor_values.get(&current_inputs[i]) {
                 //print!("Rendering indicator {} for sensor {:?} with value {:?}\r\n", indicator.indicator_type(), sensor_value.metadata.sensor_id, sensor_value.value);
                 if let Some(bounds) = indicator_bounds.get(i) {
                     indicator.render(sensor_value, bounds.clone(), ui_style, context)?;

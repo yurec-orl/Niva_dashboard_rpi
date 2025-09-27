@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 /////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum HWInput {
     // Analog inputs
     Hw12v,
