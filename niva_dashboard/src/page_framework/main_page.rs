@@ -314,9 +314,9 @@ impl MainPage {
                 let sender = smart_sender.clone();
                 move || sender.send(UIEvent::PreviousIndicatorSet)
             }) as Box<dyn FnMut()>),
-            PageButton::new(ButtonPosition::Left4, "ВЫХ".into(), Box::new({
+            PageButton::new(ButtonPosition::Left4, "СБРОС".into(), Box::new({
                 let sender = smart_sender.clone();
-                move || sender.send(UIEvent::Shutdown)
+                move || sender.send(UIEvent::SuppressAlerts)
             }) as Box<dyn FnMut()>),
             PageButton::new(ButtonPosition::Right1, "ЯРК+".into(), Box::new({
                 let sender = smart_sender.clone();

@@ -6,16 +6,18 @@ use crate::indicators::indicator::IndicatorBounds;
 pub struct Alert {
     message: String,
     severity: Severity,
-    timeout_ms: u32,
+    display_timeout_ms: Option<u32>,
+    remove_timeout_ms: Option<u32>,
     creation_time: std::time::Instant,
 }
 
 impl Alert {
-    pub fn new(message: String, severity: Severity, timeout_ms: u32) -> Self {
+    pub fn new(message: String, severity: Severity, display_timeout_ms: Option<u32>, remove_timeout_ms: Option<u32>) -> Self {
         Self {
             message,
             severity,
-            timeout_ms,
+            display_timeout_ms,
+            remove_timeout_ms,
             creation_time: std::time::Instant::now(),
         }
     }
@@ -48,7 +50,23 @@ impl Alert {
         self.severity
     }
 
+    pub fn suppress(&mut self) {
+        self.display_timeout_ms = Some(0);
+    }
+
+    pub fn is_active(&self) -> bool {
+        if self.display_timeout_ms.is_none() {
+            return true; // Always active if no timeout set
+        }
+        self.creation_time.elapsed().as_millis() < self.display_timeout_ms.unwrap() as u128
+    }
+
+    // Return true if the alert has expired based on remove_timeout_ms
+    // and should be removed from queue.
     pub fn is_expired(&self) -> bool {
-        self.creation_time.elapsed().as_millis() >= self.timeout_ms as u128
+        if self.remove_timeout_ms.is_none() {
+            return false; // Never expires if no timeout set
+        }
+        self.creation_time.elapsed().as_millis() >= self.remove_timeout_ms.unwrap() as u128
     }
 }

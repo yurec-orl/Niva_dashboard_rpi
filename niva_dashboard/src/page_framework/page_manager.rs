@@ -346,13 +346,25 @@ impl PageManager {
         self.add_page(diag_page);
 
         // Set up watchdogs for alert manager
-        let watchdog1 = Watchdog::new(
+        let engine_temp_watchdog = Watchdog::new(
             HWInput::HwEngineCoolantTemp,
             "ТЕМПЕРАТУРА ДВИГАТЕЛЯ".to_string(),
             Severity::Critical,
-            5000,
+            Some(5000),           // Stays on screen for 5 seconds
+            Some(5 * 60 * 1000),  // Remove after 5 minutes - prevents flooding
+            Some(100),    // Trigger if condition persists for 100ms
         );
-        self.alert_manager.add_watchdog(watchdog1);
+        let oil_press_low_watchdog = Watchdog::new(
+            HWInput::HwOilPressLow,
+            "НИЗКОЕ ДАВЛЕНИЕ МАСЛА".to_string(),
+            Severity::Critical,
+            Some(5000),           // Stays on screen for 5 seconds
+            Some(5 * 60 * 1000),  // Remove after 5 minutes - prevents flooding
+            Some(100),    // Trigger if condition persists for 100ms
+        );
+
+        self.alert_manager.add_watchdog(engine_temp_watchdog);
+        self.alert_manager.add_watchdog(oil_press_low_watchdog);
 
         // Enable watchdogs and alerts
         self.alert_manager.set_enabled(true);
@@ -455,6 +467,10 @@ impl PageManager {
                         print!("Button released: {}\r\n", key);
                         if let Some(button) = self.button_by_key(&key) {
                             button.trigger();
+                        } else if key == 'q' {
+                            // For debugging, allow 'q' key to quit the loop
+                            print!("'q' pressed - exiting event loop\r\n");
+                            self.running = false;
                         }
                     }
                 }
@@ -506,6 +522,9 @@ impl PageManager {
             }
             UIEvent::Restart => {
                 print!("Restart event received (not implemented)\r\n");
+            }
+            UIEvent::SuppressAlerts => {
+                self.alert_manager.suppress_alerts();
             }
             UIEvent::ButtonPressed(action) => {
                 print!("Custom button action: {}\r\n", action);

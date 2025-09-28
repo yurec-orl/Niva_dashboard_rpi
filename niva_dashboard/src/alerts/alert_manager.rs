@@ -3,10 +3,13 @@ use crate::alerts::watchdog::Watchdog;
 use crate::alerts::alert::Alert;
 use crate::graphics::ui_style::*;
 use crate::graphics::context::GraphicsContext;
+use std::collections::HashMap;
 
 // AlertManager is responsible for managing alerts and watchdogs.
 // Watchdogs are used to monitor hardware inputs and trigger alerts when certain conditions are met.
 // Alerts are displayed on screen and can have different severities and timeouts.
+// Each watchdog can produce only one alert with a fixed message and severity.
+// For any watchdog, there can be only one active alert at a time.
 
 #[derive(Debug, Clone, Copy)]
 pub enum Severity {
@@ -28,9 +31,10 @@ pub struct AlertStyle {
 }
 
 pub struct AlertManager {
+    watchdog_id_counter: u32,       // Unique ID number to match watchdogs to alerts
     enabled: bool,
-    watchdogs: Vec<Watchdog>,
-    alerts: Vec<Alert>,
+    watchdogs: Vec<(u32, Watchdog)>,
+    alerts: Vec<(u32, Alert)>,
     alert_style: AlertStyle,
     sound_path: String,
 }
@@ -38,6 +42,7 @@ pub struct AlertManager {
 impl AlertManager {
     pub fn new(enabled: bool, ui_style: &UIStyle) -> Self {
         Self {
+            watchdog_id_counter: 0,
             enabled,
             watchdogs: Vec::new(),
             alerts: Vec::new(),
@@ -56,26 +61,46 @@ impl AlertManager {
         }
     }
 
+    fn get_next_watchdog_id(&mut self) -> u32 {
+        let id = self.watchdog_id_counter;
+        self.watchdog_id_counter += 1;
+        id
+    }
+
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
     }
 
+    pub fn suppress_alerts(&mut self) {
+        for alert in &mut self.alerts {
+            alert.1.suppress();
+        }
+    }
+
     pub fn add_watchdog(&mut self, watchdog: Watchdog) {
-        self.watchdogs.push(watchdog);
+        let id = self.get_next_watchdog_id();
+        self.watchdogs.push((id, watchdog));
     }
 
     pub fn check_watchdogs(&mut self, sensor_manager: &SensorManager) {
         if !self.enabled {
             return;
         }
-        for watchdog in &self.watchdogs {
+        for (watchdog_id, watchdog) in &mut self.watchdogs {
             if watchdog.check(sensor_manager) {
+                for (alert_id, alert) in &self.alerts {
+                    if alert_id == watchdog_id {
+                        // Alert already active, skip adding a new one
+                        return;
+                    }
+                }
                 print!("Watchdog: {:?} condition on {:?}\r\n", watchdog.severity(), watchdog.hw_input());
-                self.alerts.push(Alert::new(
+                self.alerts.push((*watchdog_id, Alert::new(
                     watchdog.message().clone(),
                     watchdog.severity(),
-                    watchdog.timeout_ms(),
-                ));
+                    watchdog.alert_display_timeout_ms(),
+                    watchdog.alert_remove_timeout_ms(),
+                )));
             }
         }
     }
@@ -86,15 +111,25 @@ impl AlertManager {
         }
         
         // Filter out expired alerts first
-        self.alerts.retain(|alert| !alert.is_expired());
+        self.alerts.retain(|alert| !alert.1.is_expired());
         
         if self.alerts.is_empty() {
             return;
         }
 
+        // Copy active alerts to calculate layout properly
+        let active_alerts: Vec<&(u32, Alert)> = self.alerts
+            .iter()
+            .filter(|&(_, alert)| alert.is_active())
+            .collect();
+
         let screen_width = context.width as f32;
         let screen_height = context.height as f32;
-        let active_alert_count = self.alerts.len();
+        let active_alert_count = active_alerts.len();
+
+        if active_alert_count == 0 {
+            return; // No active alerts to render
+        }
 
         // Calculate text height for proper bounds sizing
         let text_height = match context.calculate_text_height_with_font(
@@ -109,9 +144,9 @@ impl AlertManager {
 
         // Calculate text width for proper bounds sizing
         let mut max_text_width = 0.0;
-        for alert in &self.alerts {
+        for alert in active_alerts.iter() {
             let width = context.calculate_text_width_with_font(
-                &alert.message(),
+                &alert.1.message(),
                 1.0,
                 &self.alert_style.font_path,
                 self.alert_style.font_size as u32
@@ -146,7 +181,7 @@ impl AlertManager {
         );
 
         // Render each alert with calculated positioning
-        for alert in &self.alerts {
+        for alert in active_alerts.iter() {
             let bounds = crate::indicators::indicator::IndicatorBounds {
                 x: x_offset + self.alert_style.margin,
                 y: y_offset + self.alert_style.margin,
@@ -154,8 +189,8 @@ impl AlertManager {
                 height: alert_height,
             };
 
-            if let Err(e) = alert.render(bounds, context, &self.alert_style) {
-                eprintln!("Error rendering alert \"{}\": {}", alert.message(), e);
+            if let Err(e) = alert.1.render(bounds, context, &self.alert_style) {
+                eprintln!("Error rendering alert \"{}\": {}", alert.1.message(), e);
             }
 
             y_offset += alert_height + self.alert_style.margin;

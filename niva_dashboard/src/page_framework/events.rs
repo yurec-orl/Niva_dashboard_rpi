@@ -39,7 +39,7 @@ pub enum UIEvent {
     OscToggleChannel(u8),
 
     // Alert events
-    AlertTriggered(HWInput, String, u32), // (source, message, timeout in milliseconds)
+    SuppressAlerts,
 }
 
 /// Event bus that manages dual-channel communication for global and page events
@@ -191,7 +191,7 @@ impl SmartEventSender {
             UIEvent::BrightnessDown |
             UIEvent::SetBrightness(_) |
             UIEvent::SwitchToPage(_) |
-            UIEvent::AlertTriggered(_, _, _) => {
+            UIEvent::SuppressAlerts => {
                 self.global_sender.send(event);
             }
             // Page-specific events go to current page
