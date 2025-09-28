@@ -22,12 +22,16 @@ impl Watchdog {
     pub fn check(&self, sensor_manager: &SensorManager) -> bool {
         let sensor_value = sensor_manager.get_sensor_value(&self.hw_input);
         if let Some(value) = sensor_value {
-            match self.severity {
+            return match self.severity {
                 Severity::Warning => value.is_warning(),
                 Severity::Critical => value.is_critical(),
             };
         }
         false
+    }
+
+    pub fn hw_input(&self) -> HWInput {
+        self.hw_input
     }
 
     pub fn message(&self) -> &String {

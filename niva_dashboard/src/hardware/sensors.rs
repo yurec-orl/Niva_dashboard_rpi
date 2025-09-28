@@ -85,7 +85,11 @@ impl DigitalSensor for GenericDigitalSensor {
     }
 
     fn read(&mut self, input: Level) -> Result<&SensorValue, String> {
-        self.value = SensorValue::digital(input == self.active_level, self.metadata.label.clone(), self.metadata.sensor_id.clone());
+        self.value = SensorValue::digital_with_constraints_and_metadata(
+            input == self.active_level,
+            self.constraints.clone(),
+            self.metadata.clone(),
+        );
         Ok(&self.value)
     }
 }
@@ -143,29 +147,29 @@ impl Sensor for GenericAnalogSensor {
 impl AnalogSensor for GenericAnalogSensor {
     fn read(&mut self, input: u16) -> Result<&SensorValue, String> {
         let value = (input as f32) * self.scale_factor;
-        self.value = SensorValue::analog(value.clamp(self.min_value(), self.max_value()),
-                                         self.min_value(), self.max_value(), 
-                                         &self.metadata.unit,
-                                         &self.metadata.label,
-                                         &self.metadata.sensor_id);
+        self.value = SensorValue::analog_with_constraints_and_metadata(
+            value.clamp(self.min_value(), self.max_value()),
+            self.constraints.clone(),
+            self.metadata.clone(),
+        );
         Ok(&self.value)
     }
 }
 
-struct EngineTemperatureSensor {
+pub struct EngineTemperatureSensor {
     value: SensorValue,
     constraints: ValueConstraints,
     metadata: ValueMetadata,
 }
 
 impl EngineTemperatureSensor {
-    fn new() -> Self {
+    pub fn new() -> Self {
         EngineTemperatureSensor {
             value: SensorValue::empty(),
             constraints: ValueConstraints::analog_with_thresholds(
-                0.0, 120.0,
-                None, Some(100.0),
-                None, Some(110.0),
+                0.0, 130.0,
+                None, None,
+                Some(100.0), Some(110.0),
             ),
             metadata: ValueMetadata {
                 unit: "°C".to_string(),
@@ -210,10 +214,12 @@ impl AnalogSensor for EngineTemperatureSensor {
     fn read(&mut self, input: u16) -> Result<&SensorValue, String> {
         // Convert raw input (e.g. ADC value) to temperature
         // Placeholder conversion logic
-        let temperature = (input as f32) * 0.1; // Example conversion
-        self.value = SensorValue::analog(temperature.clamp(self.constraints.min_value, self.constraints.max_value),
-                                         self.constraints.min_value, self.constraints.max_value,
-                                         &self.metadata.unit, &self.metadata.label, &self.metadata.sensor_id);
+        let temperature = (input as f32) * 0.12; // Example conversion
+        self.value = SensorValue::analog_with_constraints_and_metadata(
+            temperature.clamp(self.constraints.min_value, self.constraints.max_value),
+            self.constraints.clone(),
+            self.metadata.clone(),
+        );
         Ok(&self.value)
     }
 }

@@ -2,6 +2,7 @@ use crate::hardware::sensor_manager::SensorManager;
 use crate::alerts::watchdog::Watchdog;
 use crate::alerts::alert::Alert;
 use crate::graphics::ui_style::*;
+use crate::graphics::context::GraphicsContext;
 
 // AlertManager is responsible for managing alerts and watchdogs.
 // Watchdogs are used to monitor hardware inputs and trigger alerts when certain conditions are met.
@@ -13,17 +14,24 @@ pub enum Severity {
     Critical,
 }
 
+// UI style settings for new alerts
+pub struct AlertStyle {
+    pub font_path: String,
+    pub font_size: f32,
+    pub warning_color: (f32, f32, f32),
+    pub critical_color: (f32, f32, f32),
+    pub border_color: (f32, f32, f32),
+    pub border_width: f32,
+    pub margin: f32,
+    pub corner_radius: f32,
+    pub background_color: (f32, f32, f32), // Changed from 4 elements to 3
+}
+
 pub struct AlertManager {
     enabled: bool,
     watchdogs: Vec<Watchdog>,
     alerts: Vec<Alert>,
-    font_path: String,          // ui style settings for new alerts
-    font_size: f32,
-    warning_color: (f32, f32, f32),
-    critical_color: (f32, f32, f32),
-    border_color: (f32, f32, f32),
-    border_width: f32,
-    border_outer_margin: f32,
+    alert_style: AlertStyle,
     sound_path: String,
 }
 
@@ -33,13 +41,17 @@ impl AlertManager {
             enabled,
             watchdogs: Vec::new(),
             alerts: Vec::new(),
-            font_path: ui_style.get_string(ALERT_FONT_PATH, DEFAULT_GLOBAL_FONT_PATH),
-            font_size: ui_style.get_float(ALERT_FONT_SIZE, 32.0),
-            warning_color: ui_style.get_color(ALERT_WARNING_COLOR, (1.0, 1.0, 0.0)),
-            critical_color: ui_style.get_color(ALERT_CRITICAL_COLOR, (1.0, 0.0, 0.0)),
-            border_color: ui_style.get_color(ALERT_BORDER_COLOR, (1.0, 1.0, 1.0)),
-            border_width: ui_style.get_float(ALERT_BORDER_WIDTH, 4.0),
-            border_outer_margin: ui_style.get_float(ALERT_BORDER_OUTER_MARGIN, 8.0),
+            alert_style: AlertStyle {
+                font_path: ui_style.get_string(ALERT_FONT_PATH, DEFAULT_GLOBAL_FONT_PATH),
+                font_size: ui_style.get_float(ALERT_FONT_SIZE, 32.0),
+                warning_color: ui_style.get_color(ALERT_WARNING_COLOR, (1.0, 1.0, 0.0)),
+                critical_color: ui_style.get_color(ALERT_CRITICAL_COLOR, (1.0, 0.0, 0.0)),
+                border_color: ui_style.get_color(ALERT_BORDER_COLOR, (1.0, 1.0, 1.0)),
+                border_width: ui_style.get_float(ALERT_BORDER_WIDTH, 4.0),
+                margin: ui_style.get_float(ALERT_MARGIN, 8.0),
+                corner_radius: ui_style.get_float(ALERT_CORNER_RADIUS, 8.0),
+                background_color: ui_style.get_color(ALERT_BACKGROUND_COLOR, (0.0, 0.0, 0.0)),
+            },
             sound_path: ui_style.get_string(ALERT_SOUND_PATH, ""),
         }
     }
@@ -58,6 +70,7 @@ impl AlertManager {
         }
         for watchdog in &self.watchdogs {
             if watchdog.check(sensor_manager) {
+                print!("Watchdog: {:?} condition on {:?}\r\n", watchdog.severity(), watchdog.hw_input());
                 self.alerts.push(Alert::new(
                     watchdog.message().clone(),
                     watchdog.severity(),
@@ -67,32 +80,85 @@ impl AlertManager {
         }
     }
 
-    pub fn render_alerts(&mut self, context: &mut crate::graphics::context::GraphicsContext) {
+    pub fn render_alerts(&mut self, context: &mut GraphicsContext) {
         if !self.enabled {
             return;
         }
+        
+        // Filter out expired alerts first
+        self.alerts.retain(|alert| !alert.is_expired());
+        
+        if self.alerts.is_empty() {
+            return;
+        }
+
         let screen_width = context.width as f32;
         let screen_height = context.height as f32;
+        let active_alert_count = self.alerts.len();
 
-        let mut y_offset = self.border_outer_margin;
+        // Calculate text height for proper bounds sizing
+        let text_height = match context.calculate_text_height_with_font(
+            "Mg", // Sample text with ascenders and descenders to get maximum height
+            1.0,
+            &self.alert_style.font_path,
+            self.alert_style.font_size as u32
+        ) {
+            Ok(height) => height,
+            Err(_) => self.alert_style.font_size, // Fallback to font size
+        };
 
-        self.alerts.retain(|alert| {
-            let bounds = crate::indicators::indicator::IndicatorBounds {
-                x: self.border_outer_margin,
-                y: y_offset,
-                width: screen_width - 2.0 * self.border_outer_margin,
-                height: self.font_size + 2.0 * self.border_outer_margin,
-            };
-            let text_color = match alert.severity() {
-                Severity::Warning => self.warning_color,
-                Severity::Critical => self.critical_color,
-            };
-            if let Err(e) = alert.render(bounds, context, text_color, &self.font_path, self.font_size) {
-                eprintln!("Error rendering alert: {}", e);
+        // Calculate text width for proper bounds sizing
+        let mut max_text_width = 0.0;
+        for alert in &self.alerts {
+            let width = context.calculate_text_width_with_font(
+                &alert.message(),
+                1.0,
+                &self.alert_style.font_path,
+                self.alert_style.font_size as u32
+            );
+            if let Ok(w) = width {
+                if w - max_text_width > std::f32::EPSILON {
+                    max_text_width = w;
+                }
             }
-            y_offset += bounds.height + self.border_outer_margin;
-            // Keep the alert if it has not timed out
-            true // Placeholder: Implement timeout logic if needed
-        });
+        }
+
+        // Calculate alert bounds height as: text_height * 2 + border_width + border_outer_margin
+        let alert_height = text_height * 2.0 + self.alert_style.border_width + self.alert_style.margin;
+        
+        // Calculate total height needed for all alerts including spacing
+        let total_alerts_height = (alert_height * active_alert_count as f32) + 
+                                 (self.alert_style.margin * (active_alert_count - 1) as f32);
+        
+        // Calculate starting Y coordinate to center alerts vertically on screen
+        let x_offset = (screen_width - max_text_width - self.alert_style.margin) / 2.0;
+        let start_y = (screen_height - total_alerts_height) / 2.0;
+        
+        let mut y_offset = start_y;
+
+        // Erase background
+        context.fill_rect(
+            x_offset - self.alert_style.margin,
+            start_y - self.alert_style.margin,
+            max_text_width + 2.0 * self.alert_style.margin,
+            total_alerts_height + 2.0 * self.alert_style.margin,
+            self.alert_style.background_color,
+        );
+
+        // Render each alert with calculated positioning
+        for alert in &self.alerts {
+            let bounds = crate::indicators::indicator::IndicatorBounds {
+                x: x_offset + self.alert_style.margin,
+                y: y_offset + self.alert_style.margin,
+                width: screen_width - 2.0 * self.alert_style.margin,
+                height: alert_height,
+            };
+
+            if let Err(e) = alert.render(bounds, context, &self.alert_style) {
+                eprintln!("Error rendering alert \"{}\": {}", alert.message(), e);
+            }
+
+            y_offset += alert_height + self.alert_style.margin;
+        }
     }
 }

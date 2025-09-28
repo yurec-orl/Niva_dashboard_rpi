@@ -201,7 +201,8 @@ pub const ALERT_CRITICAL_COLOR: &str = "alert_critical_color";
 pub const ALERT_BACKGROUND_COLOR: &str = "alert_background_color";
 pub const ALERT_BORDER_COLOR: &str = "alert_border_color";
 pub const ALERT_BORDER_WIDTH: &str = "alert_border_width";
-pub const ALERT_BORDER_OUTER_MARGIN: &str = "alert_border_margin";
+pub const ALERT_MARGIN: &str = "alert_border_margin";
+pub const ALERT_CORNER_RADIUS: &str = "alert_corner_radius";
 pub const ALERT_SOUND_PATH: &str = "alert_sound_path";
 
 // =============================================================================
@@ -695,7 +696,8 @@ impl UIStyle {
         self.set(ALERT_BACKGROUND_COLOR, UIStyleValue::Color("#000000".to_string()));
         self.set(ALERT_BORDER_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
         self.set(ALERT_BORDER_WIDTH, UIStyleValue::Float(4.0));
-        self.set(ALERT_BORDER_OUTER_MARGIN, UIStyleValue::Float(8.0));
+        self.set(ALERT_MARGIN, UIStyleValue::Float(8.0));
+        self.set(ALERT_CORNER_RADIUS, UIStyleValue::Float(8.0));
         self.set(ALERT_SOUND_PATH, UIStyleValue::String("".to_string())); // No sound by default
     }
 }

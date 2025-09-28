@@ -102,14 +102,6 @@ pub fn build_fuel_level_gauge(
             start_angle,
             end_angle,
         )),
-        Box::new(LabelDecorator::new( // Fuel level unit label at bottom
-            "л".to_string(),
-            ui_style.get_string(GAUGE_UNIT_FONT, DEFAULT_GLOBAL_FONT_PATH),
-            ui_style.get_integer(GAUGE_UNIT_FONT_SIZE, 14),
-            ui_style.get_color(GAUGE_UNIT_COLOR, (1.0, 1.0, 1.0)),
-            DecoratorAlignmentH::Center,
-            DecoratorAlignmentV::Center,
-        ).with_offset(unit_offset_h, unit_offset_v)),
         // Fuel level labels
         Box::new(NeedleGaugeMarkLabelsDecorator::new(
             vec!["0".into(), "1/2".into(), "4/4".into()], // Empty, Half, Full labels

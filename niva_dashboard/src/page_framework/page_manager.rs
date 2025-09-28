@@ -5,6 +5,9 @@ use crate::page_framework::events::{UIEvent, EventSender, EventReceiver, EventBu
 use crate::page_framework::input::{InputHandler, ButtonState};
 use crate::page_framework::main_page::MainPage;
 use crate::hardware::sensor_manager::SensorManager;
+use crate::hardware::hw_providers::HWInput;
+use crate::alerts::alert_manager::{AlertManager, Severity};
+use crate::alerts::watchdog::Watchdog;
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -186,6 +189,9 @@ pub struct PageManager {
     global_event_receiver: EventReceiver,  // PageManager listens to global events
     smart_event_sender: SmartEventSender,  // Smart sender routes events automatically
 
+    // Alert system
+    alert_manager: AlertManager,
+
     fps_counter: FpsCounter,
     start_time: Instant,
 
@@ -210,6 +216,8 @@ impl PageManager {
         let global_event_receiver = event_bus.global_receiver();
         let smart_event_sender = event_bus.smart_sender();
 
+        let alert_manager = AlertManager::new(true, &ui_style);
+
         PageManager {
             context,
             ui_style,
@@ -222,6 +230,7 @@ impl PageManager {
             event_bus,
             global_event_receiver,
             smart_event_sender,
+            alert_manager,
             fps_counter: FpsCounter::new(),
             start_time: Instant::now(),
             running: false,
@@ -315,7 +324,7 @@ impl PageManager {
         self.get_current_page_mut()?.button_by_position_mut(pos)
     }
 
-    // Set up pages and buttons.
+    // Set up pages, buttons and watchdogs.
     pub fn setup(&mut self) -> Result<(), String> {
         // Get smart event sender for button callbacks
         let smart_sender = self.smart_event_sender.clone();
@@ -335,6 +344,18 @@ impl PageManager {
         self.switch_page(MAIN_PAGE_ID)?;
 
         self.add_page(diag_page);
+
+        // Set up watchdogs for alert manager
+        let watchdog1 = Watchdog::new(
+            HWInput::HwEngineCoolantTemp,
+            "ТЕМПЕРАТУРА ДВИГАТЕЛЯ".to_string(),
+            Severity::Critical,
+            5000,
+        );
+        self.alert_manager.add_watchdog(watchdog1);
+
+        // Enable watchdogs and alerts
+        self.alert_manager.set_enabled(true);
 
         Ok(())
     }
@@ -364,61 +385,67 @@ impl PageManager {
         // self.set_bloom_intensity(1.0);
         // let start_time = Instant::now();
         
+        let mut last_render_time = Instant::now();
+        
         while self.running {
-            let frame_start = Instant::now();
+            let loop_start = Instant::now();
             
-            // if (Instant::now() - start_time).as_secs() == 5 {
-            //     self.toggle_bloom();
-            // }
+            // Continuous sensor polling - poll sensors every loop iteration
+            // This ensures sensor data is always up to date regardless of render timing
+            if let Err(e) = self.sensor_manager.read_all_sensors() {
+                print!("Sensor read error: {}\r\n", e);
+            }
+            self.alert_manager.check_watchdogs(&self.sensor_manager);
+            
+            // Check if it's time to render based on target framerate
+            let time_since_last_render = loop_start.duration_since(last_render_time);
+            let should_render = time_since_last_render >= FRAME_DURATION;
+            
+            if should_render {
+                let frame_start = Instant::now();
 
-            // Update FPS counter
-            self.fps_counter.update();
-            
-            // Begin bloom rendering if enabled
-            let bloom_enabled = self.context.is_bloom_enabled();
-            if bloom_enabled {
-                if let Err(e) = self.context.begin_bloom_render() {
-                    print!("Bloom render error: {}\r\n", e);
+                // Update FPS counter only when rendering
+                self.fps_counter.update();
+                
+                // Begin bloom rendering if enabled
+                let bloom_enabled = self.context.is_bloom_enabled();
+                if bloom_enabled {
+                    if let Err(e) = self.context.begin_bloom_render() {
+                        print!("Bloom render error: {}\r\n", e);
+                    }
+                } else {
+                    // Clear screen with black for normal rendering
+                    self.context.clear_screen();
                 }
-            } else {
-                // Clear screen with black for normal rendering
-                self.context.clear_screen();
-            }
             
-            unsafe {
-                gl::Enable(gl::BLEND);
-                gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-            }
-
-            // Read sensor values
-            self.sensor_manager.read_all_sensors()?;
-            
-            // Render current page
-            self.render_current_page()?;
-
-            // Render button labels on left and right sides
-            self.render_button_labels()?;
-            
-            // Render status line
-            self.render_status_line()?;
-            
-            // Apply bloom effect and swap buffers
-            if bloom_enabled {
-                if let Err(e) = self.context.end_bloom_render() {
-                    print!("Bloom end render error: {}\r\n", e);
+                unsafe {
+                    gl::Enable(gl::BLEND);
+                    gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
                 }
-            }
-            
-            // Swap buffers
-            self.context.swap_buffers();
-            
-            // Frame timing control
-            let frame_time = frame_start.elapsed();
-            if frame_time < FRAME_DURATION {
-                std::thread::sleep(FRAME_DURATION - frame_time);
+
+                // Render the frame - sensors were already read above
+                self.render_current_page()?;
+
+                self.alert_manager.render_alerts(&mut self.context);
+
+                self.render_button_labels()?;
+                
+                self.render_status_line()?;
+                
+                // Apply bloom effect and swap buffers
+                if bloom_enabled {
+                    if let Err(e) = self.context.end_bloom_render() {
+                        print!("Bloom end render error: {}\r\n", e);
+                    }
+                }
+                
+                // Swap buffers
+                self.context.swap_buffers();
+                
+                last_render_time = frame_start;
             }
 
-            // Check for button state changes
+            // Check for button state changes (processed every loop iteration for responsiveness)
             if let Some(state) = self.input_handler.button_state() {
                 match state {
                     ButtonState::Pressed(key) => {
@@ -444,10 +471,9 @@ impl PageManager {
                 current_page.process_events();
             }
 
-            // Exit condition (for now, run for 30 seconds)
-            //if self.start_time.elapsed() > Duration::from_secs(10) {
-            //    self.running = false;
-            //}
+            // Small sleep to prevent excessive CPU usage while maintaining high sensor polling rate
+            // 0.1ms sleep allows for ~10kHz max polling rate while being CPU-friendly
+            std::thread::sleep(Duration::from_micros(100));
         }
         
         print!("Event loop finished\r\n");

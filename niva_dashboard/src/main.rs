@@ -13,7 +13,7 @@ use crate::hardware::sensor_manager::{SensorManager, SensorDigitalInputChain, Se
 use crate::hardware::hw_providers::*;
 use crate::hardware::digital_signal_processing::DigitalSignalDebouncer;
 use crate::hardware::analog_signal_processing::AnalogSignalProcessorMovingAverage;
-use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor, SpeedSensor};
+use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor, SpeedSensor, EngineTemperatureSensor};
 use crate::hardware::sensor_value::ValueConstraints;
 use rppal::gpio::Level;
 use std::env;
@@ -187,12 +187,11 @@ fn setup_sensors() -> SensorManager {
     );
     mgr.add_analog_sensor_chain(oil_pressure_chain);
 
-    // Engine temperature sensor (0-120°C range)
+    // Engine temperature sensor (0-130°C range)
     let temperature_chain = SensorAnalogInputChain::new(
         Box::new(TestAnalogDataProvider::new(HWInput::HwEngineCoolantTemp)),
         vec![Box::new(AnalogSignalProcessorMovingAverage::new(20))],
-        Box::new(GenericAnalogSensor::new("HwEngineCoolantTemp".to_string(), "ТЕМП ДВИГ".to_string(), "°C".to_string(),
-                                          ValueConstraints::analog_with_thresholds(0.0, 120.0, Some(5.0), Some(10.0), Some(95.0), Some(105.0)), 0.1)), // 0-120°C engine temperature range
+        Box::new(EngineTemperatureSensor::new()), // 0-130°C engine temperature range
     );
     mgr.add_analog_sensor_chain(temperature_chain);
 

@@ -176,7 +176,19 @@ impl SensorValue {
             },
         }
     }
-    
+
+    pub fn digital_with_constraints_and_metadata(
+        value: bool,
+        constraints: ValueConstraints,
+        metadata: ValueMetadata
+    ) -> Self {
+        Self {
+            value: ValueData::Digital(value),
+            constraints,
+            metadata,
+        }
+    }
+
     /// Create an analog sensor value
     pub fn analog(
         value: f32,
@@ -232,6 +244,18 @@ impl SensorValue {
                 label: label.into(),
                 sensor_id: sensor_id.into(),
             },
+        }
+    }
+
+    pub fn analog_with_constraints_and_metadata(
+        value: f32,
+        constraints: ValueConstraints,
+        metadata: ValueMetadata
+    ) -> Self {
+        Self {
+            value: ValueData::Analog(value),
+            constraints,
+            metadata,
         }
     }
     
