@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use std::fs;
 
 const STATUS_LINE_X_MARGIN : f32 = 20.0;
-const STATUS_LINE_Y_MARGIN: f32 = 25.0;
+const STATUS_LINE_Y_MARGIN : f32 = 25.0;
 
 pub const MAIN_PAGE_ID: u32 = 0;
 pub const DIAG_PAGE_ID: u32 = 1;
