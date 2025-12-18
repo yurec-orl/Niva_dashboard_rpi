@@ -13,7 +13,8 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use std::fs;
 
-const STATUS_LINE_MARGIN: f32 = 25.0;
+const STATUS_LINE_X_MARGIN : f32 = 20.0;
+const STATUS_LINE_Y_MARGIN: f32 = 25.0;
 
 pub const MAIN_PAGE_ID: u32 = 0;
 pub const DIAG_PAGE_ID: u32 = 1;
@@ -543,7 +544,7 @@ impl PageManager {
     
     fn get_button_position(&self, pos: &ButtonPosition) -> (f32, f32) {
         let screen_width = self.context.width as f32;
-        let screen_height = self.context.height as f32 - STATUS_LINE_MARGIN;
+        let screen_height = self.context.height as f32 - STATUS_LINE_Y_MARGIN;
         let x_margin = 0.0;   // No horizontal margin
         let y_margin = 30.0;  // Small vertical margin from screen edges
         
@@ -671,14 +672,14 @@ impl PageManager {
 
         let status_text = if days > 0 {
             format!(
-                "Работа: {}д {:02}:{:02}:{:02} | К/С: {:.1} | Пам: {}/{}МБ",
+                "Работа: {}д {:02}:{:02}:{:02} | К/С: {:.1} | Память: {}/{}МБ",
                 days, hours, minutes, seconds,
                 fps,
                 mem_available, mem_total
             )
         } else {
             format!(
-                "Работа: {:02}:{:02}:{:02} | К/С: {:.1} | Пам: {}/{}МБ",
+                "Работа: {:02}:{:02}:{:02} | К/С: {:.1} | Память: {}/{}МБ",
                 hours, minutes, seconds,
                 fps,
                 mem_available, mem_total
@@ -686,13 +687,9 @@ impl PageManager {
         };
 
         // Render status line at bottom of screen
-        let status_y = self.context.height as f32 - STATUS_LINE_MARGIN; // 25 pixels from bottom
-        let status_x = 10.0; // 10 pixels from left
-        
-        // Render status line at bottom of screen
-        let status_y = self.context.height as f32 - STATUS_LINE_MARGIN; // 25 pixels from bottom
-        let status_x = 10.0; // 10 pixels from left
-        
+        let status_y = self.context.height as f32 - STATUS_LINE_Y_MARGIN; // 25 pixels from bottom
+        let status_x = STATUS_LINE_X_MARGIN; // 20 pixels from left
+
         let status_font = self.ui_style.get_string(PAGE_STATUS_FONT, DEFAULT_GLOBAL_FONT_PATH);
         let status_font_size = self.ui_style.get_integer(PAGE_STATUS_FONT_SIZE, 14);
         let status_color = self.ui_style.get_color(PAGE_STATUS_COLOR, (0.7, 0.7, 0.7));
