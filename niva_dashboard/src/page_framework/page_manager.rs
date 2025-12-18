@@ -16,6 +16,8 @@ use std::fs;
 const STATUS_LINE_X_MARGIN : f32 = 20.0;
 const STATUS_LINE_Y_MARGIN : f32 = 25.0;
 
+const PAGE_BUTTON_X_MARGIN: f32 = 4.0;      // Move a little from screen edge for better visibility.
+
 pub const MAIN_PAGE_ID: u32 = 0;
 pub const DIAG_PAGE_ID: u32 = 1;
 
@@ -542,7 +544,7 @@ impl PageManager {
         }
     }
     
-    fn get_button_position(&self, pos: &ButtonPosition) -> (f32, f32) {
+    fn get_button_position(&self, pos: &ButtonPosition, orientation: &String) -> (f32, f32) {
         let screen_width = self.context.width as f32;
         let screen_height = self.context.height as f32 - STATUS_LINE_Y_MARGIN;
         let x_margin = 0.0;   // No horizontal margin
@@ -574,8 +576,19 @@ impl PageManager {
         label_font: &String, label_font_size: u32, label_color: (f32, f32, f32),
         orientation: &String
     ) -> Result<(), String> {
-        let (x, y) = self.get_button_position(pos);
+        let (x, mut y) = self.get_button_position(pos, orientation);
         
+        if orientation == "vertical" {
+            // Special case for vertical orientation: adjust y position
+            // so that label y center point alingns with button position
+            y = y - (self.context.calculate_text_height_with_font_vert(
+                label,
+                1.0,
+                label_font,
+                label_font_size
+            )? / 2.0);
+        }
+
         let render_x = match pos {
             // Right side buttons are right-aligned
             ButtonPosition::Right1 | ButtonPosition::Right2 | 
@@ -595,10 +608,10 @@ impl PageManager {
                         label_font_size
                     )?
                 };
-                x - text_width
+                x - text_width - PAGE_BUTTON_X_MARGIN
             }
             // Left side buttons are left-aligned
-            _ => x,
+            _ => x + PAGE_BUTTON_X_MARGIN,
         };
         
         if orientation == "horizontal" {
