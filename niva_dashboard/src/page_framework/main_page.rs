@@ -369,7 +369,7 @@ impl Page for MainPage {
         self.base.name()
     }
 
-    fn render(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
+    1fn render(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
         // Read sensor values and create SensorValue objects
         let sensor_values = sensor_manager.get_sensor_values();
 

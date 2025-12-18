@@ -351,7 +351,7 @@ impl PageManager {
             "ТЕМПЕРАТУРА ДВИГАТЕЛЯ".to_string(),
             Severity::Critical,
             Some(5000),           // Stays on screen for 5 seconds
-            Some(5 * 60 * 1000),  // Remove after 5 minutes - prevents flooding
+            Some(1 * 60 * 1000),  // Remove after 1 minute - prevents flooding
             Some(100),    // Trigger if condition persists for 100ms
         );
         let oil_press_low_watchdog = Watchdog::new(
@@ -359,7 +359,7 @@ impl PageManager {
             "НИЗКОЕ ДАВЛЕНИЕ МАСЛА".to_string(),
             Severity::Critical,
             Some(5000),           // Stays on screen for 5 seconds
-            Some(5 * 60 * 1000),  // Remove after 5 minutes - prevents flooding
+            Some(1 * 60 * 1000),  // Remove after 1 minute - prevents flooding
             Some(100),    // Trigger if condition persists for 100ms
         );
 
