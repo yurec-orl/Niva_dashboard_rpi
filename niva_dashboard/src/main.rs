@@ -220,7 +220,10 @@ fn main() {
     print!("5. GPIO input test\r\n");
     print!("6. Sensor manager test\r\n");
     print!("7. Digital segmented display test\r\n");
-    print!("Usage: cargo run -- [test={{basic|gltext|dashboard|needle|gpio|sensors|digital}}]\r\n");
+    print!("8. Indicator zero position test (needle and bar gauges at minimum)\r\n");
+    print!("9. Indicator middle position test (needle and bar gauges at 50%)\r\n");
+    print!("10. Indicator maximum position test (needle and bar gauges at maximum)\r\n");
+    print!("Usage: cargo run -- [test={{basic|gltext|dashboard|needle|gpio|sensors|digital|ind_zero_pos|ind_middle_pos|ind_max_pos}}]\r\n");
 
     for arg in args {
         let parm = arg.split("=").collect::<Vec<&str>>();

@@ -209,7 +209,81 @@ impl TestPulseDataProvider {
             max_frequency: 83.3, // pulses per second at 100 km/h
         }
     }
+}
+
+/// Test provider that always returns zero value for testing zero-position indicators
+pub struct TestZeroAnalogDataProvider {
+    input: HWInput,
+}
+
+impl TestZeroAnalogDataProvider {
+    pub fn new(input: HWInput) -> Self {
+        TestZeroAnalogDataProvider {
+            input,
+        }
+    }
+}
+
+impl HWAnalogProvider for TestZeroAnalogDataProvider {
+    fn input(&self) -> HWInput {
+        self.input
+    }
     
+    fn read_analog(&self, _input: HWInput) -> Result<u16, String> {
+        // Always return zero for testing zero-position indicators
+        Ok(0)
+    }
+}
+
+/// Test provider that always returns middle value for testing middle-position indicators
+pub struct TestMiddleAnalogDataProvider {
+    input: HWInput,
+}
+
+impl TestMiddleAnalogDataProvider {
+    pub fn new(input: HWInput) -> Self {
+        TestMiddleAnalogDataProvider {
+            input,
+        }
+    }
+}
+
+impl HWAnalogProvider for TestMiddleAnalogDataProvider {
+    fn input(&self) -> HWInput {
+        self.input
+    }
+    
+    fn read_analog(&self, _input: HWInput) -> Result<u16, String> {
+        // Always return middle value (50% of range) for testing middle-position indicators
+        Ok(512)
+    }
+}
+
+/// Test provider that always returns maximum value for testing max-position indicators
+pub struct TestMaxAnalogDataProvider {
+    input: HWInput,
+}
+
+impl TestMaxAnalogDataProvider {
+    pub fn new(input: HWInput) -> Self {
+        TestMaxAnalogDataProvider {
+            input,
+        }
+    }
+}
+
+impl HWAnalogProvider for TestMaxAnalogDataProvider {
+    fn input(&self) -> HWInput {
+        self.input
+    }
+    
+    fn read_analog(&self, _input: HWInput) -> Result<u16, String> {
+        // Always return maximum value for testing max-position indicators
+        Ok(1023)
+    }
+}
+
+impl TestPulseDataProvider {
     fn get_current_frequency(&self) -> f32 {
         let elapsed = self.start_time.elapsed();
         let cycle_duration = Duration::from_millis(5000); // 5 seconds total cycle

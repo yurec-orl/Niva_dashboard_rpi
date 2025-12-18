@@ -140,8 +140,9 @@ void main() {
         let tip_x = center_x + cos_a * length;
         let tip_y = center_y + sin_a * length;
 
-        let base_width = self.needle_base_width;
-        let tip_width = self.needle_tip_width;
+        // Calculate actual widths based on needle length for consistency
+        let base_width = self.needle_base_width * length;
+        let tip_width = self.needle_tip_width * length;
 
         // Base vertices (perpendicular to needle direction)
         let base_perp_cos = (-sin_a) * base_width * 0.5;
@@ -225,6 +226,7 @@ impl Indicator for NeedleIndicator {
         // Calculate center and radius from bounds
         let center_x = bounds.x + bounds.width / 2.0;
         let center_y = bounds.y + bounds.height / 2.0;
+        let available_radius = (bounds.width.min(bounds.height)) / 2.0;
         
         // Render decorators
         self.base.render_decorators(bounds, style, context)?;
@@ -239,9 +241,12 @@ impl Indicator for NeedleIndicator {
 
             // Calculate needle angle
             let needle_angle = self.calculate_needle_angle(normalized_value);
+            
+            // Calculate actual needle length from the fraction and available radius
+            let actual_needle_length = available_radius * self.needle_length;
         
             // Render the needle
-            self.render_needle(center_x, center_y, self.needle_length, 
+            self.render_needle(center_x, center_y, actual_needle_length, 
                                needle_angle, self.needle_color,
                                context.width as f32, context.height as f32,
                                shader_program);
