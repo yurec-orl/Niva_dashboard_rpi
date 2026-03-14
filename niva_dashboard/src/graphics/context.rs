@@ -274,6 +274,13 @@ pub enum InputEventType {
     KeyRelease(u32),
 }
 
+/// Text orientation options for rendering
+#[derive(Debug, Clone, Copy)]
+pub enum TextOrientation {
+    Horizontal,  // Normal left-to-right text
+    Vertical,    // Characters stacked vertically (top-to-bottom, not rotated)
+}
+
 /// Graphics context using KMS/DRM backend with OpenGL ES
 pub struct GraphicsContext {
     // DRM/KMS handles
@@ -307,6 +314,17 @@ pub struct GraphicsContext {
     // UI style with brightness control and theming
     pub ui_style: UIStyle,
     
+    // Cached shader programs for performance
+    rectangle_shader: Option<u32>,
+    
+    // Bloom post-processing effect
+    bloom_enabled: bool,
+    bloom_intensity: f32,
+    bloom_threshold: f32,
+    bloom_framebuffer: Option<u32>,
+    bloom_texture: Option<u32>,
+    bloom_shader: Option<u32>,
+    
     // State
     initialized: bool,
     display_configured: bool,
@@ -333,6 +351,13 @@ impl GraphicsContext {
             height,
             text_renderers: HashMap::new(),
             ui_style: UIStyle::new(),
+            rectangle_shader: None,
+            bloom_enabled: true,
+            bloom_intensity: 0.5,  // Increased for more visible glow
+            bloom_threshold: 0.3,  // Lowered to catch more bright pixels
+            bloom_framebuffer: None,
+            bloom_texture: None,
+            bloom_shader: None,
             initialized: false,
             display_configured: false,
         };
@@ -364,6 +389,12 @@ impl GraphicsContext {
         unsafe {
             glViewport(0, 0, context.width, context.height);
             glClearColor(0.0, 0.0, 0.0, 1.0);
+        }
+        
+        // Initialize bloom effect
+        if let Err(e) = context.init_bloom() {
+            print!("Warning: Failed to initialize bloom effect: {}\r\n", e);
+            context.bloom_enabled = false;
         }
         
         context.initialized = true;
@@ -944,36 +975,519 @@ impl GraphicsContext {
         self.ui_style.decrease_brightness(step);
     }
 
-    // =============================================================================
-    // UI STYLE ACCESS
-    // =============================================================================
-    
-    /// Get a reference to the UI style
-    pub fn style(&self) -> &UIStyle {
-        &self.ui_style
-    }
-    
-    /// Get a mutable reference to the UI style
-    pub fn style_mut(&mut self) -> &mut UIStyle {
-        &mut self.ui_style
-    }
-    
-    /// Load UI style from JSON string
-    pub fn load_style_from_json(&mut self, json_str: &str) -> Result<(), Box<dyn std::error::Error>> {
-        self.ui_style = UIStyle::from_json(json_str)?;
-        Ok(())
-    }
-    
-    /// Save current UI style to JSON string
-    pub fn save_style_to_json(&self) -> Result<String, serde_json::Error> {
-        self.ui_style.to_json()
-    }
-
     /// Clear the screen with black
     pub fn clear_screen(&mut self) {
         unsafe {
             gl::ClearColor(0.0, 0.0, 0.0, 1.0);
             gl::Clear(gl::COLOR_BUFFER_BIT);
+        }
+    }
+
+    // =============================================================================
+    // RECTANGLE RENDERING METHODS
+    // =============================================================================
+    
+    /// Render a rectangle with specified properties
+    /// 
+    /// # Arguments
+    /// * `x` - X coordinate of top-left corner
+    /// * `y` - Y coordinate of top-left corner  
+    /// * `width` - Rectangle width
+    /// * `height` - Rectangle height
+    /// * `color` - RGB color as (r, g, b) tuple, values 0.0-1.0
+    /// * `filled` - If true, fills the rectangle; if false, draws outline only
+    /// * `thickness` - Line thickness for outline (ignored if filled=true)
+    /// * `corner_radius` - Corner radius for rounded rectangles (0.0 for sharp corners)
+    pub fn render_rectangle(
+        &mut self,
+        x: f32, 
+        y: f32, 
+        width: f32, 
+        height: f32, 
+        color: (f32, f32, f32),
+        filled: bool,
+        thickness: f32,
+        corner_radius: f32,
+    ) -> Result<(), String> {
+        unsafe {
+            if corner_radius > 0.0 {
+                // Render rounded rectangle
+                if filled {
+                    self.render_filled_rounded_rectangle(x, y, width, height, color, corner_radius)
+                } else {
+                    self.render_rounded_rectangle_outline(x, y, width, height, color, thickness, corner_radius)
+                }
+            } else {
+                // Render regular rectangle
+                if filled {
+                    self.render_filled_rectangle(x, y, width, height, color)
+                } else {
+                    self.render_rectangle_outline(x, y, width, height, color, thickness)
+                }
+            }
+        }
+    }
+    
+    /// Render a filled rectangle (solid color)
+    unsafe fn render_filled_rectangle(
+        &mut self,
+        x: f32, 
+        y: f32, 
+        width: f32, 
+        height: f32, 
+        color: (f32, f32, f32)
+    ) -> Result<(), String> {
+        // Create simple rectangle shader program if needed
+        let shader_program = self.get_or_create_rectangle_shader()?;
+        gl::UseProgram(shader_program);
+        
+        // Set up projection matrix for 2D rendering
+        let projection_matrix = self.create_2d_projection_matrix();
+        let projection_uniform = gl::GetUniformLocation(shader_program, b"projection\0".as_ptr());
+        gl::UniformMatrix4fv(projection_uniform, 1, gl::FALSE, projection_matrix.as_ptr());
+        
+        // Set color uniform
+        let color_uniform = gl::GetUniformLocation(shader_program, b"color\0".as_ptr());
+        gl::Uniform3f(color_uniform, color.0, color.1, color.2);
+        
+        // Define rectangle vertices (2 triangles)
+        let vertices: [f32; 12] = [
+            x,         y,          // Top-left
+            x + width, y,          // Top-right  
+            x,         y + height, // Bottom-left
+            
+            x + width, y,          // Top-right
+            x + width, y + height, // Bottom-right
+            x,         y + height, // Bottom-left
+        ];
+        
+        // Create and bind VAO/VBO
+        let mut vao = 0u32;
+        let mut vbo = 0u32;
+        gl::GenVertexArrays(1, &mut vao);
+        gl::GenBuffers(1, &mut vbo);
+        
+        gl::BindVertexArray(vao);
+        gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+        
+        // Upload vertex data
+        gl::BufferData(
+            gl::ARRAY_BUFFER,
+            (vertices.len() * std::mem::size_of::<f32>()) as isize,
+            vertices.as_ptr() as *const std::ffi::c_void,
+            gl::STATIC_DRAW,
+        );
+        
+        // Set up vertex attributes
+        let position_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr()) as u32;
+        gl::VertexAttribPointer(position_attr, 2, gl::FLOAT, gl::FALSE, 0, std::ptr::null());
+        gl::EnableVertexAttribArray(position_attr);
+        
+        // Render
+        gl::DrawArrays(gl::TRIANGLES, 0, 6);
+        
+        // Clean up
+        gl::DeleteBuffers(1, &vbo);
+        gl::DeleteVertexArrays(1, &vao);
+        
+        Ok(())
+    }
+    
+    /// Render rectangle outline with specified thickness
+    unsafe fn render_rectangle_outline(
+        &mut self,
+        x: f32, 
+        y: f32, 
+        width: f32, 
+        height: f32, 
+        color: (f32, f32, f32),
+        thickness: f32
+    ) -> Result<(), String> {
+        // Draw 4 filled rectangles for the outline
+        let half_thickness = thickness / 2.0;
+        
+        // Top edge
+        self.render_filled_rectangle(x - half_thickness, y - half_thickness, width + thickness, thickness, color)?;
+        
+        // Bottom edge  
+        self.render_filled_rectangle(x - half_thickness, y + height - half_thickness, width + thickness, thickness, color)?;
+        
+        // Left edge
+        self.render_filled_rectangle(x - half_thickness, y + half_thickness, thickness, height - thickness, color)?;
+        
+        // Right edge
+        self.render_filled_rectangle(x + width - half_thickness, y + half_thickness, thickness, height - thickness, color)?;
+        
+        Ok(())
+    }
+    
+    /// Render filled rectangle with rounded corners
+    unsafe fn render_filled_rounded_rectangle(
+        &mut self,
+        x: f32, 
+        y: f32, 
+        width: f32, 
+        height: f32, 
+        color: (f32, f32, f32),
+        corner_radius: f32
+    ) -> Result<(), String> {
+        let radius = corner_radius.min(width / 2.0).min(height / 2.0);
+        
+        // Draw main rectangle (without corners)
+        self.render_filled_rectangle(x + radius, y, width - 2.0 * radius, height, color)?;
+        self.render_filled_rectangle(x, y + radius, radius, height - 2.0 * radius, color)?;
+        self.render_filled_rectangle(x + width - radius, y + radius, radius, height - 2.0 * radius, color)?;
+        
+        // Draw rounded corners using circle segments
+        self.render_circle_segment(x + radius, y + radius, radius, color, 180.0, 270.0)?; // Top-left
+        self.render_circle_segment(x + width - radius, y + radius, radius, color, 270.0, 360.0)?; // Top-right
+        self.render_circle_segment(x + width - radius, y + height - radius, radius, color, 0.0, 90.0)?; // Bottom-right
+        self.render_circle_segment(x + radius, y + height - radius, radius, color, 90.0, 180.0)?; // Bottom-left
+        
+        Ok(())
+    }
+    
+    /// Render rounded rectangle outline
+    unsafe fn render_rounded_rectangle_outline(
+        &mut self,
+        x: f32, 
+        y: f32, 
+        width: f32, 
+        height: f32, 
+        color: (f32, f32, f32),
+        thickness: f32,
+        corner_radius: f32
+    ) -> Result<(), String> {
+        let radius = corner_radius.min(width / 2.0).min(height / 2.0);
+        let half_thickness = thickness / 2.0;
+        
+        // Draw straight edges
+        // Top edge
+        self.render_filled_rectangle(x + radius, y - half_thickness, width - 2.0 * radius, thickness, color)?;
+        // Bottom edge
+        self.render_filled_rectangle(x + radius, y + height - half_thickness, width - 2.0 * radius, thickness, color)?;
+        // Left edge
+        self.render_filled_rectangle(x - half_thickness, y + radius, thickness, height - 2.0 * radius, color)?;
+        // Right edge
+        self.render_filled_rectangle(x + width - half_thickness, y + radius, thickness, height - 2.0 * radius, color)?;
+        
+        // Draw rounded corner outlines using circle arcs
+        self.render_circle_arc_outline(x + radius, y + radius, radius, thickness, color, 180.0_f32.to_radians(), 270.0_f32.to_radians(), 16)?; // Top-left
+        self.render_circle_arc_outline(x + width - radius, y + radius, radius, thickness, color, 270.0_f32.to_radians(), 360.0_f32.to_radians(), 16)?; // Top-right
+        self.render_circle_arc_outline(x + width - radius, y + height - radius, radius, thickness, color, 0.0_f32.to_radians(), 90.0_f32.to_radians(), 16)?; // Bottom-right
+        self.render_circle_arc_outline(x + radius, y + height - radius, radius, thickness, color, 90.0_f32.to_radians(), 180.0_f32.to_radians(), 16)?; // Bottom-left
+
+        Ok(())
+    }
+    
+    /// Render a filled circle segment (for rounded corners)
+    unsafe fn render_circle_segment(
+        &mut self,
+        center_x: f32, 
+        center_y: f32, 
+        radius: f32, 
+        color: (f32, f32, f32),
+        start_angle: f32, 
+        end_angle: f32
+    ) -> Result<(), String> {
+        let shader_program = self.get_or_create_rectangle_shader()?;
+        gl::UseProgram(shader_program);
+        
+        // Set up projection matrix
+        let projection_matrix = self.create_2d_projection_matrix();
+        let projection_uniform = gl::GetUniformLocation(shader_program, b"projection\0".as_ptr());
+        gl::UniformMatrix4fv(projection_uniform, 1, gl::FALSE, projection_matrix.as_ptr());
+        
+        // Set color uniform
+        let color_uniform = gl::GetUniformLocation(shader_program, b"color\0".as_ptr());
+        gl::Uniform3f(color_uniform, color.0, color.1, color.2);
+        
+        // Generate vertices for circle segment
+        let segments = 16; // Number of triangular segments for smooth curve
+        let mut vertices = Vec::with_capacity((segments + 2) * 2); // Center + arc points
+        
+        // Add center point
+        vertices.push(center_x);
+        vertices.push(center_y);
+        
+        // Add arc points
+        let angle_step = (end_angle - start_angle) / segments as f32;
+        for i in 0..=segments {
+            let angle = (start_angle + i as f32 * angle_step).to_radians();
+            vertices.push(center_x + radius * angle.cos());
+            vertices.push(center_y + radius * angle.sin());
+        }
+        
+        // Create and bind VAO/VBO
+        let mut vao = 0u32;
+        let mut vbo = 0u32;
+        gl::GenVertexArrays(1, &mut vao);
+        gl::GenBuffers(1, &mut vbo);
+        
+        gl::BindVertexArray(vao);
+        gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+        
+        // Upload vertex data
+        gl::BufferData(
+            gl::ARRAY_BUFFER,
+            (vertices.len() * std::mem::size_of::<f32>()) as isize,
+            vertices.as_ptr() as *const std::ffi::c_void,
+            gl::STATIC_DRAW,
+        );
+        
+        // Set up vertex attributes
+        let position_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr()) as u32;
+        gl::VertexAttribPointer(position_attr, 2, gl::FLOAT, gl::FALSE, 0, std::ptr::null());
+        gl::EnableVertexAttribArray(position_attr);
+        
+        // Render as triangle fan
+        gl::DrawArrays(gl::TRIANGLE_FAN, 0, vertices.len() as i32 / 2);
+        
+        // Clean up
+        gl::DeleteBuffers(1, &vbo);
+        gl::DeleteVertexArrays(1, &vao);
+        
+        Ok(())
+    }
+    
+    /// Render a circle arc outline (for rounded corner borders)
+    pub fn render_circle_arc_outline(
+        &mut self,
+        center_x: f32, 
+        center_y: f32, 
+        radius: f32, 
+        thickness: f32,
+        color: (f32, f32, f32),
+        start_angle: f32, 
+        end_angle: f32,
+        segments: usize,
+    ) -> Result<(), String> {
+        unsafe {
+            // For thick arcs, we render the difference between outer and inner arcs
+            let outer_radius = radius + thickness / 2.0;
+            let inner_radius = radius - thickness / 2.0;
+            
+            let shader_program = self.get_or_create_rectangle_shader()?;
+            gl::UseProgram(shader_program);
+            
+            // Set up projection matrix
+            let projection_matrix = self.create_2d_projection_matrix();
+            let projection_uniform = gl::GetUniformLocation(shader_program, b"projection\0".as_ptr());
+            gl::UniformMatrix4fv(projection_uniform, 1, gl::FALSE, projection_matrix.as_ptr());
+            
+            // Set color uniform
+            let color_uniform = gl::GetUniformLocation(shader_program, b"color\0".as_ptr());
+            gl::Uniform3f(color_uniform, color.0, color.1, color.2);
+            
+            // Generate vertices for arc ring (triangle strip)
+            let mut vertices = Vec::with_capacity(segments * 4 * 2); // 2 points per segment * 2 coords
+            
+            let angle_step = (end_angle - start_angle) / (segments - 1) as f32;
+            for i in 0..segments {
+                let angle = start_angle + i as f32 * angle_step; // Angles already in radians
+                let cos_a = angle.cos();
+                let sin_a = angle.sin();
+                
+                // Inner point
+                vertices.push(center_x + inner_radius * cos_a);
+                vertices.push(center_y + inner_radius * sin_a);
+                
+                // Outer point
+                vertices.push(center_x + outer_radius * cos_a);
+                vertices.push(center_y + outer_radius * sin_a);
+            }
+            
+            // Create and bind VAO/VBO
+            let mut vao = 0u32;
+            let mut vbo = 0u32;
+            gl::GenVertexArrays(1, &mut vao);
+            gl::GenBuffers(1, &mut vbo);
+            
+            gl::BindVertexArray(vao);
+            gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+            
+            // Upload vertex data
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (vertices.len() * std::mem::size_of::<f32>()) as isize,
+                vertices.as_ptr() as *const std::ffi::c_void,
+                gl::STATIC_DRAW,
+            );
+            
+            // Set up vertex attributes
+            let position_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr()) as u32;
+            gl::VertexAttribPointer(position_attr, 2, gl::FLOAT, gl::FALSE, 0, std::ptr::null());
+            gl::EnableVertexAttribArray(position_attr);
+            
+            // Render as triangle strip
+            gl::DrawArrays(gl::TRIANGLE_STRIP, 0, vertices.len() as i32 / 2);
+            
+            // Clean up
+            gl::DeleteBuffers(1, &vbo);
+            gl::DeleteVertexArrays(1, &vao);
+        }
+        
+        Ok(())
+    }
+    
+    /// Get or create the rectangle shader program (cached)
+    unsafe fn get_or_create_rectangle_shader(&mut self) -> Result<u32, String> {
+        if let Some(shader) = self.rectangle_shader {
+            Ok(shader)
+        } else {
+            let shader = self.create_rectangle_shader_program()?;
+            self.rectangle_shader = Some(shader);
+            print!("Rectangle shader program cached for reuse\r\n");
+            Ok(shader)
+        }
+    }
+    
+    /// Create shader program for rectangle rendering
+    unsafe fn create_rectangle_shader_program(&self) -> Result<u32, String> {
+        let vertex_shader_source = b"
+attribute vec2 position;
+uniform mat4 projection;
+
+void main() {
+    gl_Position = projection * vec4(position, 0.0, 1.0);
+}
+\0";
+        
+        let fragment_shader_source = b"
+precision mediump float;
+uniform vec3 color;
+
+void main() {
+    gl_FragColor = vec4(color, 1.0);
+}
+\0";
+        
+        // Create and compile vertex shader
+        let vertex_shader = gl::CreateShader(gl::VERTEX_SHADER);
+        if vertex_shader == 0 {
+            return Err("Failed to create rectangle vertex shader".to_string());
+        }
+        
+        let vertex_src_ptr = vertex_shader_source.as_ptr();
+        gl::ShaderSource(vertex_shader, 1, &vertex_src_ptr, std::ptr::null());
+        gl::CompileShader(vertex_shader);
+        
+        let mut compile_status = 0i32;
+        gl::GetShaderiv(vertex_shader, gl::COMPILE_STATUS, &mut compile_status);
+        if compile_status == 0 {
+            gl::DeleteShader(vertex_shader);
+            return Err("Rectangle vertex shader compilation failed".to_string());
+        }
+        
+        // Create and compile fragment shader
+        let fragment_shader = gl::CreateShader(gl::FRAGMENT_SHADER);
+        if fragment_shader == 0 {
+            gl::DeleteShader(vertex_shader);
+            return Err("Failed to create rectangle fragment shader".to_string());
+        }
+        
+        let fragment_src_ptr = fragment_shader_source.as_ptr();
+        gl::ShaderSource(fragment_shader, 1, &fragment_src_ptr, std::ptr::null());
+        gl::CompileShader(fragment_shader);
+        
+        let mut compile_status = 0i32;
+        gl::GetShaderiv(fragment_shader, gl::COMPILE_STATUS, &mut compile_status);
+        if compile_status == 0 {
+            gl::DeleteShader(vertex_shader);
+            gl::DeleteShader(fragment_shader);
+            return Err("Rectangle fragment shader compilation failed".to_string());
+        }
+        
+        // Create and link shader program
+        let program = gl::CreateProgram();
+        if program == 0 {
+            gl::DeleteShader(vertex_shader);
+            gl::DeleteShader(fragment_shader);
+            return Err("Failed to create rectangle shader program".to_string());
+        }
+        
+        gl::AttachShader(program, vertex_shader);
+        gl::AttachShader(program, fragment_shader);
+        gl::LinkProgram(program);
+        
+        let mut link_status = 0i32;
+        gl::GetProgramiv(program, gl::LINK_STATUS, &mut link_status);
+        if link_status == 0 {
+            gl::DeleteShader(vertex_shader);
+            gl::DeleteShader(fragment_shader);
+            gl::DeleteProgram(program);
+            return Err("Rectangle shader program linking failed".to_string());
+        }
+        
+        // Clean up individual shaders (they're now linked to the program)
+        gl::DeleteShader(vertex_shader);
+        gl::DeleteShader(fragment_shader);
+        
+        Ok(program)
+    }
+    
+    /// Create 2D projection matrix for screen coordinates
+    fn create_2d_projection_matrix(&self) -> [f32; 16] {
+        // Create orthographic projection matrix for 2D rendering
+        // Maps screen coordinates (0,0) to (width, height) to NDC (-1,-1) to (1,1)
+        [
+            2.0 / self.width as f32, 0.0,                      0.0, 0.0,
+            0.0,                     -2.0 / self.height as f32, 0.0, 0.0,  // Negative Y to flip coordinates
+            0.0,                     0.0,                      -1.0, 0.0,
+            -1.0,                    1.0,                       0.0, 1.0,
+        ]
+    }
+    
+    // =============================================================================
+    // CONVENIENCE RECTANGLE RENDERING METHODS
+    // =============================================================================
+    
+    /// Render a simple filled rectangle (convenience method)
+    pub fn fill_rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: (f32, f32, f32)) -> Result<(), String> {
+        self.render_rectangle(x, y, width, height, color, true, 0.0, 0.0)
+    }
+    
+    /// Render a simple rectangle outline (convenience method)
+    pub fn stroke_rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: (f32, f32, f32), thickness: f32) -> Result<(), String> {
+        self.render_rectangle(x, y, width, height, color, false, thickness, 0.0)
+    }
+    
+    /// Render a filled rounded rectangle (convenience method)
+    pub fn fill_rounded_rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: (f32, f32, f32), corner_radius: f32) -> Result<(), String> {
+        self.render_rectangle(x, y, width, height, color, true, 0.0, corner_radius)
+    }
+    
+    /// Render a rounded rectangle outline (convenience method)
+    pub fn stroke_rounded_rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: (f32, f32, f32), thickness: f32, corner_radius: f32) -> Result<(), String> {
+        self.render_rectangle(x, y, width, height, color, false, thickness, corner_radius)
+    }
+    
+    /// Render a rectangle using UI style colors (convenience method for dashboard components)
+    pub fn render_ui_rect(&mut self, x: f32, y: f32, width: f32, height: f32, style: &str, filled: bool, thickness: f32) -> Result<(), String> {
+        let color = match style {
+            "primary" => self.ui_style.get_color("global_brand_primary_color", (1.0, 0.0, 0.0)),
+            "secondary" => self.ui_style.get_color("global_brand_secondary_color", (0.5, 0.5, 0.5)), 
+            "accent" => self.ui_style.get_color("global_brand_accent_color", (1.0, 0.4, 0.0)),
+            "warning" => self.ui_style.get_color("text_warning_color", (1.0, 0.67, 0.0)),
+            "error" | "danger" => self.ui_style.get_color("text_error_color", (1.0, 0.0, 0.0)),
+            "critical" => self.ui_style.get_color("indicator_critical_color", (1.0, 0.0, 0.0)),
+            "success" | "normal" => self.ui_style.get_color("indicator_normal_color", (0.0, 1.0, 0.0)),
+            "background" => self.ui_style.get_color("global_background_color", (0.0, 0.0, 0.0)),
+            "text_primary" => self.ui_style.get_color("text_primary_color", (1.0, 1.0, 1.0)),
+            "text_secondary" => self.ui_style.get_color("text_secondary_color", (0.75, 0.75, 0.75)),
+            "gauge_border" => self.ui_style.get_color("gauge_border_color", (1.0, 1.0, 1.0)),
+            "bar_fill" => self.ui_style.get_color("bar_fill_color", (0.0, 1.0, 0.0)),
+            _ => (1.0, 1.0, 1.0), // Default to white
+        };
+        
+        self.render_rectangle(x, y, width, height, color, filled, thickness, 0.0)
+    }
+    
+    /// Cleanup rectangle shader when context is destroyed
+    unsafe fn cleanup_rectangle_shader(&mut self) {
+        if let Some(shader) = self.rectangle_shader.take() {
+            gl::DeleteProgram(shader);
+            print!("Rectangle shader program cleaned up\r\n");
         }
     }
 
@@ -1001,8 +1515,8 @@ impl GraphicsContext {
         Ok(self.text_renderers.get_mut(&key).unwrap())
     }
     
-    /// Render text using a specific font
-    pub fn render_text_with_font(
+    /// Private method to render text with orientation support
+    fn render_text(
         &mut self, 
         text: &str, 
         x: f32, 
@@ -1010,7 +1524,8 @@ impl GraphicsContext {
         scale: f32, 
         color: (f32, f32, f32),
         font_path: &str,
-        font_size: u32
+        font_size: u32,
+        orientation: TextOrientation
     ) -> Result<(), String> {
         // Apply brightness adjustment to the color
         let adjusted_color = self.ui_style.apply_brightness(color);
@@ -1022,13 +1537,86 @@ impl GraphicsContext {
         // Get the text renderer for this font
         let renderer = self.get_text_renderer(font_path, font_size)?;
         
-        // Render the text
+        // Render the text with orientation
         unsafe {
-            renderer.render_text(text, x, y, scale, adjusted_color, width, height)
+            renderer.render_text(text, x, y, scale, adjusted_color, width, height, orientation)
         }
     }
     
-    /// Calculate text width using a specific font
+    /// Render text using a specific font (horizontal orientation)
+    pub fn render_text_with_font(
+        &mut self, 
+        text: &str, 
+        x: f32, 
+        y: f32, 
+        scale: f32, 
+        color: (f32, f32, f32),
+        font_path: &str,
+        font_size: u32
+    ) -> Result<(), String> {
+        self.render_text(text, x, y, scale, color, font_path, font_size, TextOrientation::Horizontal)
+    }
+    
+    /// Render text using a specific font (vertical orientation)
+    pub fn render_text_with_font_vert(
+        &mut self, 
+        text: &str, 
+        x: f32, 
+        y: f32, 
+        scale: f32, 
+        color: (f32, f32, f32),
+        font_path: &str,
+        font_size: u32
+    ) -> Result<(), String> {
+        self.render_text(text, x, y, scale, color, font_path, font_size, TextOrientation::Vertical)
+    }
+    
+    /// Private method to calculate text width with orientation
+    fn calculate_text_width(
+        &mut self, 
+        text: &str, 
+        scale: f32,
+        font_path: &str,
+        font_size: u32,
+        orientation: TextOrientation
+    ) -> Result<f32, String> {
+        let renderer = self.get_text_renderer(font_path, font_size)?;
+        unsafe {
+            renderer.calculate_text_width(text, scale, orientation)
+        }
+    }
+    
+    /// Private method to calculate text height with orientation
+    fn calculate_text_height(
+        &mut self, 
+        text: &str, 
+        scale: f32,
+        font_path: &str,
+        font_size: u32,
+        orientation: TextOrientation
+    ) -> Result<f32, String> {
+        let renderer = self.get_text_renderer(font_path, font_size)?;
+        unsafe {
+            renderer.calculate_text_height(text, scale, orientation)
+        }
+    }
+    
+    /// Private method to calculate text dimensions with orientation
+    fn calculate_text_dimensions(
+        &mut self, 
+        text: &str, 
+        scale: f32,
+        font_path: &str,
+        font_size: u32,
+        orientation: TextOrientation
+    ) -> Result<(f32, f32), String> {
+        let renderer = self.get_text_renderer(font_path, font_size)?;
+        unsafe {
+            renderer.calculate_text_dimensions(text, scale, orientation)
+        }
+    }
+    
+    /// Calculate text width using a specific font (horizontal orientation)
     pub fn calculate_text_width_with_font(
         &mut self, 
         text: &str, 
@@ -1036,13 +1624,20 @@ impl GraphicsContext {
         font_path: &str,
         font_size: u32
     ) -> Result<f32, String> {
-        let renderer = self.get_text_renderer(font_path, font_size)?;
-        unsafe {
-            renderer.calculate_text_width(text, scale)
-        }
+        self.calculate_text_width(text, scale, font_path, font_size, TextOrientation::Horizontal)
+    }
+
+    pub fn calculate_text_width_with_font_vert(
+        &mut self, 
+        text: &str, 
+        scale: f32,
+        font_path: &str,
+        font_size: u32
+    ) -> Result<f32, String> {
+        self.calculate_text_width(text, scale, font_path, font_size, TextOrientation::Vertical)
     }
     
-    /// Calculate text height using a specific font
+    /// Calculate text height using a specific font (horizontal orientation)
     pub fn calculate_text_height_with_font(
         &mut self, 
         text: &str, 
@@ -1050,13 +1645,20 @@ impl GraphicsContext {
         font_path: &str,
         font_size: u32
     ) -> Result<f32, String> {
-        let renderer = self.get_text_renderer(font_path, font_size)?;
-        unsafe {
-            renderer.calculate_text_height(text, scale)
-        }
+        self.calculate_text_height(text, scale, font_path, font_size, TextOrientation::Horizontal)
     }
-    
-    /// Calculate text dimensions using a specific font
+
+    pub fn calculate_text_height_with_font_vert(
+        &mut self, 
+        text: &str, 
+        scale: f32,
+        font_path: &str,
+        font_size: u32
+    ) -> Result<f32, String> {
+        self.calculate_text_height(text, scale, font_path, font_size, TextOrientation::Vertical)
+    }
+
+    /// Calculate text dimensions using a specific font (horizontal orientation)
     pub fn calculate_text_dimensions_with_font(
         &mut self, 
         text: &str, 
@@ -1064,12 +1666,19 @@ impl GraphicsContext {
         font_path: &str,
         font_size: u32
     ) -> Result<(f32, f32), String> {
-        let renderer = self.get_text_renderer(font_path, font_size)?;
-        unsafe {
-            renderer.calculate_text_dimensions(text, scale)
-        }
+        self.calculate_text_dimensions(text, scale, font_path, font_size, TextOrientation::Horizontal)
     }
-    
+
+    pub fn calculate_text_dimensions_with_font_vert(
+        &mut self, 
+        text: &str, 
+        scale: f32,
+        font_path: &str,
+        font_size: u32
+    ) -> Result<(f32, f32), String> {
+        self.calculate_text_dimensions(text, scale, font_path, font_size, TextOrientation::Vertical)
+    }
+
     /// Get line height for a specific font
     pub fn get_line_height_with_font(
         &mut self, 
@@ -1092,6 +1701,393 @@ impl GraphicsContext {
         Ok(renderer.get_line_spacing(scale))
     }
     
+    /// Initialize bloom post-processing effect
+    pub fn init_bloom(&mut self) -> Result<(), String> {
+        if self.bloom_framebuffer.is_some() {
+            return Ok(()); // Already initialized
+        }
+        
+        unsafe {
+            // Create framebuffer
+            let mut framebuffer = 0;
+            gl::GenFramebuffers(1, &mut framebuffer);
+            gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer);
+            
+            // Create texture for framebuffer
+            let mut texture = 0;
+            gl::GenTextures(1, &mut texture);
+            gl::BindTexture(gl::TEXTURE_2D, texture);
+            gl::TexImage2D(
+                gl::TEXTURE_2D, 0, gl::RGBA as i32, 
+                self.width, self.height, 0, 
+                gl::RGBA, gl::UNSIGNED_BYTE, 
+                ptr::null()
+            );
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+            
+            // Attach texture to framebuffer
+            gl::FramebufferTexture2D(
+                gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, 
+                gl::TEXTURE_2D, texture, 0
+            );
+            
+            // Check framebuffer completeness
+            if gl::CheckFramebufferStatus(gl::FRAMEBUFFER) != gl::FRAMEBUFFER_COMPLETE {
+                return Err("Failed to create bloom framebuffer".to_string());
+            }
+            
+            // Create bloom shader
+            let shader = self.create_bloom_shader()?;
+            
+            self.bloom_framebuffer = Some(framebuffer);
+            self.bloom_texture = Some(texture);
+            self.bloom_shader = Some(shader);
+            
+            // Restore default framebuffer
+            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+        }
+        
+        print!("✓ Bloom effect initialized\r\n");
+        Ok(())
+    }
+    
+    /// Create bloom post-processing shader
+    fn create_bloom_shader(&self) -> Result<u32, String> {
+        let vertex_shader_source = b"
+            #version 300 es
+            precision mediump float;
+            
+            in vec2 position;
+            in vec2 texCoord;
+            
+            out vec2 vTexCoord;
+            
+            void main() {
+                gl_Position = vec4(position, 0.0, 1.0);
+                vTexCoord = texCoord;
+            }
+        \0";
+        
+        let fragment_shader_source = format!("
+            #version 300 es
+            precision mediump float;
+            
+            in vec2 vTexCoord;
+            out vec4 fragColor;
+            
+            uniform sampler2D uTexture;
+            uniform float uIntensity;
+            uniform float uThreshold;
+            
+            void main() {{
+                vec3 originalColor = texture(uTexture, vTexCoord).rgb;
+                vec2 texelSize = 1.0 / vec2({}, {});
+                
+                vec3 bloom = vec3(0.0);
+                
+                // Simple gaussian-like blur for bloom effect
+                // Sample surrounding pixels with decreasing weights
+                for(int x = -3; x <= 3; x++) {{
+                    for(int y = -3; y <= 3; y++) {{
+                        vec2 offset = vec2(float(x), float(y)) * texelSize;
+                        vec3 sampleColor = texture(uTexture, vTexCoord + offset).rgb;
+                        
+                        // Extract bright pixels above threshold
+                        float brightness = dot(sampleColor, vec3(0.299, 0.587, 0.114));
+                        if(brightness > uThreshold) {{
+                            float distance = length(vec2(float(x), float(y)));
+                            float weight = exp(-distance * 0.5);
+                            bloom += sampleColor * weight * (brightness - uThreshold);
+                        }}
+                    }}
+                }}
+                
+                // Apply bloom with intensity control
+                vec3 finalColor = originalColor + bloom * uIntensity;
+                fragColor = vec4(finalColor, 1.0);
+            }}
+        \0", self.width, self.height);
+        
+        unsafe {
+            // Compile vertex shader
+            let vertex_shader = gl::CreateShader(gl::VERTEX_SHADER);
+            gl::ShaderSource(vertex_shader, 1, &vertex_shader_source.as_ptr(), ptr::null());
+            gl::CompileShader(vertex_shader);
+            
+            // Check compilation
+            let mut success = 0;
+            gl::GetShaderiv(vertex_shader, gl::COMPILE_STATUS, &mut success);
+            if success == 0 {
+                let mut log = [0u8; 512];
+                gl::GetShaderInfoLog(vertex_shader, 512, ptr::null_mut(), log.as_mut_ptr());
+                return Err(format!("Vertex shader compilation failed: {}", 
+                    String::from_utf8_lossy(&log)));
+            }
+            
+            // Compile fragment shader
+            let fragment_shader = gl::CreateShader(gl::FRAGMENT_SHADER);
+            let fragment_source_ptr = fragment_shader_source.as_ptr();
+            gl::ShaderSource(fragment_shader, 1, &fragment_source_ptr, ptr::null());
+            gl::CompileShader(fragment_shader);
+            
+            // Check compilation
+            gl::GetShaderiv(fragment_shader, gl::COMPILE_STATUS, &mut success);
+            if success == 0 {
+                let mut log = [0u8; 512];
+                gl::GetShaderInfoLog(fragment_shader, 512, ptr::null_mut(), log.as_mut_ptr());
+                return Err(format!("Fragment shader compilation failed: {}", 
+                    String::from_utf8_lossy(&log)));
+            }
+            
+            // Link shader program
+            let shader_program = gl::CreateProgram();
+            gl::AttachShader(shader_program, vertex_shader);
+            gl::AttachShader(shader_program, fragment_shader);
+            gl::LinkProgram(shader_program);
+            
+            // Check linking
+            gl::GetProgramiv(shader_program, gl::LINK_STATUS, &mut success);
+            if success == 0 {
+                let mut log = [0u8; 512];
+                gl::GetProgramInfoLog(shader_program, 512, ptr::null_mut(), log.as_mut_ptr());
+                return Err(format!("Shader program linking failed: {}", 
+                    String::from_utf8_lossy(&log)));
+            }
+            
+            // Clean up shaders
+            gl::DeleteShader(vertex_shader);
+            gl::DeleteShader(fragment_shader);
+            
+            Ok(shader_program)
+        }
+    }
+    
+    /// Begin rendering to bloom framebuffer
+    pub fn begin_bloom_render(&self) -> Result<(), String> {
+        if let Some(framebuffer) = self.bloom_framebuffer {
+            unsafe {
+                gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer);
+                gl::Viewport(0, 0, self.width, self.height);
+                gl::ClearColor(0.0, 0.0, 0.0, 1.0);
+                gl::Clear(gl::COLOR_BUFFER_BIT);
+            }
+            Ok(())
+        } else {
+            Err("Bloom not initialized".to_string())
+        }
+    }
+    
+    /// End bloom rendering and apply bloom effect to screen
+    pub fn end_bloom_render(&self) -> Result<(), String> {
+        if let (Some(texture), Some(shader)) = (self.bloom_texture, self.bloom_shader) {
+            unsafe {
+                // Restore default framebuffer
+                gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+                gl::Viewport(0, 0, self.width, self.height);
+                
+                // Use bloom shader
+                gl::UseProgram(shader);
+                
+                // Set uniforms
+                let intensity_loc = gl::GetUniformLocation(shader, b"uIntensity\0".as_ptr());
+                let threshold_loc = gl::GetUniformLocation(shader, b"uThreshold\0".as_ptr());
+                let texture_loc = gl::GetUniformLocation(shader, b"uTexture\0".as_ptr());
+                
+                gl::Uniform1f(intensity_loc, self.bloom_intensity);
+                gl::Uniform1f(threshold_loc, self.bloom_threshold);
+                gl::Uniform1i(texture_loc, 0);
+                
+                // Bind bloom texture
+                gl::ActiveTexture(gl::TEXTURE0);
+                gl::BindTexture(gl::TEXTURE_2D, texture);
+                
+                // Render fullscreen quad
+                self.render_fullscreen_quad();
+            }
+            Ok(())
+        } else {
+            Err("Bloom not initialized".to_string())
+        }
+    }
+    
+    /// Render a fullscreen quad for post-processing
+    fn render_fullscreen_quad(&self) {
+        unsafe {
+            // Simple fullscreen quad vertices
+            let vertices: [f32; 24] = [
+                // Position    // TexCoord
+                -1.0, -1.0,    0.0, 0.0,  // Bottom-left
+                 1.0, -1.0,    1.0, 0.0,  // Bottom-right
+                 1.0,  1.0,    1.0, 1.0,  // Top-right
+                
+                -1.0, -1.0,    0.0, 0.0,  // Bottom-left
+                 1.0,  1.0,    1.0, 1.0,  // Top-right
+                -1.0,  1.0,    0.0, 1.0,  // Top-left
+            ];
+            
+            let mut vbo = 0;
+            let mut vao = 0;
+            
+            gl::GenVertexArrays(1, &mut vao);
+            gl::GenBuffers(1, &mut vbo);
+            
+            gl::BindVertexArray(vao);
+            gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (vertices.len() * std::mem::size_of::<f32>()) as isize,
+                vertices.as_ptr() as *const _,
+                gl::STATIC_DRAW
+            );
+            
+            // Position attribute
+            gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, 4 * std::mem::size_of::<f32>() as i32, ptr::null());
+            gl::EnableVertexAttribArray(0);
+            
+            // TexCoord attribute
+            gl::VertexAttribPointer(1, 2, gl::FLOAT, gl::FALSE, 4 * std::mem::size_of::<f32>() as i32, 
+                (2 * std::mem::size_of::<f32>()) as *const _);
+            gl::EnableVertexAttribArray(1);
+            
+            gl::DrawArrays(gl::TRIANGLES, 0, 6);
+            
+            // Cleanup
+            gl::DeleteVertexArrays(1, &vao);
+            gl::DeleteBuffers(1, &vbo);
+        }
+    }
+    
+    /// Set bloom parameters
+    pub fn set_bloom_intensity(&mut self, intensity: f32) {
+        self.bloom_intensity = intensity.clamp(0.0, 2.0);
+    }
+    
+    pub fn set_bloom_threshold(&mut self, threshold: f32) {
+        self.bloom_threshold = threshold.clamp(0.0, 1.0);
+    }
+    
+    pub fn set_bloom_enabled(&mut self, enabled: bool) {
+        self.bloom_enabled = enabled;
+    }
+
+    /// Begin selective bloom rendering - only elements drawn between this and end_selective_bloom_render will bloom
+    pub fn begin_selective_bloom_render(&self) -> Result<(), String> {
+        if let Some(framebuffer) = self.bloom_framebuffer {
+            unsafe {
+                // Switch to bloom framebuffer and clear it
+                gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer);
+                gl::ClearColor(0.0, 0.0, 0.0, 1.0); // Clear to black
+                gl::Clear(gl::COLOR_BUFFER_BIT);
+            }
+            Ok(())
+        } else {
+            Err("Bloom framebuffer not initialized".to_string())
+        }
+    }
+
+    /// End selective bloom rendering and return to main framebuffer
+    pub fn end_selective_bloom_render(&self) -> Result<(), String> {
+        unsafe {
+            // Return to main framebuffer (0 = screen)
+            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+        }
+        Ok(())
+    }
+
+    /// Apply bloom from selective rendering to the current scene
+    pub fn apply_selective_bloom(&self) -> Result<(), String> {
+        if let (Some(texture), Some(shader)) = (self.bloom_texture, self.bloom_shader) {
+            unsafe {
+                // Use bloom shader
+                gl::UseProgram(shader);
+                
+                // Bind bloom texture
+                gl::ActiveTexture(gl::TEXTURE0);
+                gl::BindTexture(gl::TEXTURE_2D, texture);
+                gl::Uniform1i(gl::GetUniformLocation(shader, b"uTexture\0".as_ptr()), 0);
+                
+                // Set bloom parameters
+                gl::Uniform1f(gl::GetUniformLocation(shader, b"uIntensity\0".as_ptr()), self.bloom_intensity);
+                gl::Uniform1f(gl::GetUniformLocation(shader, b"uThreshold\0".as_ptr()), self.bloom_threshold);
+                
+                // Enable additive blending for bloom overlay
+                gl::Enable(gl::BLEND);
+                gl::BlendFunc(gl::ONE, gl::ONE); // Additive blending
+                
+                // Render fullscreen quad
+                self.render_fullscreen_quad();
+                
+                // Restore normal blending
+                gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+            }
+            Ok(())
+        } else {
+            Err("Bloom not properly initialized".to_string())
+        }
+    }
+
+    /// Draw text with bloom effect
+    pub fn draw_text_with_bloom(&mut self, text: &str, x: f32, y: f32, color: (f32, f32, f32), font_path: &str, font_size: u32) -> Result<(), String> {
+        // First, draw normally to main framebuffer
+        self.render_text_with_font(text, x, y, 1.0, color, font_path, font_size)?;
+        
+        // Then draw to bloom framebuffer for glow effect
+        if self.bloom_enabled {
+            self.begin_selective_bloom_render()?;
+            // Draw with enhanced brightness for bloom
+            let bloom_color = (color.0 * 2.0, color.1 * 2.0, color.2 * 2.0);
+            self.render_text_with_font(text, x, y, 1.0, bloom_color, font_path, font_size)?;
+            self.end_selective_bloom_render()?;
+            self.apply_selective_bloom()?;
+        }
+        
+        Ok(())
+    }
+
+    /// Draw rectangle with bloom effect
+    pub fn draw_rect_with_bloom(&mut self, x: f32, y: f32, width: f32, height: f32, color: (f32, f32, f32)) -> Result<(), String> {
+        // First, draw normally to main framebuffer
+        self.fill_rect(x, y, width, height, color)?;
+        
+        // Then draw to bloom framebuffer for glow effect
+        if self.bloom_enabled {
+            self.begin_selective_bloom_render()?;
+            // Draw with enhanced brightness for bloom
+            let bloom_color = (color.0 * 1.5, color.1 * 1.5, color.2 * 1.5);
+            self.fill_rect(x, y, width, height, bloom_color)?;
+            self.end_selective_bloom_render()?;
+            self.apply_selective_bloom()?;
+        }
+        
+        Ok(())
+    }
+
+    /// Begin custom bloom element group - for complex elements
+    pub fn begin_bloom_element(&self) -> Result<(), String> {
+        if self.bloom_enabled {
+            self.begin_selective_bloom_render()
+        } else {
+            Ok(())
+        }
+    }
+
+    /// End custom bloom element group
+    pub fn end_bloom_element(&self) -> Result<(), String> {
+        if self.bloom_enabled {
+            self.end_selective_bloom_render()?;
+            self.apply_selective_bloom()
+        } else {
+            Ok(())
+        }
+    }
+    
+    pub fn is_bloom_enabled(&self) -> bool {
+        self.bloom_enabled
+    }
+    
     /// Cleanup text renderer before destroying OpenGL context
     fn cleanup_text_renderer(&mut self) {
         if !self.text_renderers.is_empty() {
@@ -1099,14 +2095,32 @@ impl GraphicsContext {
             self.text_renderers.clear(); // This will trigger Drop for all OpenGLTextRenderer instances
         }
     }
+    
+    /// Cleanup bloom effect resources
+    fn cleanup_bloom(&mut self) {
+        unsafe {
+            if let Some(framebuffer) = self.bloom_framebuffer.take() {
+                gl::DeleteFramebuffers(1, &framebuffer);
+            }
+            if let Some(texture) = self.bloom_texture.take() {
+                gl::DeleteTextures(1, &texture);
+            }
+            if let Some(shader) = self.bloom_shader.take() {
+                gl::DeleteProgram(shader);
+            }
+        }
+        print!("Cleaned up bloom effect resources\r\n");
+    }
 }
 
 impl Drop for GraphicsContext {
     fn drop(&mut self) {
         unsafe {
             if self.initialized {
-                // Clean up text renderer FIRST while OpenGL context is still valid
+                // Clean up shaders FIRST while OpenGL context is still valid
                 self.cleanup_text_renderer();
+                self.cleanup_rectangle_shader();
+                self.cleanup_bloom();
                 
                 // Restore previous CRTC configuration
                 if !self.previous_crtc.is_null() {
@@ -1282,7 +2296,7 @@ void main() {
         Ok(program)
     }
     
-    unsafe fn render_text(&mut self, text: &str, x: f32, y: f32, scale: f32, color: (f32, f32, f32), width: f32, height: f32) -> Result<(), String> {
+    unsafe fn render_text(&mut self, text: &str, x: f32, y: f32, scale: f32, color: (f32, f32, f32), width: f32, height: f32, orientation: TextOrientation) -> Result<(), String> {
         // Use cached program state
         gl::UseProgram(self.shader_program);
         
@@ -1314,10 +2328,30 @@ void main() {
         gl::EnableVertexAttribArray(self.vertex_attr as u32);
         gl::VertexAttribPointer(self.vertex_attr as u32, 4, gl::FLOAT, 0, 0, std::ptr::null());
         
-        // Render each character using cached glyphs
-        let mut cursor_x = x;
-        for ch in text.chars() {
-            cursor_x += self.render_cached_character(ch, cursor_x, y, scale)?;
+        // Render each character using cached glyphs with orientation-based positioning
+        match orientation {
+            TextOrientation::Horizontal => {
+                // Traditional horizontal text - advance cursor in X direction
+                let mut cursor_x = x;
+                for ch in text.chars() {
+                    cursor_x += self.render_cached_character(ch, cursor_x, y, scale)?;
+                }
+            },
+            TextOrientation::Vertical => {
+                // Vertical text - advance cursor in Y direction, characters remain upright
+                let mut cursor_y = y;
+                for ch in text.chars() {
+                    // For vertical text, we need to calculate the character's advance in Y direction
+                    let glyph = self.get_or_cache_glyph(ch)?;
+                    
+                    // Render character at current position
+                    self.render_cached_character(ch, x, cursor_y, scale)?;
+                    
+                    // Advance cursor downward by the character height plus small spacing
+                    let char_height = glyph.height * scale;
+                    cursor_y += char_height + scale * 2.0; // Add some spacing between characters
+                }
+            }
         }
         
         Ok(())
@@ -1426,42 +2460,71 @@ void main() {
     }
     
     /// Calculate the total width of a text string with the current font and scale
-    unsafe fn calculate_text_width(&mut self, text: &str, scale: f32) -> Result<f32, String> {
-        let mut total_width = 0.0;
-        
-        for ch in text.chars() {
-            let glyph = self.get_or_cache_glyph(ch)?;
-            total_width += glyph.advance * scale;
+    unsafe fn calculate_text_width(&mut self, text: &str, scale: f32, orientation: TextOrientation) -> Result<f32, String> {
+        match orientation {
+            TextOrientation::Horizontal => {
+                // For horizontal text, width is the sum of character advances
+                let mut total_width = 0.0;
+                for ch in text.chars() {
+                    let glyph = self.get_or_cache_glyph(ch)?;
+                    total_width += glyph.advance * scale;
+                }
+                Ok(total_width)
+            },
+            TextOrientation::Vertical => {
+                // For vertical text, width is the maximum character width
+                let mut max_width = 0.0;
+                for ch in text.chars() {
+                    let glyph = self.get_or_cache_glyph(ch)?;
+                    let char_width = glyph.width * scale;
+                    if char_width > max_width {
+                        max_width = char_width;
+                    }
+                }
+                Ok(max_width)
+            }
         }
-        
-        Ok(total_width)
     }
     
     /// Calculate the maximum height of a text string with the current font and scale
-    unsafe fn calculate_text_height(&mut self, text: &str, scale: f32) -> Result<f32, String> {
-        let mut max_height = 0.0;
-        let mut max_descent = 0.0;
-        
-        for ch in text.chars() {
-            let glyph = self.get_or_cache_glyph(ch)?;
-            let char_height = glyph.bearing_y * scale;
-            let char_descent = (glyph.height - glyph.bearing_y) * scale;
-            
-            if char_height > max_height {
-                max_height = char_height;
-            }
-            if char_descent > max_descent {
-                max_descent = char_descent;
+    unsafe fn calculate_text_height(&mut self, text: &str, scale: f32, orientation: TextOrientation) -> Result<f32, String> {
+        match orientation {
+            TextOrientation::Horizontal => {
+                // For horizontal text, height is the maximum character height
+                let mut max_height = 0.0;
+                let mut max_descent = 0.0;
+                
+                for ch in text.chars() {
+                    let glyph = self.get_or_cache_glyph(ch)?;
+                    let char_height = glyph.bearing_y * scale;
+                    let char_descent = (glyph.height - glyph.bearing_y) * scale;
+                    
+                    if char_height > max_height {
+                        max_height = char_height;
+                    }
+                    if char_descent > max_descent {
+                        max_descent = char_descent;
+                    }
+                }
+                
+                Ok(max_height + max_descent)
+            },
+            TextOrientation::Vertical => {
+                // For vertical text, height is the sum of character heights plus spacing
+                let mut total_height = 0.0;
+                for ch in text.chars() {
+                    let glyph = self.get_or_cache_glyph(ch)?;
+                    total_height += glyph.height * scale + scale * 2.0; // Add spacing
+                }
+                Ok(total_height)
             }
         }
-        
-        Ok(max_height + max_descent)
     }
     
     /// Calculate both width and height of a text string (convenience function)
-    unsafe fn calculate_text_dimensions(&mut self, text: &str, scale: f32) -> Result<(f32, f32), String> {
-        let width = self.calculate_text_width(text, scale)?;
-        let height = self.calculate_text_height(text, scale)?;
+    unsafe fn calculate_text_dimensions(&mut self, text: &str, scale: f32, orientation: TextOrientation) -> Result<(f32, f32), String> {
+        let width = self.calculate_text_width(text, scale, orientation)?;
+        let height = self.calculate_text_height(text, scale, orientation)?;
         Ok((width, height))
     }
     

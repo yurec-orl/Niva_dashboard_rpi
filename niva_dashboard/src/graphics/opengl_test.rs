@@ -1643,3 +1643,530 @@ unsafe fn render_gauge_center_circle(center_x: f32, center_y: f32, radius: f32, 
     
     gl::DeleteBuffers(1, &vbo);
 }
+
+/// Run indicator zero position test with needle and vertical bar gauges
+/// Displays indicators at zero position for 5 seconds using TestZeroAnalogDataProvider
+pub fn run_indicator_zero_position_test(context: &mut GraphicsContext) -> Result<(), String> {
+    use crate::hardware::hw_providers::{TestZeroAnalogDataProvider, HWInput, HWAnalogProvider};
+    use crate::indicators::needle_indicator::{NeedleIndicator, NeedleGaugeMarksDecorator};
+    use crate::indicators::vertical_bar_indicator::VerticalBarIndicator;
+    use crate::indicators::indicator::{Indicator, IndicatorBounds};
+    use crate::graphics::ui_style::UIStyle;
+    use crate::hardware::sensor_value::SensorValue;
+    
+    println!("=== Indicator Zero Position Test ===");
+    println!("Testing needle and vertical bar indicators at zero position for 5 seconds");
+    
+    unsafe {
+        // Set viewport
+        gl::Viewport(0, 0, context.width, context.height);
+        
+        // Enable blending for smooth rendering
+        gl::Enable(gl::BLEND);
+        gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+        
+        // Clear screen with dark background
+        gl::ClearColor(0.05, 0.05, 0.1, 1.0);
+        gl::Clear(gl::COLOR_BUFFER_BIT);
+    }
+    
+    // Create UI style
+    let ui_style = UIStyle::new();
+    
+    // Create zero value providers for testing
+    let fuel_provider = TestZeroAnalogDataProvider::new(HWInput::HwFuelLvl);
+    let oil_provider = TestZeroAnalogDataProvider::new(HWInput::HwOilPress);
+    let voltage_provider = TestZeroAnalogDataProvider::new(HWInput::Hw12v);
+    let temp_provider = TestZeroAnalogDataProvider::new(HWInput::HwEngineCoolantTemp);
+    
+    // Read zero values from providers
+    let fuel_raw = fuel_provider.read_analog(HWInput::HwFuelLvl).unwrap_or(0);
+    let oil_raw = oil_provider.read_analog(HWInput::HwOilPress).unwrap_or(0);
+    let voltage_raw = voltage_provider.read_analog(HWInput::Hw12v).unwrap_or(0);
+    let temp_raw = temp_provider.read_analog(HWInput::HwEngineCoolantTemp).unwrap_or(0);
+    
+    // Convert raw values to sensor values (all should be at minimum/zero)
+    let fuel_value = SensorValue::analog(
+        (fuel_raw as f32 / 1023.0) * 100.0, // Convert to percentage
+        0.0, 100.0, "%", "Fuel Level", "fuel_sensor"
+    );
+    
+    let oil_value = SensorValue::analog(
+        (oil_raw as f32 / 1023.0) * 8.0, // Convert to kgf/cm²
+        0.0, 8.0, "kgf/cm²", "Oil Pressure", "oil_sensor"
+    );
+    
+    let voltage_value = SensorValue::analog(
+        (voltage_raw as f32 / 1023.0) * 20.0, // Convert to volts
+        0.0, 20.0, "V", "12V System", "voltage_sensor"
+    );
+    
+    let temp_value = SensorValue::analog(
+        (temp_raw as f32 / 1023.0) * 160.0 - 40.0, // Convert to Celsius
+        -40.0, 120.0, "°C", "Coolant Temp", "temp_sensor"
+    );
+    
+    // Create indicators with decorators
+    let fuel_needle = NeedleIndicator::new(
+        -225.0f32.to_radians(), // Start angle (bottom-left)
+        45.0f32.to_radians(),   // End angle (bottom-right)
+        0.8,                    // Needle length
+        0.05,                   // Base width
+        0.02,                   // Tip width
+        (1.0, 0.1, 0.0)        // Red color
+    ).with_decorators(vec![
+        Box::new(NeedleGaugeMarksDecorator::new(
+            6,                                      // Number of marks
+            15.0,                                   // Mark length
+            2.0,                                    // Mark width
+            (0.8, 0.8, 0.9),                       // Mark color (light gray)
+            90.0,                                   // Radius for marks
+            -225.0f32.to_radians(),                 // Start angle
+            45.0f32.to_radians()                    // End angle
+        ))
+    ]);
+    
+    let oil_needle = NeedleIndicator::new(
+        -225.0f32.to_radians(),
+        45.0f32.to_radians(),
+        0.8,
+        0.05,
+        0.02,
+        (0.0, 1.0, 0.0)        // Green color
+    ).with_decorators(vec![
+        Box::new(NeedleGaugeMarksDecorator::new(
+            6,                                      // Number of marks
+            15.0,                                   // Mark length
+            2.0,                                    // Mark width
+            (0.8, 0.8, 0.9),                       // Mark color (light gray)
+            90.0,                                   // Radius for marks
+            -225.0f32.to_radians(),                 // Start angle
+            45.0f32.to_radians()                    // End angle
+        ))
+    ]);
+    
+    let voltage_bar = VerticalBarIndicator::new(10) // 10 segments
+        .with_segment_gap(2.0);
+    
+    let temp_bar = VerticalBarIndicator::new(8)     // 8 segments
+        .with_segment_gap(2.0);
+    
+    // Define bounds for indicators
+    let fuel_bounds = IndicatorBounds {
+        x: 50.0,
+        y: 50.0,
+        width: 200.0,
+        height: 200.0,
+    };
+    
+    let oil_bounds = IndicatorBounds {
+        x: 300.0,
+        y: 50.0,
+        width: 200.0,
+        height: 200.0,
+    };
+    
+    let voltage_bounds = IndicatorBounds {
+        x: 550.0,
+        y: 50.0,
+        width: 80.0,
+        height: 200.0,
+    };
+    
+    let temp_bounds = IndicatorBounds {
+        x: 650.0,
+        y: 50.0,
+        width: 80.0,
+        height: 200.0,
+    };
+    
+    let start_time = std::time::Instant::now();
+    
+    println!("Rendering indicators at zero position...");
+    
+    // Render loop for 5 seconds
+    loop {
+        let elapsed = start_time.elapsed();
+        
+        unsafe {
+            gl::Clear(gl::COLOR_BUFFER_BIT);
+        }
+        
+        // Render all indicators at zero position
+        if let Err(e) = fuel_needle.render(&fuel_value, fuel_bounds, &ui_style, context) {
+            eprintln!("Error rendering fuel needle: {}", e);
+        }
+        
+        if let Err(e) = oil_needle.render(&oil_value, oil_bounds, &ui_style, context) {
+            eprintln!("Error rendering oil needle: {}", e);
+        }
+        
+        if let Err(e) = voltage_bar.render(&voltage_value, voltage_bounds, &ui_style, context) {
+            eprintln!("Error rendering voltage bar: {}", e);
+        }
+        
+        if let Err(e) = temp_bar.render(&temp_value, temp_bounds, &ui_style, context) {
+            eprintln!("Error rendering temperature bar: {}", e);
+        }
+        
+        context.swap_buffers();
+        
+        // Exit after 5 seconds
+        if elapsed.as_secs() >= 5 {
+            break;
+        }
+        
+        std::thread::sleep(std::time::Duration::from_millis(16)); // ~60 FPS
+    }
+    
+    println!("Zero position indicator test completed!");
+    println!("All indicators were displayed at their minimum/zero positions:");
+    println!("- Fuel Level: {} ({})", fuel_value.as_f32(), fuel_value.metadata.unit);
+    println!("- Oil Pressure: {} ({})", oil_value.as_f32(), oil_value.metadata.unit);
+    println!("- Voltage: {} ({})", voltage_value.as_f32(), voltage_value.metadata.unit);
+    println!("- Temperature: {} ({})", temp_value.as_f32(), temp_value.metadata.unit);
+    
+    Ok(())
+}
+
+/// Run indicator middle position test with needle and vertical bar gauges
+/// Displays indicators at middle position for 5 seconds using TestMiddleAnalogDataProvider
+pub fn run_indicator_middle_position_test(context: &mut GraphicsContext) -> Result<(), String> {
+    use crate::hardware::hw_providers::{TestMiddleAnalogDataProvider, HWInput, HWAnalogProvider};
+    use crate::indicators::needle_indicator::{NeedleIndicator, NeedleGaugeMarksDecorator};
+    use crate::indicators::vertical_bar_indicator::VerticalBarIndicator;
+    use crate::indicators::indicator::{Indicator, IndicatorBounds};
+    use crate::graphics::ui_style::UIStyle;
+    use crate::hardware::sensor_value::SensorValue;
+    
+    println!("=== Indicator Middle Position Test ===");
+    println!("Testing needle and vertical bar indicators at middle position for 5 seconds");
+    
+    unsafe {
+        // Set viewport
+        gl::Viewport(0, 0, context.width, context.height);
+        
+        // Enable blending for smooth rendering
+        gl::Enable(gl::BLEND);
+        gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+        
+        // Clear screen with dark background
+        gl::ClearColor(0.05, 0.05, 0.1, 1.0);
+        gl::Clear(gl::COLOR_BUFFER_BIT);
+    }
+    
+    // Create UI style
+    let ui_style = UIStyle::new();
+    
+    // Create middle value providers for testing
+    let fuel_provider = TestMiddleAnalogDataProvider::new(HWInput::HwFuelLvl);
+    let oil_provider = TestMiddleAnalogDataProvider::new(HWInput::HwOilPress);
+    let voltage_provider = TestMiddleAnalogDataProvider::new(HWInput::Hw12v);
+    let temp_provider = TestMiddleAnalogDataProvider::new(HWInput::HwEngineCoolantTemp);
+    
+    // Read middle values from providers
+    let fuel_raw = fuel_provider.read_analog(HWInput::HwFuelLvl).unwrap_or(512);
+    let oil_raw = oil_provider.read_analog(HWInput::HwOilPress).unwrap_or(512);
+    let voltage_raw = voltage_provider.read_analog(HWInput::Hw12v).unwrap_or(512);
+    let temp_raw = temp_provider.read_analog(HWInput::HwEngineCoolantTemp).unwrap_or(512);
+    
+    // Convert raw values to sensor values (all should be at middle position)
+    let fuel_value = SensorValue::analog(
+        (fuel_raw as f32 / 1023.0) * 100.0, // Convert to percentage
+        0.0, 100.0, "%", "Fuel Level", "fuel_sensor"
+    );
+    
+    let oil_value = SensorValue::analog(
+        (oil_raw as f32 / 1023.0) * 8.0, // Convert to kgf/cm²
+        0.0, 8.0, "kgf/cm²", "Oil Pressure", "oil_sensor"
+    );
+    
+    let voltage_value = SensorValue::analog(
+        (voltage_raw as f32 / 1023.0) * 20.0, // Convert to volts
+        0.0, 20.0, "V", "12V System", "voltage_sensor"
+    );
+    
+    let temp_value = SensorValue::analog(
+        (temp_raw as f32 / 1023.0) * 160.0 - 40.0, // Convert to Celsius
+        -40.0, 120.0, "°C", "Coolant Temp", "temp_sensor"
+    );
+    
+    // Create indicators with decorators
+    let fuel_needle = NeedleIndicator::new(
+        -225.0f32.to_radians(), // Start angle (bottom-left)
+        45.0f32.to_radians(),   // End angle (bottom-right)
+        0.8,                    // Needle length
+        0.05,                   // Base width
+        0.02,                   // Tip width
+        (1.0, 1.0, 0.0)        // Yellow color
+    ).with_decorators(vec![
+        Box::new(NeedleGaugeMarksDecorator::new(
+            6,                                      // Number of marks
+            15.0,                                   // Mark length
+            2.0,                                    // Mark width
+            (0.8, 0.8, 0.9),                       // Mark color (light gray)
+            90.0,                                   // Radius for marks
+            -225.0f32.to_radians(),                 // Start angle
+            45.0f32.to_radians()                    // End angle
+        ))
+    ]);
+    
+    let oil_needle = NeedleIndicator::new(
+        -225.0f32.to_radians(),
+        45.0f32.to_radians(),
+        0.8,
+        0.05,
+        0.02,
+        (1.0, 0.0, 0.0)        // Red color
+    ).with_decorators(vec![
+        Box::new(NeedleGaugeMarksDecorator::new(
+            6,                                      // Number of marks
+            15.0,                                   // Mark length
+            2.0,                                    // Mark width
+            (0.8, 0.8, 0.9),                       // Mark color (light gray)
+            90.0,                                   // Radius for marks
+            -225.0f32.to_radians(),                 // Start angle
+            45.0f32.to_radians()                    // End angle
+        ))
+    ]);
+    
+    let voltage_bar = VerticalBarIndicator::new(10) // 10 segments
+        .with_segment_gap(2.0);
+    
+    let temp_bar = VerticalBarIndicator::new(10) // 10 segments
+        .with_segment_gap(2.0);
+    
+    println!("Rendering indicators at middle position...");
+
+    // Define bounds for indicators
+    let fuel_bounds = IndicatorBounds {
+        x: 50.0,
+        y: 50.0,
+        width: 200.0,
+        height: 200.0,
+    };
+    
+    let oil_bounds = IndicatorBounds {
+        x: 300.0,
+        y: 50.0,
+        width: 200.0,
+        height: 200.0,
+    };
+    
+    let voltage_bounds = IndicatorBounds {
+        x: 550.0,
+        y: 50.0,
+        width: 80.0,
+        height: 200.0,
+    };
+    
+    let temp_bounds = IndicatorBounds {
+        x: 650.0,
+        y: 50.0,
+        width: 80.0,
+        height: 200.0,
+    };
+    
+    // Display for 5 seconds
+    let start_time = std::time::Instant::now();
+    let display_duration = std::time::Duration::from_secs(5);
+    
+    while start_time.elapsed() < display_duration {
+        unsafe {
+            gl::ClearColor(0.05, 0.05, 0.1, 1.0);
+            gl::Clear(gl::COLOR_BUFFER_BIT);
+        }
+        
+        // Render all indicators
+        fuel_needle.render(&fuel_value, fuel_bounds, &ui_style, context)?;
+        oil_needle.render(&oil_value, oil_bounds, &ui_style, context)?;
+        voltage_bar.render(&voltage_value, voltage_bounds, &ui_style, context)?;
+        temp_bar.render(&temp_value, temp_bounds, &ui_style, context)?;
+        
+        // Swap buffers
+        context.swap_buffers();
+        
+        // Small delay to prevent excessive CPU usage
+        std::thread::sleep(std::time::Duration::from_millis(16)); // ~60 FPS
+    }
+    
+    println!("Middle position indicator test completed!");
+    println!("All indicators were displayed at their middle positions:");
+    println!("- Fuel Level: {} ({})", fuel_value.as_f32(), fuel_value.metadata.unit);
+    println!("- Oil Pressure: {} ({})", oil_value.as_f32(), oil_value.metadata.unit);
+    println!("- Voltage: {} ({})", voltage_value.as_f32(), voltage_value.metadata.unit);
+    println!("- Temperature: {} ({})", temp_value.as_f32(), temp_value.metadata.unit);
+    
+    Ok(())
+}
+
+/// Run indicator maximum position test with needle and vertical bar gauges
+/// Displays indicators at maximum position for 5 seconds using TestMaxAnalogDataProvider
+pub fn run_indicator_max_position_test(context: &mut GraphicsContext) -> Result<(), String> {
+    use crate::hardware::hw_providers::{TestMaxAnalogDataProvider, HWInput, HWAnalogProvider};
+    use crate::indicators::needle_indicator::{NeedleIndicator, NeedleGaugeMarksDecorator};
+    use crate::indicators::vertical_bar_indicator::VerticalBarIndicator;
+    use crate::indicators::indicator::{Indicator, IndicatorBounds};
+    use crate::graphics::ui_style::UIStyle;
+    use crate::hardware::sensor_value::SensorValue;
+    
+    println!("=== Indicator Maximum Position Test ===");
+    println!("Testing needle and vertical bar indicators at maximum position for 5 seconds");
+    
+    unsafe {
+        // Set viewport
+        gl::Viewport(0, 0, context.width, context.height);
+        
+        // Enable blending for smooth rendering
+        gl::Enable(gl::BLEND);
+        gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+        
+        // Clear screen with dark background
+        gl::ClearColor(0.05, 0.05, 0.1, 1.0);
+        gl::Clear(gl::COLOR_BUFFER_BIT);
+    }
+    
+    // Create UI style
+    let ui_style = UIStyle::new();
+    
+    // Create maximum value providers for testing
+    let fuel_provider = TestMaxAnalogDataProvider::new(HWInput::HwFuelLvl);
+    let oil_provider = TestMaxAnalogDataProvider::new(HWInput::HwOilPress);
+    let voltage_provider = TestMaxAnalogDataProvider::new(HWInput::Hw12v);
+    let temp_provider = TestMaxAnalogDataProvider::new(HWInput::HwEngineCoolantTemp);
+    
+    // Read maximum values from providers
+    let fuel_raw = fuel_provider.read_analog(HWInput::HwFuelLvl).unwrap_or(1023);
+    let oil_raw = oil_provider.read_analog(HWInput::HwOilPress).unwrap_or(1023);
+    let voltage_raw = voltage_provider.read_analog(HWInput::Hw12v).unwrap_or(1023);
+    let temp_raw = temp_provider.read_analog(HWInput::HwEngineCoolantTemp).unwrap_or(1023);
+    
+    // Convert raw values to sensor values (all should be at maximum position)
+    let fuel_value = SensorValue::analog(
+        (fuel_raw as f32 / 1023.0) * 100.0, // Convert to percentage
+        0.0, 100.0, "%", "Fuel Level", "fuel_sensor"
+    );
+    
+    let oil_value = SensorValue::analog(
+        (oil_raw as f32 / 1023.0) * 8.0, // Convert to kgf/cm²
+        0.0, 8.0, "kgf/cm²", "Oil Pressure", "oil_sensor"
+    );
+    
+    let voltage_value = SensorValue::analog(
+        (voltage_raw as f32 / 1023.0) * 20.0, // Convert to volts
+        0.0, 20.0, "V", "12V System", "voltage_sensor"
+    );
+    
+    let temp_value = SensorValue::analog(
+        (temp_raw as f32 / 1023.0) * 160.0 - 40.0, // Convert to Celsius
+        -40.0, 120.0, "°C", "Coolant Temp", "temp_sensor"
+    );
+    
+    // Create indicators with decorators
+    let fuel_needle = NeedleIndicator::new(
+        -225.0f32.to_radians(), // Start angle (bottom-left)
+        45.0f32.to_radians(),   // End angle (bottom-right)
+        0.8,                    // Needle length
+        0.05,                   // Base width
+        0.02,                   // Tip width
+        (0.0, 1.0, 0.0)        // Green color
+    ).with_decorators(vec![
+        Box::new(NeedleGaugeMarksDecorator::new(
+            6,                                      // Number of marks
+            15.0,                                   // Mark length
+            2.0,                                    // Mark width
+            (0.8, 0.8, 0.9),                       // Mark color (light gray)
+            90.0,                                   // Radius for marks
+            -225.0f32.to_radians(),                 // Start angle
+            45.0f32.to_radians()                    // End angle
+        ))
+    ]);
+    
+    let oil_needle = NeedleIndicator::new(
+        -225.0f32.to_radians(),
+        45.0f32.to_radians(),
+        0.8,
+        0.05,
+        0.02,
+        (1.0, 0.5, 0.0)        // Orange color
+    ).with_decorators(vec![
+        Box::new(NeedleGaugeMarksDecorator::new(
+            6,                                      // Number of marks
+            15.0,                                   // Mark length
+            2.0,                                    // Mark width
+            (0.8, 0.8, 0.9),                       // Mark color (light gray)
+            90.0,                                   // Radius for marks
+            -225.0f32.to_radians(),                 // Start angle
+            45.0f32.to_radians()                    // End angle
+        ))
+    ]);
+    
+    let voltage_bar = VerticalBarIndicator::new(10) // 10 segments
+        .with_segment_gap(2.0);
+    
+    let temp_bar = VerticalBarIndicator::new(10) // 10 segments
+        .with_segment_gap(2.0);
+    
+    println!("Rendering indicators at maximum position...");
+    
+    // Define bounds for indicators
+    let fuel_bounds = IndicatorBounds {
+        x: 50.0,
+        y: 50.0,
+        width: 200.0,
+        height: 200.0,
+    };
+    
+    let oil_bounds = IndicatorBounds {
+        x: 300.0,
+        y: 50.0,
+        width: 200.0,
+        height: 200.0,
+    };
+    
+    let voltage_bounds = IndicatorBounds {
+        x: 550.0,
+        y: 50.0,
+        width: 80.0,
+        height: 200.0,
+    };
+    
+    let temp_bounds = IndicatorBounds {
+        x: 650.0,
+        y: 50.0,
+        width: 80.0,
+        height: 200.0,
+    };
+
+    // Display for 5 seconds
+    let start_time = std::time::Instant::now();
+    let display_duration = std::time::Duration::from_secs(5);
+    
+    while start_time.elapsed() < display_duration {
+        unsafe {
+            gl::ClearColor(0.05, 0.05, 0.1, 1.0);
+            gl::Clear(gl::COLOR_BUFFER_BIT);
+        }
+        
+        // Render all indicators
+        fuel_needle.render(&fuel_value, fuel_bounds, &ui_style, context)?;
+        oil_needle.render(&oil_value, oil_bounds, &ui_style, context)?;
+        voltage_bar.render(&voltage_value, voltage_bounds, &ui_style, context)?;
+        temp_bar.render(&temp_value, temp_bounds, &ui_style, context)?;
+        
+        // Swap buffers
+        context.swap_buffers();
+        
+        // Small delay to prevent excessive CPU usage
+        std::thread::sleep(std::time::Duration::from_millis(16)); // ~60 FPS
+    }
+    
+    println!("Maximum position indicator test completed!");
+    println!("All indicators were displayed at their maximum positions:");
+    println!("- Fuel Level: {} ({})", fuel_value.as_f32(), fuel_value.metadata.unit);
+    println!("- Oil Pressure: {} ({})", oil_value.as_f32(), oil_value.metadata.unit);
+    println!("- Voltage: {} ({})", voltage_value.as_f32(), voltage_value.metadata.unit);
+    println!("- Temperature: {} ({})", temp_value.as_f32(), temp_value.metadata.unit);
+    
+    Ok(())
+}

@@ -1,6 +1,7 @@
 use crate::graphics::context::GraphicsContext;
 use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition};
 use crate::page_framework::events::{UIEvent, EventSender, EventReceiver};
+use crate::hardware::sensor_manager::SensorManager;
 
 /// Oscilloscope page for signal visualization
 pub struct OscPage {
@@ -18,9 +19,9 @@ pub struct OscPage {
 }
 
 impl OscPage {
-    pub fn new(id: u32, name: String, event_sender: EventSender, event_receiver: EventReceiver) -> Self {
+    pub fn new(id: u32, event_sender: EventSender, event_receiver: EventReceiver) -> Self {
         Self {
-            base: PageBase::new(id, name),
+            base: PageBase::new(id, "Osc"),
             event_sender,
             event_receiver,
             is_running: false,
@@ -90,7 +91,7 @@ impl Page for OscPage {
         self.base.set_buttons(buttons);
     }
 
-    fn render(&self, context: &mut GraphicsContext) -> Result<(), String> {
+    fn render(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
         // Render oscilloscope UI
         let status = if self.is_running { "RUNNING" } else { "STOPPED" };
         let status_text = format!("OSC: {} | Rate: {:.0}Hz | Time: {:.1} | Volt: {:.1} | Trig: {:.2}", 
@@ -146,9 +147,5 @@ impl Page for OscPage {
 
     fn button_by_position_mut(&mut self, pos: ButtonPosition) -> Option<&mut PageButton<Box<dyn FnMut()>>> {
         self.base.buttons.iter_mut().find(|button| *button.position() == pos)
-    }
-
-    fn ui_style(&self) -> &UIStyle {
-        self.base.ui_style()
     }
 }

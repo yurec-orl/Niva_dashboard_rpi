@@ -1,24 +1,43 @@
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
-use crate::page_framework::events::{EventSender, EventReceiver};
-use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition};
+use crate::page_framework::events::{EventSender, EventReceiver, SmartEventSender, UIEvent};
+use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition, MAIN_PAGE_ID};
+use crate::hardware::sensor_manager::SensorManager;
 
 pub struct DiagPage {
     base: PageBase,
     event_receiver: EventReceiver,
-    event_sender: EventSender,
+    smart_event_sender: SmartEventSender,
 }
 
 impl DiagPage {
-    pub fn new(id: u32, name: String, ui_style: UIStyle, event_sender: EventSender, event_receiver: EventReceiver) -> Self {
-        DiagPage {
-            base: PageBase::new(id, name, ui_style),
-            event_sender,
+    pub fn new(id: u32, smart_event_sender: SmartEventSender, event_receiver: EventReceiver) -> Self {
+        let mut diag_page = DiagPage {
+            base: PageBase::new(id, "Diag".to_string()),
+            smart_event_sender,
             event_receiver,
-        }
+        };
+
+        diag_page.setup_buttons();
+        
+        diag_page
     }
 
-    pub fn set_buttons(&mut self, buttons: Vec<PageButton<Box<dyn FnMut()>>>) {
+    pub fn setup_buttons(&mut self) {
+        let buttons = vec![
+            PageButton::new(ButtonPosition::Left1, "ДАТЧ".into(), Box::new({
+                let sender = self.smart_event_sender.clone();
+                move || sender.send(UIEvent::ButtonPressed("diag_test_1".into()))
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Left2, "ЖУРН".into(), Box::new({
+                let sender = self.smart_event_sender.clone();
+                move || sender.send(UIEvent::ButtonPressed("diag_test_2".into()))
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Right4, "ВОЗВ".into(), Box::new({
+                let sender = self.smart_event_sender.clone();
+                move || sender.send(UIEvent::SwitchToPage(MAIN_PAGE_ID))
+            }) as Box<dyn FnMut()>),
+        ];
         self.base.set_buttons(buttons);
     }
 }
@@ -36,15 +55,15 @@ impl Page for DiagPage {
         self.base.set_buttons(buttons);
     }
 
-    fn render(&self, context: &mut GraphicsContext) -> Result<(), String> {
+    fn render(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
         context.render_text_with_font(
             "Diagnostics Page", 
             200.0, 
             100.0, 
             1.0, 
-            self.ui_style().get_color(TEXT_PRIMARY_COLOR, (1.0, 1.0, 1.0)),
-            &self.ui_style().get_string(TEXT_PRIMARY_FONT, "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
-            self.ui_style().get_integer(TEXT_PRIMARY_FONT_SIZE, 24)
+            ui_style.get_color(TEXT_PRIMARY_COLOR, (1.0, 1.0, 1.0)),
+            ui_style.get_string(TEXT_PRIMARY_FONT, DEFAULT_GLOBAL_FONT_PATH).as_str(),
+            ui_style.get_integer(TEXT_PRIMARY_FONT_SIZE, 24)
         )?;
         Ok(())
     }
@@ -71,9 +90,5 @@ impl Page for DiagPage {
 
     fn button_by_position_mut(&mut self, pos: ButtonPosition) -> Option<&mut PageButton<Box<dyn FnMut()>>> {
         self.base.button_by_position_mut(pos)
-    }
-
-    fn ui_style(&self) -> &UIStyle {
-        self.base.ui_style()
     }
 }

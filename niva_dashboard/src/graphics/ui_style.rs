@@ -7,7 +7,7 @@
 //! Example JSON format:
 //! ```json
 //! {
-//!   "needle_color": "#FF0000",
+//!   "GAUGE_NEEDLE_COLOR": "#FF0000",
 //!   "gauge_background_color": "#000000",
 //!   "gauge_mark_font": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 //!   "gauge_mark_font_size": 14,
@@ -25,15 +25,32 @@ use serde::{Deserialize, Serialize};
 // STYLE ELEMENT NAME CONSTANTS
 // =============================================================================
 
+// Default values
+pub const DEFAULT_GLOBAL_FONT_PATH: &str = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf";  // Use monospace for more digital look
+pub const DEFAULT_GLOBAL_FONT_SIZE: u32 = 14;
+
+// Digital Display Fonts
+pub const DIGITAL_DISPLAY_FONT_PATH: &str = "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/DSEG7ClassicMini-Regular.ttf";
+pub const DIGITAL_DISPLAY_FONT_ITALIC_PATH: &str = "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/DSEG7ClassicMini-Italic.ttf";
+pub const DIGITAL_DISPLAY_14SEG_FONT_PATH: &str = "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/DSEG14ClassicMini-Regular.ttf";
+pub const DIGITAL_DISPLAY_14SEG_ITALIC_PATH: &str = "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/DSEG14ClassicMini-Italic.ttf";
+pub const DIGITAL_DISPLAY_MONO_FONT_PATH: &str = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf";
+
 // Global Style Elements
 pub const GLOBAL_BRIGHTNESS: &str = "global_brightness";
 pub const GLOBAL_CONTRAST: &str = "global_contrast";
 pub const GLOBAL_BACKGROUND_COLOR: &str = "global_background_color";
-pub const GLOBAL_BRAND_PRIMARY_COLOR: &str = "global_brand_primary_color";
-pub const GLOBAL_BRAND_SECONDARY_COLOR: &str = "global_brand_secondary_color";
-pub const GLOBAL_BRAND_ACCENT_COLOR: &str = "global_brand_accent_color";
 pub const GLOBAL_FONT_PATH: &str = "global_font_path";
 pub const GLOBAL_FONT_SIZE: &str = "global_font_size";
+
+// Page manager style elements
+pub const PAGE_BUTTON_LABEL_FONT: &str = "page_button_label_font";
+pub const PAGE_BUTTON_LABEL_FONT_SIZE: &str = "page_button_label_font_size";
+pub const PAGE_BUTTON_LABEL_ORIENTATION: &str = "page_button_label_orientation"; // "horizontal" or "vertical"
+pub const PAGE_BUTTON_LABEL_COLOR: &str = "page_button_label_color";
+pub const PAGE_STATUS_FONT: &str = "page_status_font";
+pub const PAGE_STATUS_FONT_SIZE: &str = "page_status_font_size";
+pub const PAGE_STATUS_COLOR: &str = "page_status_color";
 
 // Gauge Style Elements
 pub const GAUGE_BACKGROUND_COLOR: &str = "gauge_background_color";
@@ -42,14 +59,15 @@ pub const GAUGE_BORDER_WIDTH: &str = "gauge_border_width";
 pub const GAUGE_RADIUS: &str = "gauge_radius";
 
 // Gauge Needle
-pub const NEEDLE_COLOR: &str = "needle_color";
-pub const NEEDLE_WIDTH: &str = "needle_width";
-pub const NEEDLE_LENGTH: &str = "needle_length";
-pub const NEEDLE_TIP_WIDTH: &str = "needle_tip_width";
-pub const NEEDLE_CENTER_COLOR: &str = "needle_center_color";
-pub const NEEDLE_CENTER_RADIUS: &str = "needle_center_radius";
-pub const NEEDLE_SHADOW_ENABLED: &str = "needle_shadow_enabled";
-pub const NEEDLE_SHADOW_COLOR: &str = "needle_shadow_color";
+pub const GAUGE_NEEDLE_COLOR: &str = "GAUGE_NEEDLE_COLOR";
+pub const GAUGE_NEEDLE_WIDTH: &str = "GAUGE_NEEDLE_WIDTH";
+pub const GAUGE_NEEDLE_LENGTH: &str = "GAUGE_NEEDLE_LENGTH";
+pub const GAUGE_NEEDLE_TIP_WIDTH: &str = "GAUGE_NEEDLE_TIP_WIDTH";
+pub const GAUGE_NEEDLE_CENTER_COLOR: &str = "GAUGE_NEEDLE_CENTER_COLOR";
+pub const GAUGE_NEEDLE_CENTER_RADIUS: &str = "GAUGE_NEEDLE_CENTER_RADIUS";
+pub const GAUGE_NEEDLE_SHADOW_ENABLED: &str = "GAUGE_NEEDLE_SHADOW_ENABLED";
+pub const GAUGE_NEEDLE_SHADOW_COLOR: &str = "GAUGE_NEEDLE_SHADOW_COLOR";
+pub const GAUGE_NEEDLE_GLOW_ENABLED: &str = "GAUGE_NEEDLE_GLOW_ENABLED";
 
 // Gauge Marks
 pub const GAUGE_MAJOR_MARK_COLOR: &str = "gauge_major_mark_color";
@@ -57,6 +75,7 @@ pub const GAUGE_MAJOR_MARK_WIDTH: &str = "gauge_major_mark_width";
 pub const GAUGE_MAJOR_MARK_LENGTH: &str = "gauge_major_mark_length";
 pub const GAUGE_MAJOR_MARK_OFFSET: &str = "gauge_major_mark_offset";
 pub const GAUGE_MAJOR_MARK_ENABLED: &str = "gauge_major_mark_enabled";
+pub const GAUGE_MAJOR_MARK_COUNT: &str = "gauge_major_mark_count";
 
 pub const GAUGE_MINOR_MARK_COLOR: &str = "gauge_minor_mark_color";
 pub const GAUGE_MINOR_MARK_WIDTH: &str = "gauge_minor_mark_width";
@@ -75,47 +94,51 @@ pub const GAUGE_LABEL_ENABLED: &str = "gauge_label_enabled";
 pub const GAUGE_TITLE_COLOR: &str = "gauge_title_color";
 pub const GAUGE_TITLE_FONT: &str = "gauge_title_font";
 pub const GAUGE_TITLE_FONT_SIZE: &str = "gauge_title_font_size";
-pub const GAUGE_TITLE_OFFSET: &str = "gauge_title_offset";
+pub const GAUGE_TITLE_OFFSET_H: &str = "gauge_title_offset_h";
+pub const GAUGE_TITLE_OFFSET_V: &str = "gauge_title_offset_v";
 pub const GAUGE_TITLE_ENABLED: &str = "gauge_title_enabled";
 
 pub const GAUGE_UNIT_COLOR: &str = "gauge_unit_color";
 pub const GAUGE_UNIT_FONT: &str = "gauge_unit_font";
 pub const GAUGE_UNIT_FONT_SIZE: &str = "gauge_unit_font_size";
-pub const GAUGE_UNIT_OFFSET: &str = "gauge_unit_offset";
+pub const GAUGE_UNIT_OFFSET_H: &str = "gauge_unit_offset_h";
+pub const GAUGE_UNIT_OFFSET_V: &str = "gauge_unit_offset_v";
 pub const GAUGE_UNIT_ENABLED: &str = "gauge_unit_enabled";
 
 // Gauge Zones
 pub const GAUGE_WARNING_ZONE_COLOR: &str = "gauge_warning_zone_color";
-pub const GAUGE_WARNING_ZONE_START: &str = "gauge_warning_zone_start";
-pub const GAUGE_WARNING_ZONE_END: &str = "gauge_warning_zone_end";
 pub const GAUGE_WARNING_ZONE_WIDTH: &str = "gauge_warning_zone_width";
 pub const GAUGE_WARNING_ZONE_ENABLED: &str = "gauge_warning_zone_enabled";
 
 pub const GAUGE_CRITICAL_ZONE_COLOR: &str = "gauge_critical_zone_color";
-pub const GAUGE_CRITICAL_ZONE_START: &str = "gauge_critical_zone_start";
-pub const GAUGE_CRITICAL_ZONE_END: &str = "gauge_critical_zone_end";
 pub const GAUGE_CRITICAL_ZONE_WIDTH: &str = "gauge_critical_zone_width";
 pub const GAUGE_CRITICAL_ZONE_ENABLED: &str = "gauge_critical_zone_enabled";
 
+pub const GAUGE_INACTIVE_ZONE_COLOR: &str = "gauge_inactive_zone_color";
+pub const GAUGE_INACTIVE_ZONE_WIDTH: &str = "gauge_inactive_zone_width";
+pub const GAUGE_INACTIVE_ZONE_ENABLED: &str = "gauge_inactive_zone_enabled";
+
 // Bar Indicator Style Elements
 pub const BAR_BACKGROUND_COLOR: &str = "bar_background_color";
+pub const BAR_BACKGROUND_ENABLED: &str = "bar_background_enabled";
 pub const BAR_BORDER_COLOR: &str = "bar_border_color";
+pub const BAR_BORDER_ENABLED: &str = "bar_border_enabled";
 pub const BAR_BORDER_WIDTH: &str = "bar_border_width";
 pub const BAR_CORNER_RADIUS: &str = "bar_corner_radius";
-pub const BAR_WIDTH: &str = "bar_width";
-pub const BAR_HEIGHT: &str = "bar_height";
 
-pub const BAR_FILL_COLOR: &str = "bar_fill_color";
-pub const BAR_FILL_GRADIENT_ENABLED: &str = "bar_fill_gradient_enabled";
-pub const BAR_FILL_GRADIENT_START: &str = "bar_fill_gradient_start";
-pub const BAR_FILL_GRADIENT_END: &str = "bar_fill_gradient_end";
+pub const BAR_EMPTY_COLOR: &str = "bar_empty_color";
+pub const BAR_NORMAL_COLOR: &str = "bar_normal_color";
+pub const BAR_WARNING_COLOR: &str = "bar_warning_color";
+pub const BAR_CRITICAL_COLOR: &str = "bar_critical_color";
 
-pub const BAR_SEGMENTS_ENABLED: &str = "bar_segments_enabled";
+pub const BAR_MARKS_COLOR: &str = "bar_marks_color";
+pub const BAR_MARKS_WIDTH: &str = "bar_marks_width";
+pub const BAR_MARKS_THICKNESS: &str = "bar_marks_thickness";
+
+pub const BAR_MARK_LABELS_COLOR: &str = "bar_mark_labels_color";
+
 pub const BAR_SEGMENT_COUNT: &str = "bar_segment_count";
-pub const BAR_SEGMENT_SPACING: &str = "bar_segment_spacing";
-pub const BAR_SEGMENT_NORMAL_COLOR: &str = "bar_segment_normal_color";
-pub const BAR_SEGMENT_WARNING_COLOR: &str = "bar_segment_warning_color";
-pub const BAR_SEGMENT_CRITICAL_COLOR: &str = "bar_segment_critical_color";
+pub const BAR_SEGMENT_GAP: &str = "bar_segment_gap";
 
 // Text Style Elements
 pub const TEXT_PRIMARY_COLOR: &str = "text_primary_color";
@@ -130,9 +153,30 @@ pub const TEXT_SECONDARY_FONT: &str = "text_secondary_font";
 pub const TEXT_SECONDARY_FONT_SIZE: &str = "text_secondary_font_size";
 pub const TEXT_MONOSPACE_FONT: &str = "text_monospace_font";
 pub const TEXT_MONOSPACE_FONT_SIZE: &str = "text_monospace_font_size";
+pub const TEXT_SMALL_FONT: &str = "text_small_font";
+pub const TEXT_SMALL_FONT_SIZE: &str = "text_small_font_size";
 
 pub const TEXT_LINE_SPACING: &str = "text_line_spacing";
 pub const TEXT_LETTER_SPACING: &str = "text_letter_spacing";
+
+// Digital Display Style Elements (7-segment style)
+pub const DIGITAL_DISPLAY_FONT: &str = "digital_display_font";
+pub const DIGITAL_DISPLAY_FONT_SIZE: &str = "digital_display_font_size";
+pub const DIGITAL_DISPLAY_SCALE: &str = "digital_display_scale";
+pub const DIGITAL_DISPLAY_ACTIVE_COLOR: &str = "digital_display_active_color";
+pub const DIGITAL_DISPLAY_INACTIVE_COLOR: &str = "digital_display_inactive_color";
+pub const DIGITAL_DISPLAY_INACTIVE_COLOR_BLENDING: &str = "digital_display_inactive_color_blending";
+pub const DIGITAL_DISPLAY_BACKGROUND_COLOR: &str = "digital_display_background_color";
+pub const DIGITAL_DISPLAY_BACKGROUND_ENABLED: &str = "digital_display_background_enabled";
+pub const DIGITAL_DISPLAY_BORDER_ENABLED: &str = "digital_display_border_enabled";
+pub const DIGITAL_DISPLAY_BORDER_COLOR: &str = "digital_display_border_color";
+pub const DIGITAL_DISPLAY_BORDER_WIDTH: &str = "digital_display_border_width";
+pub const DIGITAL_DISPLAY_BORDER_RADIUS: &str = "digital_display_border_radius";
+
+// Extended Digital Display Fonts (additional variants)
+pub const DIGITAL_DISPLAY_FONT_ITALIC: &str = "digital_display_font_italic";
+pub const DIGITAL_DISPLAY_14SEG_FONT: &str = "digital_display_14seg_font";
+pub const DIGITAL_DISPLAY_14SEG_ITALIC: &str = "digital_display_14seg_italic";
 
 // Warning Indicator Style Elements
 pub const INDICATOR_NORMAL_COLOR: &str = "indicator_normal_color";
@@ -148,6 +192,18 @@ pub const INDICATOR_SIZE: &str = "indicator_size";
 pub const ANIMATION_NEEDLE_SPEED: &str = "animation_needle_speed";
 pub const ANIMATION_BAR_SPEED: &str = "animation_bar_speed";
 pub const ANIMATION_SMOOTH_ENABLED: &str = "animation_smooth_enabled";
+
+// Alerts settings
+pub const ALERT_FONT_PATH: &str = "alert_font_path";
+pub const ALERT_FONT_SIZE: &str = "alert_font_size";
+pub const ALERT_WARNING_COLOR: &str = "alert_warning_color";
+pub const ALERT_CRITICAL_COLOR: &str = "alert_critical_color";
+pub const ALERT_BACKGROUND_COLOR: &str = "alert_background_color";
+pub const ALERT_BORDER_COLOR: &str = "alert_border_color";
+pub const ALERT_BORDER_WIDTH: &str = "alert_border_width";
+pub const ALERT_MARGIN: &str = "alert_border_margin";
+pub const ALERT_CORNER_RADIUS: &str = "alert_corner_radius";
+pub const ALERT_SOUND_PATH: &str = "alert_sound_path";
 
 // =============================================================================
 // STYLE VALUE TYPES
@@ -214,7 +270,7 @@ impl UIStyleValue {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UIStyle {
-    values: HashMap<String, UIStyleValue>,
+    values: HashMap<String, HashMap<String, UIStyleValue>>,
 }
 
 impl UIStyle {
@@ -227,13 +283,27 @@ impl UIStyle {
     }
     
     /// Load style from JSON string
+    /// Supports both old flat format and new grouped format
     pub fn from_json(json_str: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let values: HashMap<String, UIStyleValue> = serde_json::from_str(json_str)?;
+        // Try to parse as new grouped format first
+        if let Ok(grouped_values) = serde_json::from_str::<HashMap<String, HashMap<String, UIStyleValue>>>(json_str) {
+            let mut style = UIStyle { values: grouped_values };
+            // Ensure we have a default group
+            if !style.values.contains_key("default") {
+                style.values.insert("default".to_string(), HashMap::new());
+                style.load_defaults();
+            }
+            return Ok(style);
+        }
+        
+        // Fall back to old flat format for backward compatibility
+        let flat_values: HashMap<String, UIStyleValue> = serde_json::from_str(json_str)?;
         let mut style = UIStyle::new(); // Start with defaults
         
-        // Override defaults with loaded values
-        for (key, value) in values {
-            style.values.insert(key, value);
+        // Put flat values into "default" group
+        let default_group = style.values.get_mut("default").unwrap();
+        for (key, value) in flat_values {
+            default_group.insert(key, value);
         }
         
         Ok(style)
@@ -257,19 +327,51 @@ impl UIStyle {
         Ok(())
     }
     
-    /// Get a style value
+    /// Get a style value from specific group, with fallback to "default" group
     pub fn get(&self, key: &str) -> Option<&UIStyleValue> {
-        self.values.get(key)
+        self.get_with_group(key, None)
     }
     
-    /// Set a style value
+    /// Get a style value with optional group parameter
+    pub fn get_with_group(&self, key: &str, group: Option<&str>) -> Option<&UIStyleValue> {
+        // Try specific group first if provided
+        if let Some(group_name) = group {
+            if let Some(group_values) = self.values.get(group_name) {
+                if let Some(value) = group_values.get(key) {
+                    return Some(value);
+                }
+            }
+        }
+        
+        // Fall back to default group
+        self.values.get("default")?.get(key)
+    }
+    
+    /// Set a style value in specific group (defaults to "default" group)
     pub fn set(&mut self, key: &str, value: UIStyleValue) {
-        self.values.insert(key.to_string(), value);
+        self.set_with_group(key, value, None);
+    }
+    
+    /// Set a style value with optional group parameter
+    pub fn set_with_group(&mut self, key: &str, value: UIStyleValue, group: Option<&str>) {
+        let group_name = group.unwrap_or("default");
+        
+        // Ensure group exists
+        if !self.values.contains_key(group_name) {
+            self.values.insert(group_name.to_string(), HashMap::new());
+        }
+        
+        self.values.get_mut(group_name).unwrap().insert(key.to_string(), value);
     }
     
     /// Get color value with brightness applied
     pub fn get_color(&self, key: &str, default: (f32, f32, f32)) -> (f32, f32, f32) {
-        match self.get(key) {
+        self.get_color_with_group(key, default, None)
+    }
+    
+    /// Get color value with optional group parameter and brightness applied
+    pub fn get_color_with_group(&self, key: &str, default: (f32, f32, f32), group: Option<&str>) -> (f32, f32, f32) {
+        match self.get_with_group(key, group) {
             Some(value) => match value.as_color() {
                 Ok((r, g, b)) => {
                     // Apply global brightness
@@ -292,13 +394,23 @@ impl UIStyle {
     
     /// Get color value with alpha and brightness applied
     pub fn get_color_rgba(&self, key: &str, default: (f32, f32, f32, f32)) -> (f32, f32, f32, f32) {
-        let (r, g, b) = self.get_color(key, (default.0, default.1, default.2));
+        self.get_color_rgba_with_group(key, default, None)
+    }
+    
+    /// Get color value with alpha, optional group parameter, and brightness applied
+    pub fn get_color_rgba_with_group(&self, key: &str, default: (f32, f32, f32, f32), group: Option<&str>) -> (f32, f32, f32, f32) {
+        let (r, g, b) = self.get_color_with_group(key, (default.0, default.1, default.2), group);
         (r, g, b, default.3)
     }
     
     /// Get float value with fallback
     pub fn get_float(&self, key: &str, default: f32) -> f32 {
-        match self.get(key) {
+        self.get_float_with_group(key, default, None)
+    }
+    
+    /// Get float value with optional group parameter and fallback
+    pub fn get_float_with_group(&self, key: &str, default: f32, group: Option<&str>) -> f32 {
+        match self.get_with_group(key, group) {
             Some(value) => match value.as_float() {
                 Ok(val) => val,
                 Err(_) => {
@@ -315,7 +427,12 @@ impl UIStyle {
     
     /// Get integer value with fallback
     pub fn get_integer(&self, key: &str, default: u32) -> u32 {
-        match self.get(key) {
+        self.get_integer_with_group(key, default, None)
+    }
+    
+    /// Get integer value with optional group parameter and fallback
+    pub fn get_integer_with_group(&self, key: &str, default: u32, group: Option<&str>) -> u32 {
+        match self.get_with_group(key, group) {
             Some(value) => match value.as_integer() {
                 Ok(val) => val,
                 Err(_) => {
@@ -332,7 +449,12 @@ impl UIStyle {
     
     /// Get boolean value with fallback
     pub fn get_bool(&self, key: &str, default: bool) -> bool {
-        match self.get(key) {
+        self.get_bool_with_group(key, default, None)
+    }
+    
+    /// Get boolean value with optional group parameter and fallback
+    pub fn get_bool_with_group(&self, key: &str, default: bool, group: Option<&str>) -> bool {
+        match self.get_with_group(key, group) {
             Some(value) => match value.as_bool() {
                 Ok(val) => val,
                 Err(_) => {
@@ -349,7 +471,12 @@ impl UIStyle {
     
     /// Get string value with fallback
     pub fn get_string(&self, key: &str, default: &str) -> String {
-        match self.get(key) {
+        self.get_string_with_group(key, default, None)
+    }
+    
+    /// Get string value with optional group parameter and fallback
+    pub fn get_string_with_group(&self, key: &str, default: &str, group: Option<&str>) -> String {
+        match self.get_with_group(key, group) {
             Some(value) => match value.as_string() {
                 Ok(val) => val.to_string(),
                 Err(_) => {
@@ -401,16 +528,25 @@ impl UIStyle {
     
     /// Load default style values
     fn load_defaults(&mut self) {
+        // Ensure default group exists
+        self.values.insert("default".to_string(), HashMap::new());
+        
         // Global defaults
         self.set(GLOBAL_BRIGHTNESS, UIStyleValue::Float(1.0));
         self.set(GLOBAL_CONTRAST, UIStyleValue::Float(1.0));
         self.set(GLOBAL_BACKGROUND_COLOR, UIStyleValue::Color("#000000".to_string()));
-        self.set(GLOBAL_BRAND_PRIMARY_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
-        self.set(GLOBAL_BRAND_SECONDARY_COLOR, UIStyleValue::Color("#808080".to_string()));
-        self.set(GLOBAL_BRAND_ACCENT_COLOR, UIStyleValue::Color("#0080FF".to_string()));
         self.set(GLOBAL_FONT_PATH, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
         self.set(GLOBAL_FONT_SIZE, UIStyleValue::Integer(16));
         
+        // Page manager defaults
+        self.set(PAGE_BUTTON_LABEL_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
+        self.set(PAGE_BUTTON_LABEL_FONT_SIZE, UIStyleValue::Integer(16));
+        self.set(PAGE_BUTTON_LABEL_ORIENTATION, UIStyleValue::String("vertical".to_string()));
+        self.set(PAGE_BUTTON_LABEL_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
+        self.set(PAGE_STATUS_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
+        self.set(PAGE_STATUS_FONT_SIZE, UIStyleValue::Integer(14));
+        self.set(PAGE_STATUS_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
+
         // Gauge defaults
         self.set(GAUGE_BACKGROUND_COLOR, UIStyleValue::Color("#000000".to_string()));
         self.set(GAUGE_BORDER_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
@@ -418,93 +554,103 @@ impl UIStyle {
         self.set(GAUGE_RADIUS, UIStyleValue::Float(80.0));
         
         // Needle defaults
-        self.set(NEEDLE_COLOR, UIStyleValue::Color("#FF0000".to_string()));
-        self.set(NEEDLE_WIDTH, UIStyleValue::Float(4.0));
-        self.set(NEEDLE_LENGTH, UIStyleValue::Float(0.8));
-        self.set(NEEDLE_TIP_WIDTH, UIStyleValue::Float(1.0));
-        self.set(NEEDLE_CENTER_COLOR, UIStyleValue::Color("#404040".to_string()));
-        self.set(NEEDLE_CENTER_RADIUS, UIStyleValue::Float(8.0));
-        self.set(NEEDLE_SHADOW_ENABLED, UIStyleValue::Boolean(false));
-        self.set(NEEDLE_SHADOW_COLOR, UIStyleValue::Color("#000000".to_string()));
-        
+        self.set(GAUGE_NEEDLE_COLOR, UIStyleValue::Color("#FF0000".to_string()));
+        self.set(GAUGE_NEEDLE_WIDTH, UIStyleValue::Float(8.0));
+        self.set(GAUGE_NEEDLE_LENGTH, UIStyleValue::Float(0.8));
+        self.set(GAUGE_NEEDLE_TIP_WIDTH, UIStyleValue::Float(2.0));
+        self.set(GAUGE_NEEDLE_CENTER_COLOR, UIStyleValue::Color("#404040".to_string()));
+        self.set(GAUGE_NEEDLE_CENTER_RADIUS, UIStyleValue::Float(8.0));
+        self.set(GAUGE_NEEDLE_SHADOW_ENABLED, UIStyleValue::Boolean(false));
+        self.set(GAUGE_NEEDLE_SHADOW_COLOR, UIStyleValue::Color("#000000".to_string()));
+        self.set(GAUGE_NEEDLE_GLOW_ENABLED, UIStyleValue::Boolean(false));
+
         // Gauge marks defaults
         self.set(GAUGE_MAJOR_MARK_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
         self.set(GAUGE_MAJOR_MARK_WIDTH, UIStyleValue::Float(2.0));
-        self.set(GAUGE_MAJOR_MARK_LENGTH, UIStyleValue::Float(15.0));
-        self.set(GAUGE_MAJOR_MARK_OFFSET, UIStyleValue::Float(5.0));
+        self.set(GAUGE_MAJOR_MARK_LENGTH, UIStyleValue::Float(16.0));
+        self.set(GAUGE_MAJOR_MARK_OFFSET, UIStyleValue::Float(0.0));
         self.set(GAUGE_MAJOR_MARK_ENABLED, UIStyleValue::Boolean(true));
-        
-        self.set(GAUGE_MINOR_MARK_COLOR, UIStyleValue::Color("#808080".to_string()));
-        self.set(GAUGE_MINOR_MARK_WIDTH, UIStyleValue::Float(1.0));
-        self.set(GAUGE_MINOR_MARK_LENGTH, UIStyleValue::Float(8.0));
-        self.set(GAUGE_MINOR_MARK_OFFSET, UIStyleValue::Float(5.0));
+        self.set(GAUGE_MAJOR_MARK_COUNT, UIStyleValue::Integer(10));
+
+        self.set(GAUGE_MINOR_MARK_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
+        self.set(GAUGE_MINOR_MARK_WIDTH, UIStyleValue::Float(2.0));
+        self.set(GAUGE_MINOR_MARK_LENGTH, UIStyleValue::Float(10.0));
+        self.set(GAUGE_MINOR_MARK_OFFSET, UIStyleValue::Float(0.0));
         self.set(GAUGE_MINOR_MARK_ENABLED, UIStyleValue::Boolean(true));
-        self.set(GAUGE_MINOR_MARK_COUNT, UIStyleValue::Integer(4));
+        self.set(GAUGE_MINOR_MARK_COUNT, UIStyleValue::Integer(37));
         
         // Label defaults
         self.set(GAUGE_LABEL_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
         self.set(GAUGE_LABEL_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
         self.set(GAUGE_LABEL_FONT_SIZE, UIStyleValue::Integer(14));
-        self.set(GAUGE_LABEL_OFFSET, UIStyleValue::Float(25.0));
+        self.set(GAUGE_LABEL_OFFSET, UIStyleValue::Float(-35.0));   // Negative to move inside the gauge
         self.set(GAUGE_LABEL_ENABLED, UIStyleValue::Boolean(true));
         
         self.set(GAUGE_TITLE_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
         self.set(GAUGE_TITLE_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf".to_string()));
         self.set(GAUGE_TITLE_FONT_SIZE, UIStyleValue::Integer(16));
-        self.set(GAUGE_TITLE_OFFSET, UIStyleValue::Float(30.0));
+        self.set(GAUGE_TITLE_OFFSET_H, UIStyleValue::Float(0.0));
+        self.set(GAUGE_TITLE_OFFSET_V, UIStyleValue::Float(-20.0));
         self.set(GAUGE_TITLE_ENABLED, UIStyleValue::Boolean(true));
         
-        self.set(GAUGE_UNIT_COLOR, UIStyleValue::Color("#C0C0C0".to_string()));
+        self.set(GAUGE_UNIT_COLOR, UIStyleValue::Color("#727272ff".to_string()));
         self.set(GAUGE_UNIT_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
-        self.set(GAUGE_UNIT_FONT_SIZE, UIStyleValue::Integer(12));
-        self.set(GAUGE_UNIT_OFFSET, UIStyleValue::Float(15.0));
+        self.set(GAUGE_UNIT_FONT_SIZE, UIStyleValue::Integer(16));
+        self.set(GAUGE_UNIT_OFFSET_H, UIStyleValue::Float(0.0));
+        self.set(GAUGE_UNIT_OFFSET_V, UIStyleValue::Float(50.0));
         self.set(GAUGE_UNIT_ENABLED, UIStyleValue::Boolean(true));
         
         // Zone defaults
         self.set(GAUGE_WARNING_ZONE_COLOR, UIStyleValue::Color("#FFAA00".to_string()));
-        self.set(GAUGE_WARNING_ZONE_START, UIStyleValue::Float(75.0));
-        self.set(GAUGE_WARNING_ZONE_END, UIStyleValue::Float(90.0));
-        self.set(GAUGE_WARNING_ZONE_WIDTH, UIStyleValue::Float(5.0));
+        self.set(GAUGE_WARNING_ZONE_WIDTH, UIStyleValue::Float(4.0));
         self.set(GAUGE_WARNING_ZONE_ENABLED, UIStyleValue::Boolean(false));
         
         self.set(GAUGE_CRITICAL_ZONE_COLOR, UIStyleValue::Color("#FF0000".to_string()));
-        self.set(GAUGE_CRITICAL_ZONE_START, UIStyleValue::Float(90.0));
-        self.set(GAUGE_CRITICAL_ZONE_END, UIStyleValue::Float(100.0));
-        self.set(GAUGE_CRITICAL_ZONE_WIDTH, UIStyleValue::Float(5.0));
+        self.set(GAUGE_CRITICAL_ZONE_WIDTH, UIStyleValue::Float(4.0));
         self.set(GAUGE_CRITICAL_ZONE_ENABLED, UIStyleValue::Boolean(false));
         
+        self.set(GAUGE_INACTIVE_ZONE_COLOR, UIStyleValue::Color("#202020".to_string()));
+        self.set(GAUGE_INACTIVE_ZONE_WIDTH, UIStyleValue::Float(4.0));
+        self.set(GAUGE_INACTIVE_ZONE_ENABLED, UIStyleValue::Boolean(true));
+
         // Bar defaults
         self.set(BAR_BACKGROUND_COLOR, UIStyleValue::Color("#404040".to_string()));
-        self.set(BAR_BORDER_COLOR, UIStyleValue::Color("#808080".to_string()));
-        self.set(BAR_BORDER_WIDTH, UIStyleValue::Float(1.0));
-        self.set(BAR_CORNER_RADIUS, UIStyleValue::Float(4.0));
-        self.set(BAR_WIDTH, UIStyleValue::Float(200.0));
-        self.set(BAR_HEIGHT, UIStyleValue::Float(20.0));
-        self.set(BAR_FILL_COLOR, UIStyleValue::Color("#00FF00".to_string()));
-        self.set(BAR_FILL_GRADIENT_ENABLED, UIStyleValue::Boolean(true));
-        self.set(BAR_FILL_GRADIENT_START, UIStyleValue::Color("#00FF00".to_string()));
-        self.set(BAR_FILL_GRADIENT_END, UIStyleValue::Color("#FFFF00".to_string()));
-        
-        self.set(BAR_SEGMENTS_ENABLED, UIStyleValue::Boolean(false));
+        self.set(BAR_BACKGROUND_ENABLED, UIStyleValue::Boolean(false));
+        self.set(BAR_BORDER_COLOR, UIStyleValue::Color("#FFA500".to_string()));
+        self.set(BAR_BORDER_ENABLED, UIStyleValue::Boolean(true));
+        self.set(BAR_BORDER_WIDTH, UIStyleValue::Float(4.0));
+        self.set(BAR_CORNER_RADIUS, UIStyleValue::Float(8.0));
+
+        self.set(BAR_EMPTY_COLOR, UIStyleValue::Color("#202020".to_string()));
+        self.set(BAR_NORMAL_COLOR, UIStyleValue::Color("#FF7D00".to_string()));
+        self.set(BAR_WARNING_COLOR, UIStyleValue::Color("#FFFF00".to_string()));
+        self.set(BAR_CRITICAL_COLOR, UIStyleValue::Color("#FF0000".to_string()));
+
+        self.set(BAR_MARKS_COLOR, UIStyleValue::Color("#FF7D00".to_string()));
+        self.set(BAR_MARKS_WIDTH, UIStyleValue::Float(12.0));
+        self.set(BAR_MARKS_THICKNESS, UIStyleValue::Float(4.0));
+
+        self.set(BAR_MARK_LABELS_COLOR, UIStyleValue::Color("#FF7D00".to_string()));
+
         self.set(BAR_SEGMENT_COUNT, UIStyleValue::Integer(10));
-        self.set(BAR_SEGMENT_SPACING, UIStyleValue::Float(2.0));
-        self.set(BAR_SEGMENT_NORMAL_COLOR, UIStyleValue::Color("#00FF00".to_string()));
-        self.set(BAR_SEGMENT_WARNING_COLOR, UIStyleValue::Color("#FFAA00".to_string()));
-        self.set(BAR_SEGMENT_CRITICAL_COLOR, UIStyleValue::Color("#FF0000".to_string()));
-        
+        self.set(BAR_SEGMENT_GAP, UIStyleValue::Float(2.0));
+
         // Text defaults
-        self.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
-        self.set(TEXT_SECONDARY_COLOR, UIStyleValue::Color("#C0C0C0".to_string()));
+        self.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#FF7D00".to_string()));
+        self.set(TEXT_SECONDARY_COLOR, UIStyleValue::Color("#b77700".to_string()));
         self.set(TEXT_ACCENT_COLOR, UIStyleValue::Color("#0080FF".to_string()));
-        self.set(TEXT_WARNING_COLOR, UIStyleValue::Color("#FFAA00".to_string()));
+        self.set(TEXT_WARNING_COLOR, UIStyleValue::Color("#FFFF00".to_string()));
         self.set(TEXT_ERROR_COLOR, UIStyleValue::Color("#FF0000".to_string()));
         
         self.set(TEXT_PRIMARY_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
-        self.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(16));
+        self.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(24));
         self.set(TEXT_SECONDARY_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
-        self.set(TEXT_SECONDARY_FONT_SIZE, UIStyleValue::Integer(14));
+        self.set(TEXT_SECONDARY_FONT_SIZE, UIStyleValue::Integer(16));
         self.set(TEXT_MONOSPACE_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf".to_string()));
-        self.set(TEXT_MONOSPACE_FONT_SIZE, UIStyleValue::Integer(14));
+        self.set(TEXT_MONOSPACE_FONT_SIZE, UIStyleValue::Integer(16));
+        self.set(TEXT_SMALL_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
+        self.set(TEXT_SMALL_FONT_SIZE, UIStyleValue::Integer(12));
+
         self.set(TEXT_LINE_SPACING, UIStyleValue::Float(1.2));
         self.set(TEXT_LETTER_SPACING, UIStyleValue::Float(0.0));
         
@@ -518,10 +664,41 @@ impl UIStyle {
         self.set(INDICATOR_GLOW_RADIUS, UIStyleValue::Float(5.0));
         self.set(INDICATOR_SIZE, UIStyleValue::Float(24.0));
         
+        // Digital display defaults (amber theme like classic LCD displays)
+        self.set(DIGITAL_DISPLAY_FONT, UIStyleValue::String(DIGITAL_DISPLAY_FONT_ITALIC_PATH.to_string()));
+        self.set(DIGITAL_DISPLAY_FONT_SIZE, UIStyleValue::Integer(32));
+        self.set(DIGITAL_DISPLAY_SCALE, UIStyleValue::Float(2.0));
+        self.set(DIGITAL_DISPLAY_ACTIVE_COLOR, UIStyleValue::Color("#FFA500".to_string())); // Amber active segments
+        self.set(DIGITAL_DISPLAY_INACTIVE_COLOR, UIStyleValue::Color("#996600".to_string())); // Dark amber inactive segments
+        self.set(DIGITAL_DISPLAY_INACTIVE_COLOR_BLENDING, UIStyleValue::Float(0.4));
+        self.set(DIGITAL_DISPLAY_BACKGROUND_COLOR, UIStyleValue::Color("#000000".to_string())); // Amber background
+        self.set(DIGITAL_DISPLAY_BACKGROUND_ENABLED, UIStyleValue::Boolean(false));
+        self.set(DIGITAL_DISPLAY_BORDER_ENABLED, UIStyleValue::Boolean(true));
+        self.set(DIGITAL_DISPLAY_BORDER_COLOR, UIStyleValue::Color("#FFA500".to_string()));
+        self.set(DIGITAL_DISPLAY_BORDER_WIDTH, UIStyleValue::Float(4.0));
+        self.set(DIGITAL_DISPLAY_BORDER_RADIUS, UIStyleValue::Float(10.0));
+
+        // Extended digital display font defaults
+        self.set(DIGITAL_DISPLAY_FONT_ITALIC, UIStyleValue::String(DIGITAL_DISPLAY_FONT_ITALIC_PATH.to_string()));
+        self.set(DIGITAL_DISPLAY_14SEG_FONT, UIStyleValue::String(DIGITAL_DISPLAY_14SEG_FONT_PATH.to_string()));
+        self.set(DIGITAL_DISPLAY_14SEG_ITALIC, UIStyleValue::String(DIGITAL_DISPLAY_14SEG_ITALIC_PATH.to_string()));
+        
         // Animation defaults
         self.set(ANIMATION_NEEDLE_SPEED, UIStyleValue::Float(1.0));
         self.set(ANIMATION_BAR_SPEED, UIStyleValue::Float(1.0));
         self.set(ANIMATION_SMOOTH_ENABLED, UIStyleValue::Boolean(true));
+
+        // Alerts defaults
+        self.set(ALERT_FONT_PATH, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf".to_string()));
+        self.set(ALERT_FONT_SIZE, UIStyleValue::Integer(32));
+        self.set(ALERT_WARNING_COLOR, UIStyleValue::Color("#FFFF00".to_string()));
+        self.set(ALERT_CRITICAL_COLOR, UIStyleValue::Color("#FF0000".to_string()));
+        self.set(ALERT_BACKGROUND_COLOR, UIStyleValue::Color("#000000".to_string()));
+        self.set(ALERT_BORDER_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
+        self.set(ALERT_BORDER_WIDTH, UIStyleValue::Float(4.0));
+        self.set(ALERT_MARGIN, UIStyleValue::Float(8.0));
+        self.set(ALERT_CORNER_RADIUS, UIStyleValue::Float(8.0));
+        self.set(ALERT_SOUND_PATH, UIStyleValue::String("".to_string())); // No sound by default
     }
 }
 
@@ -581,6 +758,28 @@ fn parse_color(color_str: &str) -> Result<(f32, f32, f32), String> {
     }
 }
 
+/// Calculate the average of two RGB colors
+/// Returns a color that is the blend of color1 and color2 with equal weight (0.5 each)
+pub fn average_colors(color1: (f32, f32, f32), color2: (f32, f32, f32)) -> (f32, f32, f32) {
+    (
+        (color1.0 + color2.0) * 0.5,
+        (color1.1 + color2.1) * 0.5,
+        (color1.2 + color2.2) * 0.5,
+    )
+}
+
+/// Calculate the weighted average of two RGB colors
+/// weight: 0.0 = fully color1, 1.0 = fully color2, 0.5 = equal blend
+pub fn blend_colors(color1: (f32, f32, f32), color2: (f32, f32, f32), weight: f32) -> (f32, f32, f32) {
+    let w = weight.clamp(0.0, 1.0);
+    let inv_w = 1.0 - w;
+    (
+        color1.0 * inv_w + color2.0 * w,
+        color1.1 * inv_w + color2.1 * w,
+        color1.2 * inv_w + color2.2 * w,
+    )
+}
+
 /// Check if string is a named color
 fn is_named_color(s: &str) -> bool {
     matches!(s.to_lowercase().as_str(), 
@@ -620,14 +819,14 @@ mod tests {
     #[test]
     fn test_json_serialization() {
         let mut style = UIStyle::new();
-        style.set(NEEDLE_COLOR, UIStyleValue::Color("#FF0000".to_string()));
+        style.set(GAUGE_NEEDLE_COLOR, UIStyleValue::Color("#FF0000".to_string()));
         style.set(GAUGE_BORDER_WIDTH, UIStyleValue::Float(2.5));
         style.set(GAUGE_LABEL_ENABLED, UIStyleValue::Boolean(true));
         
         let json = style.to_json().unwrap();
         let loaded_style = UIStyle::from_json(&json).unwrap();
         
-        assert_eq!(loaded_style.get_color(NEEDLE_COLOR, (0.0, 0.0, 0.0)), (1.0, 0.0, 0.0));
+        assert_eq!(loaded_style.get_color(GAUGE_NEEDLE_COLOR, (0.0, 0.0, 0.0)), (1.0, 0.0, 0.0));
         assert_eq!(loaded_style.get_float(GAUGE_BORDER_WIDTH, 0.0), 2.5);
         assert_eq!(loaded_style.get_bool(GAUGE_LABEL_ENABLED, false), true);
     }
@@ -636,9 +835,9 @@ mod tests {
     fn test_brightness_application() {
         let mut style = UIStyle::new();
         style.set(GLOBAL_BRIGHTNESS, UIStyleValue::Float(0.5));
-        style.set(NEEDLE_COLOR, UIStyleValue::Color("#FF0000".to_string()));
+        style.set(GAUGE_NEEDLE_COLOR, UIStyleValue::Color("#FF0000".to_string()));
         
-        let color = style.get_color(NEEDLE_COLOR, (0.0, 0.0, 0.0));
+        let color = style.get_color(GAUGE_NEEDLE_COLOR, (0.0, 0.0, 0.0));
         assert_eq!(color, (0.5, 0.0, 0.0)); // Should be dimmed
     }
 

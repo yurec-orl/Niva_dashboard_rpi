@@ -1,18 +1,25 @@
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
-use crate::hardware::sensor_manager::SensorManager;
 use crate::page_framework::diag_page::DiagPage;
-use crate::page_framework::events::{UIEvent, EventSender, EventReceiver, EventBus, create_event_bus};
+use crate::page_framework::events::{UIEvent, EventSender, EventReceiver, EventBus, SmartEventSender, create_event_bus};
 use crate::page_framework::input::{InputHandler, ButtonState};
 use crate::page_framework::main_page::MainPage;
+use crate::hardware::sensor_manager::SensorManager;
+use crate::hardware::hw_providers::HWInput;
+use crate::alerts::alert_manager::{AlertManager, Severity};
+use crate::alerts::watchdog::Watchdog;
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
+use std::fs;
 
-const STATUS_LINE_MARGIN: f32 = 25.0;
+const STATUS_LINE_X_MARGIN : f32 = 20.0;
+const STATUS_LINE_Y_MARGIN : f32 = 25.0;
 
-pub const MAIN_PAGE_NAME: &str = "Main";
-pub const DIAG_PAGE_NAME: &str = "Diagnostics";
+const PAGE_BUTTON_X_MARGIN: f32 = 4.0;      // Move a little from screen edge for better visibility.
+
+pub const MAIN_PAGE_ID: u32 = 0;
+pub const DIAG_PAGE_ID: u32 = 1;
 
 // ButtonPosition correspond to physical 2x4 buttons layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -63,16 +70,14 @@ pub struct PageBase {
     id: u32,            // Incremental id, depends on page creation order.
     name: String,
     buttons: Vec<PageButton<Box<dyn FnMut()>>>,
-    ui_style: UIStyle,
 }
 
 impl PageBase {
-    pub fn new(id: u32, name: String, ui_style: UIStyle) -> Self {
+    pub fn new(id: u32, name: String) -> Self {
         PageBase {
             id,
             name,
             buttons: Vec::new(),
-            ui_style,
         }
     }
 
@@ -101,17 +106,13 @@ impl PageBase {
     pub fn button_by_position_mut(&mut self, pos: ButtonPosition) -> Option<&mut PageButton<Box<dyn FnMut()>>> {
         self.buttons.iter_mut().find(|button| button.position() == &pos)
     }
-
-    pub fn ui_style(&self) -> &UIStyle {
-        &self.ui_style
-    }
 }
 
 pub trait Page {
     fn id(&self) -> u32;
     fn name(&self) -> &str;
     // Render page-specific stuff (except button labels, which are PageManager responsibility).
-    fn render(&self, context: &mut GraphicsContext) -> Result<(), String>;
+    fn render(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String>;
     // Trigger once on switching to this page.
     fn on_enter(&mut self) -> Result<(), String>;
     // Trigger once on switching from this page.
@@ -127,8 +128,6 @@ pub trait Page {
     fn button_by_position(&self, pos: ButtonPosition) -> Option<&PageButton<Box<dyn FnMut()>>>;
     
     fn button_by_position_mut(&mut self, pos: ButtonPosition) -> Option<&mut PageButton<Box<dyn FnMut()>>>;
-
-    fn ui_style(&self) -> &UIStyle;
 }
 
 // Helper struct to manage collection of pages.
@@ -168,8 +167,16 @@ impl Pages {
 // PageManager is responsible for managing multiple pages and their transitions,
 // as well as rendering button labels.
 pub struct PageManager {
+    // Rendering-related stuff.
     context: GraphicsContext,
-    sensors: SensorManager,
+    // Global UI style settings.
+    ui_style: UIStyle,
+
+    // Takes care of low-level hw input, signal processing, and conversion
+    // to actual sensor values.
+    sensor_manager: SensorManager,
+
+    // UI pages related stuff.
     pg_id: u32,             // Page incremental id, depends on page creation order.
     current_page: Option<u32>,
     pages: Pages,
@@ -180,10 +187,13 @@ pub struct PageManager {
     // Map hardware keys with UI buttons positions.
     buttons_map: HashMap<char, ButtonPosition>,
 
-    // Event system for UI communication (MPMC)
+    // Event system for UI communication (dual-channel).
     event_bus: EventBus,
-    event_receiver: EventReceiver,
-    event_sender: EventSender,
+    global_event_receiver: EventReceiver,  // PageManager listens to global events
+    smart_event_sender: SmartEventSender,  // Smart sender routes events automatically
+
+    // Alert system
+    alert_manager: AlertManager,
 
     fps_counter: FpsCounter,
     start_time: Instant,
@@ -193,7 +203,7 @@ pub struct PageManager {
 }
 
 impl PageManager {
-    pub fn new(context: GraphicsContext, sensors: SensorManager) -> Self {
+    pub fn new(context: GraphicsContext, sensor_manager: SensorManager, ui_style: UIStyle) -> Self {
         let mut buttons_map = HashMap::new();
         buttons_map.insert('1', ButtonPosition::Left1);
         buttons_map.insert('2', ButtonPosition::Left2);
@@ -204,42 +214,48 @@ impl PageManager {
         buttons_map.insert('7', ButtonPosition::Right3);
         buttons_map.insert('8', ButtonPosition::Right4);
 
-        // Create event bus and get sender/receiver
+        // Create event bus with dual-channel system
         let event_bus = create_event_bus();
-        let event_sender = event_bus.sender();
-        let event_receiver = event_bus.receiver();
+        let global_event_receiver = event_bus.global_receiver();
+        let smart_event_sender = event_bus.smart_sender();
+
+        let alert_manager = AlertManager::new(true, &ui_style);
 
         PageManager {
             context,
-            sensors,
+            ui_style,
+            sensor_manager,
             pg_id: 0,
             current_page: None,
             pages: Pages::new(),
             input_handler: InputHandler::new(),
             buttons_map,
             event_bus,
-            event_receiver,
-            event_sender,
+            global_event_receiver,
+            smart_event_sender,
+            alert_manager,
             fps_counter: FpsCounter::new(),
             start_time: Instant::now(),
             running: false,
         }
     }
 
-    fn get_page_mut_id(&mut self) -> u32 {
+    fn get_page_id(&mut self) -> u32 {
         let id = self.pg_id;
-        self.pg_id += 1;
-        id
+        while (self.get_page(id)).is_some() {
+            self.pg_id += 1;
+        }
+        self.pg_id
     }
 
-    /// Get a new event receiver for pages (MPMC allows multiple receivers)
+    /// Get a new event receiver for pages (page-specific events only)
     pub fn get_event_receiver(&self) -> EventReceiver {
-        self.event_bus.receiver()
+        self.event_bus.page_receiver()
     }
 
-    /// Get the event sender for UI components
-    pub fn get_event_sender(&self) -> EventSender {
-        self.event_sender.clone()
+    /// Get the smart event sender for UI components (auto-routes events)
+    pub fn get_smart_event_sender(&self) -> SmartEventSender {
+        self.smart_event_sender.clone()
     }
 
     fn get_page(&self, id: u32) -> Option<&Box<dyn Page>> {
@@ -269,7 +285,7 @@ impl PageManager {
     fn render_current_page(&mut self) -> Result<(), String> {
         if let Some(page_id) = self.current_page {
             match self.pages.get_page_mut(page_id) {
-                Some(page) => page.render(&mut self.context),
+                Some(page) => page.render(&mut self.context, &self.sensor_manager, &self.ui_style),
                 None => Err(format!("Current page id {} not found", page_id)),
             }?;
         }
@@ -279,6 +295,12 @@ impl PageManager {
 
     pub fn add_page(&mut self, page: Box<dyn Page>) -> u32 {
         let page_id = page.id();
+        // Check if page with same id already exists - abort if so,
+        // because page switching would be ambiguous.
+        if self.get_page(page_id).is_some() {
+            print!("Warning: Page with id {} already exists, exiting\r\n", page_id);
+            std::process::exit(1);
+        }
         self.pages.add_page(page);
         page_id
     }
@@ -305,87 +327,50 @@ impl PageManager {
         self.get_current_page_mut()?.button_by_position_mut(pos)
     }
 
-    // Set up pages and buttons.
+    // Set up pages, buttons and watchdogs.
     pub fn setup(&mut self) -> Result<(), String> {
-        // Get event sender for button callbacks
-        let event_sender = self.event_sender.clone();
+        // Get smart event sender for button callbacks
+        let smart_sender = self.smart_event_sender.clone();
 
         // Create and add pages first to get their IDs
-        let mut main_page_style = UIStyle::new();
-        main_page_style.set(TEXT_PRIMARY_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf".to_string()));
-        main_page_style.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(24));
-        main_page_style.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#FFFFFF".to_string())); // White color
-        let mut main_page = Box::new(MainPage::new(self.get_page_mut_id(),
-                                                   MAIN_PAGE_NAME.to_string(),
-                                                   main_page_style,
-                                                   event_sender.clone(),
-                                                   self.get_event_receiver()));
+        let main_page = Box::new(MainPage::new(MAIN_PAGE_ID,
+                                               smart_sender.clone(),
+                                               self.get_event_receiver(),
+                                               &self.context,
+                                               &self.ui_style));
 
-        let mut diag_page_style = UIStyle::new();
-        diag_page_style.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(20));
-        diag_page_style.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#00FF00".to_string())); // Green color
-        diag_page_style.set(TEXT_PRIMARY_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf".to_string()));
-        let mut diag_page = Box::new(DiagPage::new(self.get_page_mut_id(),
-                                                   DIAG_PAGE_NAME.to_string(),
-                                                   diag_page_style,
-                                                   event_sender.clone(),
-                                                   self.get_event_receiver()));
+        let diag_page = Box::new(DiagPage::new(DIAG_PAGE_ID,
+                                               smart_sender.clone(),
+                                               self.get_event_receiver()));
 
-        let main_page_id = self.add_page(main_page);
-        self.switch_page(main_page_id)?;
+        self.add_page(main_page);
+        self.switch_page(MAIN_PAGE_ID)?;
 
-        let diag_page_id = self.add_page(diag_page);
+        self.add_page(diag_page);
 
-        // Create buttons that send events instead of direct function calls
-       
-        let main_buttons = vec![
-            PageButton::new(ButtonPosition::Left1, "ВИД+".into(), Box::new({
-                let sender = event_sender.clone();
-                move || sender.send(UIEvent::ButtonPressed("view_up".into()))
-            }) as Box<dyn FnMut()>),
-            PageButton::new(ButtonPosition::Left2, "ВИД-".into(), Box::new({
-                let sender = event_sender.clone();
-                move || sender.send(UIEvent::ButtonPressed("view_down".into()))
-            }) as Box<dyn FnMut()>),
-            PageButton::new(ButtonPosition::Left4, "ВЫХ".into(), Box::new({
-                let sender = event_sender.clone();
-                move || sender.send(UIEvent::Shutdown)
-            }) as Box<dyn FnMut()>),
-            PageButton::new(ButtonPosition::Right1, "ЯРК+".into(), Box::new({
-                let sender = event_sender.clone();
-                move || sender.send(UIEvent::BrightnessUp)
-            }) as Box<dyn FnMut()>),
-            PageButton::new(ButtonPosition::Right2, "ЯРК-".into(), Box::new({
-                let sender = event_sender.clone();
-                move || sender.send(UIEvent::BrightnessDown)
-            }) as Box<dyn FnMut()>),
-            PageButton::new(ButtonPosition::Right4, "ДИАГ".into(), Box::new({
-                let sender = event_sender.clone();
-                move || sender.send(UIEvent::SwitchToPage(diag_page_id))
-            }) as Box<dyn FnMut()>),
-        ];
+        // Set up watchdogs for alert manager
+        let engine_temp_watchdog = Watchdog::new(
+            HWInput::HwEngineCoolantTemp,
+            "ТЕМПЕРАТУРА ДВИГАТЕЛЯ".to_string(),
+            Severity::Critical,
+            Some(5000),           // Stays on screen for 5 seconds
+            Some(1 * 60 * 1000),  // Remove after 1 minute - prevents flooding
+            Some(100),    // Trigger if condition persists for 100ms
+        );
+        let oil_press_low_watchdog = Watchdog::new(
+            HWInput::HwOilPressLow,
+            "НИЗКОЕ ДАВЛЕНИЕ МАСЛА".to_string(),
+            Severity::Critical,
+            Some(5000),           // Stays on screen for 5 seconds
+            Some(1 * 60 * 1000),  // Remove after 1 minute - prevents flooding
+            Some(100),    // Trigger if condition persists for 100ms
+        );
 
-        self.get_page_mut(main_page_id).expect("Failed to get main page").set_buttons(main_buttons);
+        self.alert_manager.add_watchdog(engine_temp_watchdog);
+        self.alert_manager.add_watchdog(oil_press_low_watchdog);
 
-        match self.get_page_mut(diag_page_id) {
-            Some(page) => {
-                page.set_buttons(vec![
-                    PageButton::new(ButtonPosition::Left1, "ДАТЧ".into(), Box::new({
-                        let sender = event_sender.clone();
-                        move || sender.send(UIEvent::ButtonPressed("diag_test_1".into()))
-                    }) as Box<dyn FnMut()>),
-                    PageButton::new(ButtonPosition::Left2, "ЖУРН".into(), Box::new({
-                        let sender = event_sender.clone();
-                        move || sender.send(UIEvent::ButtonPressed("diag_test_2".into()))
-                    }) as Box<dyn FnMut()>),
-                    PageButton::new(ButtonPosition::Right4, "ВОЗВ".into(), Box::new({
-                        let sender = event_sender.clone();
-                        move || sender.send(UIEvent::SwitchToPage(main_page_id))
-                    }) as Box<dyn FnMut()>),
-                ]);
-            }
-            None => return Err("Failed to get diag page for button setup".into()),
-        }
+        // Enable watchdogs and alerts
+        self.alert_manager.set_enabled(true);
 
         Ok(())
     }
@@ -411,39 +396,71 @@ impl PageManager {
         const FRAME_DURATION: Duration = Duration::from_micros(1_000_000 / TARGET_FPS);
 
         print!("Starting event loop (target: {} FPS)\r\n", TARGET_FPS);
+        self.toggle_bloom();    // Turn off for now
+        // self.set_bloom_intensity(1.0);
+        // let start_time = Instant::now();
+        
+        let mut last_render_time = Instant::now();
         
         while self.running {
-            let frame_start = Instant::now();
+            let loop_start = Instant::now();
             
-            // Update FPS counter
-            self.fps_counter.update();
-            
-            // Clear screen with black
-            self.context.clear_screen();
-            unsafe {
-                gl::Enable(gl::BLEND);
-                gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+            // Continuous sensor polling - poll sensors every loop iteration
+            // This ensures sensor data is always up to date regardless of render timing
+            if let Err(e) = self.sensor_manager.read_all_sensors() {
+                print!("Sensor read error: {}\r\n", e);
             }
+            self.alert_manager.check_watchdogs(&self.sensor_manager);
             
-            // Render current page
-            self.render_current_page()?;
+            // Check if it's time to render based on target framerate
+            let time_since_last_render = loop_start.duration_since(last_render_time);
+            let should_render = time_since_last_render >= FRAME_DURATION;
+            
+            if should_render {
+                let frame_start = Instant::now();
 
-            // Render button labels on left and right sides
-            self.render_button_labels()?;
+                // Update FPS counter only when rendering
+                self.fps_counter.update();
+                
+                // Begin bloom rendering if enabled
+                let bloom_enabled = self.context.is_bloom_enabled();
+                if bloom_enabled {
+                    if let Err(e) = self.context.begin_bloom_render() {
+                        print!("Bloom render error: {}\r\n", e);
+                    }
+                } else {
+                    // Clear screen with black for normal rendering
+                    self.context.clear_screen();
+                }
             
-            // Render status line
-            self.render_status_line()?;
-            
-            // Swap buffers
-            self.context.swap_buffers();
-            
-            // Frame timing control
-            let frame_time = frame_start.elapsed();
-            if frame_time < FRAME_DURATION {
-                std::thread::sleep(FRAME_DURATION - frame_time);
+                unsafe {
+                    gl::Enable(gl::BLEND);
+                    gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+                }
+
+                // Render the frame - sensors were already read above
+                self.render_current_page()?;
+
+                self.alert_manager.render_alerts(&mut self.context);
+
+                self.render_button_labels()?;
+                
+                self.render_status_line()?;
+                
+                // Apply bloom effect and swap buffers
+                if bloom_enabled {
+                    if let Err(e) = self.context.end_bloom_render() {
+                        print!("Bloom end render error: {}\r\n", e);
+                    }
+                }
+                
+                // Swap buffers
+                self.context.swap_buffers();
+                
+                last_render_time = frame_start;
             }
 
-            // Check for button state changes
+            // Check for button state changes (processed every loop iteration for responsiveness)
             if let Some(state) = self.input_handler.button_state() {
                 match state {
                     ButtonState::Pressed(key) => {
@@ -453,13 +470,18 @@ impl PageManager {
                         print!("Button released: {}\r\n", key);
                         if let Some(button) = self.button_by_key(&key) {
                             button.trigger();
+                        } else if key == 'q' {
+                            // For debugging, allow 'q' key to quit the loop
+                            print!("'q' pressed - exiting event loop\r\n");
+                            self.running = false;
                         }
                     }
                 }
             }
 
-            // Process UI events from buttons and other sources (PageManager events)
-            while let Ok(event) = self.event_receiver.try_recv() {
+            // Process global UI events (PageManager events only)
+            // With dual-channel system, PageManager only receives global events
+            while let Ok(event) = self.global_event_receiver.try_recv() {
                 self.handle_ui_event(event);
             }
 
@@ -468,10 +490,9 @@ impl PageManager {
                 current_page.process_events();
             }
 
-            // Exit condition (for now, run for 30 seconds)
-            if self.start_time.elapsed() > Duration::from_secs(10) {
-                self.running = false;
-            }
+            // Small sleep to prevent excessive CPU usage while maintaining high sensor polling rate
+            // 0.1ms sleep allows for ~10kHz max polling rate while being CPU-friendly
+            std::thread::sleep(Duration::from_micros(100));
         }
         
         print!("Event loop finished\r\n");
@@ -505,6 +526,9 @@ impl PageManager {
             UIEvent::Restart => {
                 print!("Restart event received (not implemented)\r\n");
             }
+            UIEvent::SuppressAlerts => {
+                self.alert_manager.suppress_alerts();
+            }
             UIEvent::ButtonPressed(action) => {
                 print!("Custom button action: {}\r\n", action);
                 // Handle custom button actions here
@@ -516,47 +540,13 @@ impl PageManager {
                     _ => print!("Unknown action: {}\r\n", action),
                 }
             }
-            // Page-specific events are handled by individual pages automatically
-            UIEvent::ShowSensorInfo => {
-                print!("Sensor info event (handled by DiagPage)\r\n");
-            }
-            UIEvent::ShowECUInfo => {
-                print!("ECU info event (handled by DiagPage)\r\n");
-            }
-            UIEvent::ShowOSCInfo => {
-                print!("ECU info event (handled by DiagPage)\r\n");
-            }
-            UIEvent::ShowLog => {
-                print!("Show log event (handled by DiagPage)\r\n");
-            }
-            // Oscilloscope events (for future use)
-            UIEvent::OscStart => {
-                print!("Oscilloscope start event\r\n");
-            }
-            UIEvent::OscStop => {
-                print!("Oscilloscope stop event\r\n");
-            }
-            UIEvent::OscSetSampleRate(rate) => {
-                print!("Oscilloscope sample rate: {} Hz\r\n", rate);
-            }
-            UIEvent::OscSetTimeScale(scale) => {
-                print!("Oscilloscope time scale: {}\r\n", scale);
-            }
-            UIEvent::OscSetVoltageScale(scale) => {
-                print!("Oscilloscope voltage scale: {}\r\n", scale);
-            }
-            UIEvent::OscSetTriggerLevel(level) => {
-                print!("Oscilloscope trigger level: {}\r\n", level);
-            }
-            UIEvent::OscToggleChannel(channel) => {
-                print!("Oscilloscope toggle channel: {}\r\n", channel);
-            }
+            _ => {}
         }
     }
     
-    fn get_button_position(&self, pos: &ButtonPosition) -> (f32, f32) {
+    fn get_button_position(&self, pos: &ButtonPosition, orientation: &String) -> (f32, f32) {
         let screen_width = self.context.width as f32;
-        let screen_height = self.context.height as f32 - STATUS_LINE_MARGIN;
+        let screen_height = self.context.height as f32 - STATUS_LINE_Y_MARGIN;
         let x_margin = 0.0;   // No horizontal margin
         let y_margin = 30.0;  // Small vertical margin from screen edges
         
@@ -582,34 +572,70 @@ impl PageManager {
         }
     }
     
-    fn render_button_at_position(&mut self, pos: &ButtonPosition, label: &str, label_scale: f32, label_color: (f32, f32, f32)) -> Result<(), String> {
-        let (x, y) = self.get_button_position(pos);
+    fn render_button_at_position(&mut self, pos: &ButtonPosition, label: &str,
+        label_font: &String, label_font_size: u32, label_color: (f32, f32, f32),
+        orientation: &String
+    ) -> Result<(), String> {
+        let (x, mut y) = self.get_button_position(pos, orientation);
         
+        if orientation == "vertical" {
+            // Special case for vertical orientation: adjust y position
+            // so that label y center point alingns with button position
+            y = y - (self.context.calculate_text_height_with_font_vert(
+                label,
+                1.0,
+                label_font,
+                label_font_size
+            )? / 2.0);
+        }
+
         let render_x = match pos {
             // Right side buttons are right-aligned
             ButtonPosition::Right1 | ButtonPosition::Right2 | 
             ButtonPosition::Right3 | ButtonPosition::Right4 => {
-                let text_width = self.context.calculate_text_width_with_font(
-                    label, 
-                    label_scale,
-                    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                    16
-                )?;
-                x - text_width
+                let text_width = if orientation == "horizontal" {
+                    self.context.calculate_text_width_with_font(
+                        label,
+                        1.0,
+                        label_font,
+                        label_font_size
+                    )?
+                } else {
+                    self.context.calculate_text_width_with_font_vert(
+                        label,
+                        1.0,
+                        label_font,
+                        label_font_size
+                    )?
+                };
+                x - text_width - PAGE_BUTTON_X_MARGIN
             }
             // Left side buttons are left-aligned
-            _ => x,
+            _ => x + PAGE_BUTTON_X_MARGIN,
         };
         
-        self.context.render_text_with_font(
-            label, 
-            render_x, 
-            y, 
-            label_scale, 
-            label_color,
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            16
-        )?;
+        if orientation == "horizontal" {
+            self.context.render_text_with_font(
+                label, 
+                render_x, 
+                y, 
+                1.0,
+                label_color,
+                label_font,
+                label_font_size
+            )?;
+            return Ok(());
+        } else {
+            self.context.render_text_with_font_vert(
+                label, 
+                render_x, 
+                y, 
+                1.0,
+                label_color,
+                label_font,
+                label_font_size
+            )?;
+        }
         Ok(())
     }
     
@@ -620,8 +646,10 @@ impl PageManager {
         }
 
         // Render settings
-        let label_scale = 1.2;
-        let label_color = (1.0, 1.0, 1.0);
+        let label_font = self.ui_style.get_string(PAGE_BUTTON_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
+        let label_font_size = self.ui_style.get_integer(PAGE_BUTTON_LABEL_FONT_SIZE, 14);
+        let label_color = self.ui_style.get_color(PAGE_BUTTON_LABEL_COLOR, (1.0, 1.0, 1.0));
+        let orientation = self.ui_style.get_string(PAGE_BUTTON_LABEL_ORIENTATION, "horizontal");
 
         // Collect button data first to avoid borrowing conflicts
         let button_data: Vec<(ButtonPosition, String)> = {
@@ -634,7 +662,7 @@ impl PageManager {
 
         // Now render each button at its fixed position
         for (position, label) in button_data {
-            self.render_button_at_position(&position, &label, label_scale, label_color)?;
+            self.render_button_at_position(&position, &label, &label_font, label_font_size, label_color, &orientation)?;
         }
 
         Ok(())
@@ -645,28 +673,48 @@ impl PageManager {
         let fps = self.fps_counter.get_fps();
         let frame_count = self.fps_counter.get_frame_count();
         
+        // Get memory information
+        let (mem_total, mem_available) = self.get_memory_info().unwrap_or((0, 0));
+        
         // Format status information
-        let status_text = format!(
-            "Time: {:.1}s | FPS: {:.1} | Frame: {} | Resolution: {}x{}",
-            elapsed.as_secs_f32(),
-            fps,
-            frame_count,
-            self.context.width,
-            self.context.height
-        );
-        
+        let total_seconds = elapsed.as_secs();
+        let days = total_seconds / 86400;  // 24 * 60 * 60
+        let hours = (total_seconds % 86400) / 3600;  // 60 * 60
+        let minutes = (total_seconds % 3600) / 60;
+        let seconds = total_seconds % 60;
+
+        let status_text = if days > 0 {
+            format!(
+                "Работа: {}д {:02}:{:02}:{:02} | К/С: {:.1} | Память: {}/{}МБ",
+                days, hours, minutes, seconds,
+                fps,
+                mem_available, mem_total
+            )
+        } else {
+            format!(
+                "Работа: {:02}:{:02}:{:02} | К/С: {:.1} | Память: {}/{}МБ",
+                hours, minutes, seconds,
+                fps,
+                mem_available, mem_total
+            )
+        };
+
         // Render status line at bottom of screen
-        let status_y = self.context.height as f32 - STATUS_LINE_MARGIN; // 25 pixels from bottom
-        let status_x = 10.0; // 10 pixels from left
-        
+        let status_y = self.context.height as f32 - STATUS_LINE_Y_MARGIN; // 25 pixels from bottom
+        let status_x = STATUS_LINE_X_MARGIN; // 20 pixels from left
+
+        let status_font = self.ui_style.get_string(PAGE_STATUS_FONT, DEFAULT_GLOBAL_FONT_PATH);
+        let status_font_size = self.ui_style.get_integer(PAGE_STATUS_FONT_SIZE, 14);
+        let status_color = self.ui_style.get_color(PAGE_STATUS_COLOR, (0.7, 0.7, 0.7));
+
         self.context.render_text_with_font(
             &status_text,
             status_x,
             status_y,
             1.0, // scale
-            (0.7, 0.7, 0.7), // gray color
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            14 // smaller font for status
+            status_color,
+            status_font.as_str(),
+            status_font_size
         )?;
         
         Ok(())
@@ -674,6 +722,25 @@ impl PageManager {
     
     pub fn stop(&mut self) {
         self.running = false;
+    }
+    
+    /// Toggle bloom effect on/off
+    pub fn toggle_bloom(&mut self) {
+        let enabled = !self.context.is_bloom_enabled();
+        self.context.set_bloom_enabled(enabled);
+        print!("Bloom effect {}\r\n", if enabled { "enabled" } else { "disabled" });
+    }
+    
+    /// Set bloom intensity (0.0 to 2.0)
+    pub fn set_bloom_intensity(&mut self, intensity: f32) {
+        self.context.set_bloom_intensity(intensity);
+        print!("Bloom intensity set to {:.1}\r\n", intensity);
+    }
+    
+    /// Set bloom threshold (0.0 to 1.0)
+    pub fn set_bloom_threshold(&mut self, threshold: f32) {
+        self.context.set_bloom_threshold(threshold);
+        print!("Bloom threshold set to {:.1}\r\n", threshold);
     }
 
     // =============================================================================
@@ -703,6 +770,36 @@ impl PageManager {
         self.context.decrease_brightness(0.1);
         let current = self.get_brightness();
         print!("Brightness decreased to: {:.1}%\r\n", current * 100.0);
+    }
+
+    // =============================================================================
+    // Memory Information
+    // =============================================================================
+
+    /// Get system memory information (available memory in MB)
+    fn get_memory_info(&self) -> Result<(u32, u32), String> {
+        // Read memory information from /proc/meminfo
+        let meminfo = fs::read_to_string("/proc/meminfo")
+            .map_err(|e| format!("Failed to read /proc/meminfo: {}", e))?;
+        
+        let mut mem_total = 0;
+        let mut mem_available = 0;
+        
+        for line in meminfo.lines() {
+            if line.starts_with("MemTotal:") {
+                mem_total = line.split_whitespace()
+                    .nth(1)
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .unwrap_or(0) / 1024; // Convert KB to MB
+            } else if line.starts_with("MemAvailable:") {
+                mem_available = line.split_whitespace()
+                    .nth(1)
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .unwrap_or(0) / 1024; // Convert KB to MB
+            }
+        }
+        
+        Ok((mem_total, mem_available))
     }
 
 }
