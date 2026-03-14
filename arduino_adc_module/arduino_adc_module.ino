@@ -2,7 +2,7 @@
 // Reads analog sensors, digital indicators, and pulse signals (tacho/speed)
 // Sends data over USB-serial to Raspberry Pi at 50 Hz
 //
-// Protocol: "$A0,A1,A2,A3,TACHO,SPEED,D47,D45,D43,D46,D44,D42,D40,D38,D36,D34\n"
+// Protocol: "$A0,A1,A2,A3,TACHO,SPEED,D47,D45,D43,D46,D44,D42,D40,D38,D36,D34,B25,B23,B27,B29,B24,B22,B26,B28\n"
 // - A0..A3: raw 10-bit analog values (0-1023)
 // - TACHO:  pulse count since last report (tachometer, 2 PPR)
 // - SPEED:  pulse count since last report (speed sensor, 4 PPR)
@@ -53,6 +53,10 @@ const DigitalPin DIGITAL_PINS[] = {
 };
 const uint8_t DIGITAL_PIN_COUNT = sizeof(DIGITAL_PINS) / sizeof(DIGITAL_PINS[0]);
 
+// Physical dashboard buttons (INPUT_PULLUP, active low)
+const uint8_t BUTTON_PINS[] = { 25, 23, 27, 29, 24, 22, 26, 28 };
+const uint8_t BUTTON_PIN_COUNT = sizeof(BUTTON_PINS) / sizeof(BUTTON_PINS[0]);
+
 // ============================================================
 // Timing
 // ============================================================
@@ -101,6 +105,11 @@ void setup() {
     pinMode(DIGITAL_PINS[i].pin, DIGITAL_PINS[i].mode);
   }
 
+  // Configure button pins
+  for (uint8_t i = 0; i < BUTTON_PIN_COUNT; i++) {
+    pinMode(BUTTON_PINS[i], INPUT_PULLUP);
+  }
+
   // Configure interrupt pins and attach ISRs on rising edge
   pinMode(PIN_TACHOMETER, INPUT);
   pinMode(PIN_SPEED, INPUT);
@@ -143,8 +152,11 @@ void loop() {
   }
 
   // --- Build and send message ---
-  // Format: $A0,A1,A2,A3,TACHO,SPEED,D0,D1,...,D9\n
+  // Format: $TIMESTAMP,A0,A1,A2,A3,TACHO,SPEED,D0,D1,...,D9\n
   Serial.print('$');
+
+  //Serial.print(now);  // Include timestamp for easier debugging and synchronization
+  //Serial.print(',');
 
   for (uint8_t i = 0; i < ANALOG_PIN_COUNT; i++) {
     Serial.print(analogValues[i]);
@@ -158,6 +170,12 @@ void loop() {
   for (uint8_t i = 0; i < DIGITAL_PIN_COUNT; i++) {
     Serial.print(',');
     Serial.print(digitalValues[i]);
+  }
+
+  // Buttons (active low — invert so 1 = pressed)
+  for (uint8_t i = 0; i < BUTTON_PIN_COUNT; i++) {
+    Serial.print(',');
+    Serial.print(!digitalRead(BUTTON_PINS[i]));
   }
 
   Serial.println();
