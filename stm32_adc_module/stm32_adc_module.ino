@@ -50,7 +50,7 @@
 //   PB7  — Turn signal on                  (INPUT, active-high)
 //   PB8  — High beams on                   (INPUT, active-high)
 //   PB9  — Parking brake on                (INPUT_PULLUP, active-low)
-//   PB10 — Diff lock on                    (INPUT_PULLUP, active-low)
+//   PA15 — Diff lock on                    (INPUT_PULLUP, active-low)
 //
 //   All 12V-level digital signals need external level conversion to 3.3V.
 //
