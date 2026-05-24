@@ -37,7 +37,7 @@ impl MainPage {
             base: PageBase::new(id, "Main".to_string()),
             smart_event_sender: smart_event_sender.clone(),
             event_receiver,
-            indicator_sets: vec![bar_indicator_set, gauge_indicator_set, test_indicator_set],
+            indicator_sets: vec![gauge_indicator_set, bar_indicator_set, test_indicator_set],
             current_indicator_set: 0,
         };
 

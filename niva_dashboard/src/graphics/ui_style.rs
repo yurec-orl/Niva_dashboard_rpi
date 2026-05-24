@@ -27,15 +27,15 @@ use serde::{Deserialize, Serialize};
 // =============================================================================
 
 // Default values
-pub const DEFAULT_GLOBAL_FONT_PATH: &str = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf";  // Use monospace for more digital look
-pub const DEFAULT_GLOBAL_FONT_SIZE: u32 = 14;
+pub const DEFAULT_GLOBAL_FONT_PATH: &str = "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf";  // Use monospace for more digital look
+pub const DEFAULT_GLOBAL_FONT_SIZE: u32 = 18;
 
 // Digital Display Fonts
 pub const DIGITAL_DISPLAY_FONT_PATH: &str = "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/DSEG7ClassicMini-Regular.ttf";
 pub const DIGITAL_DISPLAY_FONT_ITALIC_PATH: &str = "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/DSEG7ClassicMini-Italic.ttf";
 pub const DIGITAL_DISPLAY_14SEG_FONT_PATH: &str = "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/DSEG14ClassicMini-Regular.ttf";
 pub const DIGITAL_DISPLAY_14SEG_ITALIC_PATH: &str = "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/DSEG14ClassicMini-Italic.ttf";
-pub const DIGITAL_DISPLAY_MONO_FONT_PATH: &str = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf";
+pub const DIGITAL_DISPLAY_MONO_FONT_PATH: &str = "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf";
 
 // Global Style Elements
 pub const GLOBAL_CONTRAST: &str = "global_contrast";
@@ -497,16 +497,16 @@ impl UIStyle {
         // Global defaults
         self.set(GLOBAL_CONTRAST, UIStyleValue::Float(1.0));
         self.set(GLOBAL_BACKGROUND_COLOR, UIStyleValue::Color("#000000".to_string()));
-        self.set(GLOBAL_FONT_PATH, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
-        self.set(GLOBAL_FONT_SIZE, UIStyleValue::Integer(16));
+        self.set(GLOBAL_FONT_PATH, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
+        self.set(GLOBAL_FONT_SIZE, UIStyleValue::Integer(DEFAULT_GLOBAL_FONT_SIZE));
         
         // Page manager defaults
-        self.set(PAGE_BUTTON_LABEL_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
-        self.set(PAGE_BUTTON_LABEL_FONT_SIZE, UIStyleValue::Integer(16));
+        self.set(PAGE_BUTTON_LABEL_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
+        self.set(PAGE_BUTTON_LABEL_FONT_SIZE, UIStyleValue::Integer(20));
         self.set(PAGE_BUTTON_LABEL_ORIENTATION, UIStyleValue::String("vertical".to_string()));
         self.set(PAGE_BUTTON_LABEL_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
-        self.set(PAGE_STATUS_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
-        self.set(PAGE_STATUS_FONT_SIZE, UIStyleValue::Integer(14));
+        self.set(PAGE_STATUS_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
+        self.set(PAGE_STATUS_FONT_SIZE, UIStyleValue::Integer(20));
         self.set(PAGE_STATUS_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
 
         // Gauge defaults
@@ -543,21 +543,21 @@ impl UIStyle {
         
         // Label defaults
         self.set(GAUGE_LABEL_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
-        self.set(GAUGE_LABEL_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
-        self.set(GAUGE_LABEL_FONT_SIZE, UIStyleValue::Integer(14));
+        self.set(GAUGE_LABEL_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
+        self.set(GAUGE_LABEL_FONT_SIZE, UIStyleValue::Integer(24));
         self.set(GAUGE_LABEL_OFFSET, UIStyleValue::Float(-35.0));   // Negative to move inside the gauge
         self.set(GAUGE_LABEL_ENABLED, UIStyleValue::Boolean(true));
         
         self.set(GAUGE_TITLE_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
-        self.set(GAUGE_TITLE_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf".to_string()));
-        self.set(GAUGE_TITLE_FONT_SIZE, UIStyleValue::Integer(16));
+        self.set(GAUGE_TITLE_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
+        self.set(GAUGE_TITLE_FONT_SIZE, UIStyleValue::Integer(24));
         self.set(GAUGE_TITLE_OFFSET_H, UIStyleValue::Float(0.0));
         self.set(GAUGE_TITLE_OFFSET_V, UIStyleValue::Float(-20.0));
         self.set(GAUGE_TITLE_ENABLED, UIStyleValue::Boolean(true));
         
         self.set(GAUGE_UNIT_COLOR, UIStyleValue::Color("#727272".to_string()));
-        self.set(GAUGE_UNIT_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
-        self.set(GAUGE_UNIT_FONT_SIZE, UIStyleValue::Integer(16));
+        self.set(GAUGE_UNIT_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
+        self.set(GAUGE_UNIT_FONT_SIZE, UIStyleValue::Integer(18));
         self.set(GAUGE_UNIT_OFFSET_H, UIStyleValue::Float(0.0));
         self.set(GAUGE_UNIT_OFFSET_V, UIStyleValue::Float(50.0));
         self.set(GAUGE_UNIT_ENABLED, UIStyleValue::Boolean(true));
@@ -608,14 +608,14 @@ impl UIStyle {
         self.set(TEXT_WARNING_COLOR, UIStyleValue::Color("#FFFF00".to_string()));
         self.set(TEXT_ERROR_COLOR, UIStyleValue::Color("#FF0000".to_string()));
         
-        self.set(TEXT_PRIMARY_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
+        self.set(TEXT_PRIMARY_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
         self.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(24));
-        self.set(TEXT_SECONDARY_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
-        self.set(TEXT_SECONDARY_FONT_SIZE, UIStyleValue::Integer(16));
-        self.set(TEXT_MONOSPACE_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf".to_string()));
-        self.set(TEXT_MONOSPACE_FONT_SIZE, UIStyleValue::Integer(16));
-        self.set(TEXT_SMALL_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
-        self.set(TEXT_SMALL_FONT_SIZE, UIStyleValue::Integer(12));
+        self.set(TEXT_SECONDARY_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
+        self.set(TEXT_SECONDARY_FONT_SIZE, UIStyleValue::Integer(20));
+        self.set(TEXT_MONOSPACE_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
+        self.set(TEXT_MONOSPACE_FONT_SIZE, UIStyleValue::Integer(20));
+        self.set(TEXT_SMALL_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
+        self.set(TEXT_SMALL_FONT_SIZE, UIStyleValue::Integer(14));
 
         self.set(TEXT_LINE_SPACING, UIStyleValue::Float(1.2));
         self.set(TEXT_LETTER_SPACING, UIStyleValue::Float(0.0));
@@ -655,8 +655,8 @@ impl UIStyle {
         self.set(ANIMATION_SMOOTH_ENABLED, UIStyleValue::Boolean(true));
 
         // Alerts defaults
-        self.set(ALERT_FONT_PATH, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf".to_string()));
-        self.set(ALERT_FONT_SIZE, UIStyleValue::Integer(32));
+        self.set(ALERT_FONT_PATH, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
+        self.set(ALERT_FONT_SIZE, UIStyleValue::Integer(48));
         self.set(ALERT_WARNING_COLOR, UIStyleValue::Color("#FFFF00".to_string()));
         self.set(ALERT_CRITICAL_COLOR, UIStyleValue::Color("#FF0000".to_string()));
         self.set(ALERT_BACKGROUND_COLOR, UIStyleValue::Color("#000000".to_string()));
