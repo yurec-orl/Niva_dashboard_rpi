@@ -39,8 +39,8 @@ impl NeedleIndicator {
     /// - `start_angle`: Starting angle in radians
     /// - `end_angle`: Ending angle in radians  
     /// - `needle_length`: Length of needle as fraction of available radius (0.0-1.0)
-    /// - `needle_base_width`: Width at base as fraction of available radius
-    /// - `needle_tip_width`: Width at tip as fraction of available radius
+    /// - `needle_base_width`: Width at base in pixels
+    /// - `needle_tip_width`: Width at tip in pixels
     /// - `needle_color`: RGB color tuple (each component 0.0-1.0)
     pub fn new(
         start_angle: f32,
@@ -140,9 +140,9 @@ void main() {
         let tip_x = center_x + cos_a * length;
         let tip_y = center_y + sin_a * length;
 
-        // Calculate actual widths based on needle length for consistency
-        let base_width = self.needle_base_width * length;
-        let tip_width = self.needle_tip_width * length;
+        // Width values are in pixels (absolute)
+        let base_width = self.needle_base_width;
+        let tip_width = self.needle_tip_width;
 
         // Base vertices (perpendicular to needle direction)
         let base_perp_cos = (-sin_a) * base_width * 0.5;

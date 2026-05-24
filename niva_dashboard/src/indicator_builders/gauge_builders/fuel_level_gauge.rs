@@ -23,7 +23,7 @@ pub fn build_fuel_level_gauge(
     // Fuel level gauge configuration
     let start_angle = -225.0f32.to_radians(); // Start at 7 o'clock position
     let end_angle = 45.0f32.to_radians();     // End at 1 o'clock position
-    let needle_length = radius * ui_style.get_float(GAUGE_NEEDLE_LENGTH, 0.8);
+    let needle_length = ui_style.get_float(GAUGE_NEEDLE_LENGTH, 0.8);
     let needle_base_width = ui_style.get_float(GAUGE_NEEDLE_WIDTH, 8.0);
     let needle_tip_width = ui_style.get_float(GAUGE_NEEDLE_TIP_WIDTH, 1.0);
     let needle_color = ui_style.get_color(GAUGE_NEEDLE_COLOR, (1.0, 0.0, 0.0));
