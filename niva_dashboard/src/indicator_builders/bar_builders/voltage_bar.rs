@@ -30,10 +30,8 @@ pub fn build_voltage_bar(
     let title_font_size = ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 14) as u32;
     let unit_font_size = ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32;
     let scale_font_size = ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32;
-    let text_color = ui_style.get_color(BAR_MARK_LABELS_COLOR, (0.45, 0.45, 0.45));
     
     // Scale marks styling
-    let marks_color = ui_style.get_color(BAR_MARKS_COLOR, (1.0, 0.5, 0.0));
     let marks_width = ui_style.get_float(BAR_MARKS_WIDTH, 10.0);
     let marks_thickness = ui_style.get_float(BAR_MARKS_THICKNESS, 4.0);
 
@@ -45,7 +43,7 @@ pub fn build_voltage_bar(
                 "СЕТЬ".into(),
                 font_path.clone(),
                 title_font_size,
-                text_color,
+                BAR_MARK_LABELS_COLOR,
                 DecoratorAlignmentH::Center,
                 DecoratorAlignmentV::Top,
             )),
@@ -54,7 +52,7 @@ pub fn build_voltage_bar(
                 "В".into(),
                 font_path.clone(),
                 unit_font_size,
-                text_color,
+                BAR_MARK_LABELS_COLOR,
                 DecoratorAlignmentH::Center,
                 DecoratorAlignmentV::Bottom,
             )),
@@ -63,9 +61,9 @@ pub fn build_voltage_bar(
                 vec!["16-".into(), "12-".into(), "8-".into()],
                 font_path,
                 scale_font_size,
-                text_color,
+                BAR_MARK_LABELS_COLOR,
                 DecoratorAlignmentH::Left,
-            ).with_scale_marks(marks_color, marks_width, marks_thickness)),
+            ).with_scale_marks(BAR_MARKS_COLOR, marks_width, marks_thickness)),
         ]);
 
     let bounds = IndicatorBounds::new(x, y, width, height);

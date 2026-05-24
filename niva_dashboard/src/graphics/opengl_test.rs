@@ -1713,13 +1713,13 @@ pub fn run_indicator_zero_position_test(context: &mut GraphicsContext) -> Result
         0.8,                    // Needle length
         0.05,                   // Base width
         0.02,                   // Tip width
-        (1.0, 0.1, 0.0)        // Red color
+        "GAUGE_NEEDLE_COLOR"   // needle color key
     ).with_decorators(vec![
         Box::new(NeedleGaugeMarksDecorator::new(
             6,                                      // Number of marks
             15.0,                                   // Mark length
             2.0,                                    // Mark width
-            (0.8, 0.8, 0.9),                       // Mark color (light gray)
+            "gauge_major_mark_color",              // mark color key
             90.0,                                   // Radius for marks
             -225.0f32.to_radians(),                 // Start angle
             45.0f32.to_radians()                    // End angle
@@ -1732,13 +1732,13 @@ pub fn run_indicator_zero_position_test(context: &mut GraphicsContext) -> Result
         0.8,
         0.05,
         0.02,
-        (0.0, 1.0, 0.0)        // Green color
+        "GAUGE_NEEDLE_COLOR"   // needle color key
     ).with_decorators(vec![
         Box::new(NeedleGaugeMarksDecorator::new(
             6,                                      // Number of marks
             15.0,                                   // Mark length
             2.0,                                    // Mark width
-            (0.8, 0.8, 0.9),                       // Mark color (light gray)
+            "gauge_major_mark_color",              // mark color key
             90.0,                                   // Radius for marks
             -225.0f32.to_radians(),                 // Start angle
             45.0f32.to_radians()                    // End angle
@@ -1898,13 +1898,13 @@ pub fn run_indicator_middle_position_test(context: &mut GraphicsContext) -> Resu
         0.8,                    // Needle length
         0.05,                   // Base width
         0.02,                   // Tip width
-        (1.0, 1.0, 0.0)        // Yellow color
+        "GAUGE_NEEDLE_COLOR"    // needle color key
     ).with_decorators(vec![
         Box::new(NeedleGaugeMarksDecorator::new(
             6,                                      // Number of marks
             15.0,                                   // Mark length
             2.0,                                    // Mark width
-            (0.8, 0.8, 0.9),                       // Mark color (light gray)
+            "gauge_major_mark_color",              // mark color key
             90.0,                                   // Radius for marks
             -225.0f32.to_radians(),                 // Start angle
             45.0f32.to_radians()                    // End angle
@@ -1917,13 +1917,13 @@ pub fn run_indicator_middle_position_test(context: &mut GraphicsContext) -> Resu
         0.8,
         0.05,
         0.02,
-        (1.0, 0.0, 0.0)        // Red color
+        "GAUGE_NEEDLE_COLOR"    // needle color key
     ).with_decorators(vec![
         Box::new(NeedleGaugeMarksDecorator::new(
             6,                                      // Number of marks
             15.0,                                   // Mark length
             2.0,                                    // Mark width
-            (0.8, 0.8, 0.9),                       // Mark color (light gray)
+            "gauge_major_mark_color",              // mark color key
             90.0,                                   // Radius for marks
             -225.0f32.to_radians(),                 // Start angle
             45.0f32.to_radians()                    // End angle
@@ -2069,13 +2069,13 @@ pub fn run_indicator_max_position_test(context: &mut GraphicsContext) -> Result<
         0.8,                    // Needle length
         0.05,                   // Base width
         0.02,                   // Tip width
-        (0.0, 1.0, 0.0)        // Green color
+        "GAUGE_NEEDLE_COLOR"   // needle color key
     ).with_decorators(vec![
         Box::new(NeedleGaugeMarksDecorator::new(
             6,                                      // Number of marks
             15.0,                                   // Mark length
             2.0,                                    // Mark width
-            (0.8, 0.8, 0.9),                       // Mark color (light gray)
+            "gauge_major_mark_color",              // mark color key
             90.0,                                   // Radius for marks
             -225.0f32.to_radians(),                 // Start angle
             45.0f32.to_radians()                    // End angle
@@ -2088,13 +2088,13 @@ pub fn run_indicator_max_position_test(context: &mut GraphicsContext) -> Result<
         0.8,
         0.05,
         0.02,
-        (1.0, 0.5, 0.0)        // Orange color
+        "GAUGE_NEEDLE_COLOR"    // needle color key
     ).with_decorators(vec![
         Box::new(NeedleGaugeMarksDecorator::new(
             6,                                      // Number of marks
             15.0,                                   // Mark length
             2.0,                                    // Mark width
-            (0.8, 0.8, 0.9),                       // Mark color (light gray)
+            "gauge_major_mark_color",              // mark color key
             90.0,                                   // Radius for marks
             -225.0f32.to_radians(),                 // Start angle
             45.0f32.to_radians()                    // End angle

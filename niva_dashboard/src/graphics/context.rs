@@ -4,7 +4,6 @@ use std::os::raw::{c_char, c_int, c_uint, c_void};
 use std::ptr;
 use std::collections::HashMap;
 use freetype_sys as ft;
-use crate::graphics::ui_style::UIStyle;
 
 // EGL types and constants
 type EGLDisplay = *mut c_void;
@@ -311,8 +310,9 @@ pub struct GraphicsContext {
     // Text rendering - font management with HashMap
     pub text_renderers: HashMap<String, OpenGLTextRenderer>,
     
-    // UI style with brightness control and theming
-    pub ui_style: UIStyle,
+    // Brightness level (0.1 to 1.0), applied in every render function
+    // Minimum is 0.1 to avoid completely black screen (corresponds to 10% of max brightness value)
+    brightness: f32,
     
     // Cached shader programs for performance
     rectangle_shader: Option<u32>,
@@ -350,7 +350,7 @@ impl GraphicsContext {
             width,
             height,
             text_renderers: HashMap::new(),
-            ui_style: UIStyle::new(),
+            brightness: 1.0,
             rectangle_shader: None,
             bloom_enabled: true,
             bloom_intensity: 0.5,  // Increased for more visible glow
@@ -955,24 +955,29 @@ impl GraphicsContext {
     // Brightness Control Methods
     // =============================================================================
 
+    /// Clamp brightness value to valid range (10% to 100%)
+    fn clamp_brightness(&mut self, brightness: f32) -> f32 {
+        brightness.clamp(0.1, 1.0)
+    }
+
     /// Set display brightness (0.0 to 1.0)
     pub fn set_brightness(&mut self, brightness: f32) {
-        self.ui_style.set_brightness(brightness);
+        self.brightness = self.clamp_brightness(brightness);
     }
 
     /// Get current brightness level
     pub fn get_brightness(&self) -> f32 {
-        self.ui_style.get_brightness()
+        self.brightness
     }
 
     /// Increase brightness by a step
     pub fn increase_brightness(&mut self, step: f32) {
-        self.ui_style.increase_brightness(step);
+        self.brightness = self.clamp_brightness(self.brightness + step);
     }
 
     /// Decrease brightness by a step
     pub fn decrease_brightness(&mut self, step: f32) {
-        self.ui_style.decrease_brightness(step);
+        self.brightness = self.clamp_brightness(self.brightness - step);
     }
 
     /// Clear the screen with black
@@ -1009,6 +1014,7 @@ impl GraphicsContext {
         thickness: f32,
         corner_radius: f32,
     ) -> Result<(), String> {
+        let color = self.apply_brightness(color);
         unsafe {
             if corner_radius > 0.0 {
                 // Render rounded rectangle
@@ -1262,6 +1268,7 @@ impl GraphicsContext {
         end_angle: f32,
         segments: usize,
     ) -> Result<(), String> {
+        let color = self.apply_brightness(color);
         unsafe {
             // For thick arcs, we render the difference between outer and inner arcs
             let outer_radius = radius + thickness / 2.0;
@@ -1462,27 +1469,12 @@ void main() {
         self.render_rectangle(x, y, width, height, color, false, thickness, corner_radius)
     }
     
-    /// Render a rectangle using UI style colors (convenience method for dashboard components)
-    pub fn render_ui_rect(&mut self, x: f32, y: f32, width: f32, height: f32, style: &str, filled: bool, thickness: f32) -> Result<(), String> {
-        let color = match style {
-            "primary" => self.ui_style.get_color("global_brand_primary_color", (1.0, 0.0, 0.0)),
-            "secondary" => self.ui_style.get_color("global_brand_secondary_color", (0.5, 0.5, 0.5)), 
-            "accent" => self.ui_style.get_color("global_brand_accent_color", (1.0, 0.4, 0.0)),
-            "warning" => self.ui_style.get_color("text_warning_color", (1.0, 0.67, 0.0)),
-            "error" | "danger" => self.ui_style.get_color("text_error_color", (1.0, 0.0, 0.0)),
-            "critical" => self.ui_style.get_color("indicator_critical_color", (1.0, 0.0, 0.0)),
-            "success" | "normal" => self.ui_style.get_color("indicator_normal_color", (0.0, 1.0, 0.0)),
-            "background" => self.ui_style.get_color("global_background_color", (0.0, 0.0, 0.0)),
-            "text_primary" => self.ui_style.get_color("text_primary_color", (1.0, 1.0, 1.0)),
-            "text_secondary" => self.ui_style.get_color("text_secondary_color", (0.75, 0.75, 0.75)),
-            "gauge_border" => self.ui_style.get_color("gauge_border_color", (1.0, 1.0, 1.0)),
-            "bar_fill" => self.ui_style.get_color("bar_fill_color", (0.0, 1.0, 0.0)),
-            _ => (1.0, 1.0, 1.0), // Default to white
-        };
-        
-        self.render_rectangle(x, y, width, height, color, filled, thickness, 0.0)
+    /// Apply brightness to a color tuple
+    pub fn apply_brightness(&self, color: (f32, f32, f32)) -> (f32, f32, f32) {
+        let b = self.brightness;
+        (color.0 * b, color.1 * b, color.2 * b)
     }
-    
+
     /// Cleanup rectangle shader when context is destroyed
     unsafe fn cleanup_rectangle_shader(&mut self) {
         if let Some(shader) = self.rectangle_shader.take() {
@@ -1528,7 +1520,7 @@ void main() {
         orientation: TextOrientation
     ) -> Result<(), String> {
         // Apply brightness adjustment to the color
-        let adjusted_color = self.ui_style.apply_brightness(color);
+        let adjusted_color = self.apply_brightness(color);
         
         // Capture dimensions before borrowing renderer
         let width = self.width as f32;

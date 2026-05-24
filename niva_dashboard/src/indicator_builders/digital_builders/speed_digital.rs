@@ -28,7 +28,6 @@ pub fn build_speed_digital(
     // Text styling from UI configuration
     let font_path = ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH);
     let unit_font_size = ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32;
-    let text_color = ui_style.get_color(TEXT_SECONDARY_COLOR, (0.45, 0.45, 0.45));
 
     let speed_display = DigitalSegmentedIndicator::integer(digit_count)
         .with_inactive_segments(show_inactive_segments)
@@ -38,7 +37,7 @@ pub fn build_speed_digital(
                 "км/ч".into(),
                 font_path,
                 unit_font_size,
-                text_color,
+                TEXT_SECONDARY_COLOR,
                 DecoratorAlignmentH::Right,
                 DecoratorAlignmentV::Bottom,
             )),

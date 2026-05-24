@@ -30,10 +30,10 @@ pub fn build_fuel_level_bar(
     let title_font_size = ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 14) as u32;
     let unit_font_size = ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32;
     let scale_font_size = ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32;
-    let text_color = ui_style.get_color(BAR_MARK_LABELS_COLOR, (0.45, 0.45, 0.45));
+    let text_color = BAR_MARK_LABELS_COLOR;
     
     // Scale marks styling
-    let marks_color = ui_style.get_color(BAR_MARKS_COLOR, (1.0, 0.5, 0.0));
+    let marks_color = BAR_MARKS_COLOR;
     let marks_width = ui_style.get_float(BAR_MARKS_WIDTH, 10.0);
     let marks_thickness = ui_style.get_float(BAR_MARKS_THICKNESS, 4.0);
 

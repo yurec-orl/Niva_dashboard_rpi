@@ -242,7 +242,7 @@ impl Indicator for VerticalBarIndicator {
         let segment_width = available_width;
         
         // Get background color for empty segments
-        let empty_color = style.get_color("bar_empty_color", (0.2, 0.2, 0.2)); // Dark gray for empty
+        let empty_color = style.get_color(BAR_EMPTY_COLOR, (0.2, 0.2, 0.2)); // Dark gray for empty
         
         unsafe {
             // Enable blending for smooth rendering
@@ -268,9 +268,9 @@ impl Indicator for VerticalBarIndicator {
                 
                 // Get appropriate color
                 let color = if is_filled {
-                    self.get_segment_color(segment_index_from_bottom, normalized_value, value, style)
+                    context.apply_brightness(self.get_segment_color(segment_index_from_bottom, normalized_value, value, style))
                 } else {
-                    empty_color
+                    context.apply_brightness(empty_color)
                 };
                 
                 // Calculate segment vertices and append to batch buffer
@@ -305,9 +305,9 @@ pub struct VerticalBarScaleDecorator {
     labels: Vec<String>,    // Labels for each scale mark - no labels if empty
     font_path: String,
     font_size: u32,
-    color: (f32, f32, f32),
+    color_key: &'static str,
     scale_marks: bool,      // Whether to draw scale marks
-    marks_color: (f32, f32, f32),
+    marks_color_key: &'static str,
     marks_width: f32,
     marks_thickness: f32,
     alignment_h: DecoratorAlignmentH,
@@ -320,7 +320,7 @@ impl VerticalBarScaleDecorator {
         labels: Vec<String>,
         font_path: String,
         font_size: u32,
-        color: (f32, f32, f32),
+        color_key: &'static str,
         alignment_h: DecoratorAlignmentH,
     ) -> Self {
         Self {
@@ -328,18 +328,18 @@ impl VerticalBarScaleDecorator {
             scale_marks: false,
             font_path,
             font_size,
-            color,
-            marks_color: (1.0, 1.0, 1.0),
+            color_key,
+            marks_color_key: "",
             marks_thickness: 1.0,
             marks_width: 5.0,
             alignment_h,
         }
     }
 
-    /// Enable scale marks with specified color, width and thickness
-    pub fn with_scale_marks(mut self, color: (f32, f32, f32), width: f32, thickness: f32) -> Self {
+    /// Enable scale marks with specified color key, width and thickness
+    pub fn with_scale_marks(mut self, marks_color_key: &'static str, width: f32, thickness: f32) -> Self {
         self.scale_marks = true;
-        self.marks_color = color;
+        self.marks_color_key = marks_color_key;
         self.marks_width = width;
         self.marks_thickness = thickness;
         self
@@ -350,14 +350,20 @@ impl Decorator for VerticalBarScaleDecorator {
     fn render(
         &self,
         bounds: IndicatorBounds,
-        _style: &UIStyle,
+        style: &UIStyle,
         context: &mut GraphicsContext,
     ) -> Result<(), String> {
         let segment_count = self.labels.len();
         if segment_count == 0 {
             return Ok(()); // Nothing to render
         }
-        
+
+        let color = style.get_color(self.color_key, (1.0, 0.0, 1.0));
+        let marks_color = if self.scale_marks && !self.marks_color_key.is_empty() {
+            style.get_color(self.marks_color_key, (1.0, 0.0, 1.0))
+        } else {
+            (1.0, 1.0, 1.0) // fallback, not used if scale_marks is false
+        };
         let mut base_x_pos = match self.alignment_h {
             DecoratorAlignmentH::Left => bounds.x - self.marks_thickness, // 5px margin
             DecoratorAlignmentH::Right => bounds.x + bounds.width + self.marks_thickness,
@@ -377,7 +383,7 @@ impl Decorator for VerticalBarScaleDecorator {
                 let y = bounds.y + i as f32 * segment_height + segment_height / 2.0;
                 context.render_rectangle(base_x_pos, y - self.marks_thickness / 2.0,
                                          self.marks_width, self.marks_thickness,
-                                         self.marks_color, true, 1.0, 0.0)?;
+                                         marks_color, true, 1.0, 0.0)?;
             }
             // context.render_rectangle(base_x_pos, bounds.y + segment_height / 2.0,
             //                          self.marks_thickness,
@@ -398,7 +404,7 @@ impl Decorator for VerticalBarScaleDecorator {
                 x,
                 y,
                 1.0, // scale
-                self.color,
+                color,
                 &self.font_path,
                 self.font_size,
             )?;

@@ -32,7 +32,7 @@ pub struct LabelDecorator {
     text: String,
     font_path: String,
     font_size: u32,
-    color: (f32, f32, f32),
+    color_key: &'static str,
     alignment_h: DecoratorAlignmentH,
     alignment_v: DecoratorAlignmentV,
     offset_h: f32,
@@ -45,7 +45,7 @@ impl LabelDecorator {
         text: String,
         font_path: String,
         font_size: u32,
-        color: (f32, f32, f32),
+        color_key: &'static str,
         alignment_h: DecoratorAlignmentH,
         alignment_v: DecoratorAlignmentV,
     ) -> Self {
@@ -53,7 +53,7 @@ impl LabelDecorator {
             text,
             font_path,
             font_size,
-            color,
+            color_key,
             alignment_h,
             alignment_v,
             offset_h: 0.0,
@@ -95,11 +95,12 @@ impl Decorator for LabelDecorator {
     fn render(
         &self,
         bounds: IndicatorBounds,
-        _style: &UIStyle,
+        style: &UIStyle,
         context: &mut GraphicsContext,
     ) -> Result<(), String> {
         // Calculate label position
         let (x, y) = self.calculate_position(&bounds, context)?;
+        let color = style.get_color(self.color_key, (1.0, 0.0, 1.0));
         
         // Render the label
         context.render_text_with_font(
@@ -107,7 +108,7 @@ impl Decorator for LabelDecorator {
             x,
             y,
             1.0, // scale
-            self.color,
+            color,
             &self.font_path,
             self.font_size,
         )?;
@@ -119,7 +120,7 @@ impl Decorator for LabelDecorator {
 pub struct ArcDecorator {
     radius: f32,
     thickness: f32,
-    color: (f32, f32, f32),
+    color_key: &'static str,
     start_angle: f32,
     end_angle: f32,
 }
@@ -128,14 +129,14 @@ impl ArcDecorator {
     pub fn new(
         radius: f32,
         thickness: f32,
-        color: (f32, f32, f32),
+        color_key: &'static str,
         start_angle: f32,
         end_angle: f32,
     ) -> Self {
         Self {
             radius,
             thickness,
-            color,
+            color_key,
             start_angle,
             end_angle,
         }
@@ -146,12 +147,13 @@ impl Decorator for ArcDecorator {
     fn render(
         &self,
         bounds: IndicatorBounds,
-        _style: &UIStyle,
+        style: &UIStyle,
         context: &mut GraphicsContext,
     ) -> Result<(), String> {
         // Calculate center point
         let center_x = bounds.x + bounds.width / 2.0;
         let center_y = bounds.y + bounds.height / 2.0;
+        let color = style.get_color(self.color_key, (1.0, 0.0, 1.0));
         
         // Render the arc
         context.render_circle_arc_outline(
@@ -159,7 +161,7 @@ impl Decorator for ArcDecorator {
             center_y,
             self.radius,
             self.thickness,
-            self.color,
+            color,
             self.start_angle,
             self.end_angle,
             256, // segments

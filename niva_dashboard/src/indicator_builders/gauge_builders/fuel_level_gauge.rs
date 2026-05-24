@@ -26,17 +26,13 @@ pub fn build_fuel_level_gauge(
     let needle_length = ui_style.get_float(GAUGE_NEEDLE_LENGTH, 0.8);
     let needle_base_width = ui_style.get_float(GAUGE_NEEDLE_WIDTH, 8.0);
     let needle_tip_width = ui_style.get_float(GAUGE_NEEDLE_TIP_WIDTH, 1.0);
-    let needle_color = ui_style.get_color(GAUGE_NEEDLE_COLOR, (1.0, 0.0, 0.0));
 
     // Border arc parameters
-    let arc_color = ui_style.get_color(GAUGE_BORDER_COLOR, (1.0, 1.0, 1.0));
-    let inactive_arc_color = ui_style.get_color(GAUGE_INACTIVE_ZONE_COLOR, (0.2, 0.2, 0.2));
     let arc_width = ui_style.get_float(GAUGE_INACTIVE_ZONE_WIDTH, 4.0);
 
     // Label styling from UI configuration
     let gauge_labels_font = ui_style.get_string(GAUGE_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
     let gauge_labels_font_size = ui_style.get_integer(GAUGE_LABEL_FONT_SIZE, 10) as u32;
-    let gauge_labels_color = ui_style.get_color(GAUGE_LABEL_COLOR, (1.0, 1.0, 1.0));
     let gauge_labels_offset = ui_style.get_float(GAUGE_LABEL_OFFSET, -35.0);
 
     // Mark lengths and thicknesses
@@ -44,8 +40,6 @@ pub fn build_fuel_level_gauge(
     let gauge_minor_mark_thickness = ui_style.get_float(GAUGE_MINOR_MARK_WIDTH, 2.0);
     let gauge_major_mark_length = ui_style.get_float(GAUGE_MAJOR_MARK_LENGTH, 12.0);
     let gauge_major_mark_thickness = ui_style.get_float(GAUGE_MAJOR_MARK_WIDTH, 4.0);
-    let gauge_major_marks_color = ui_style.get_color(GAUGE_MAJOR_MARK_COLOR, (1.0, 1.0, 1.0));
-    let gauge_minor_marks_color = ui_style.get_color(GAUGE_MINOR_MARK_COLOR, (1.0, 1.0, 1.0));
 
     let unit_offset_h = ui_style.get_float(GAUGE_UNIT_OFFSET_H, 0.0);
     let unit_offset_v = ui_style.get_float(GAUGE_UNIT_OFFSET_V, 20.0);
@@ -56,13 +50,13 @@ pub fn build_fuel_level_gauge(
         needle_length,
         needle_base_width,
         needle_tip_width,
-        needle_color,
+        GAUGE_NEEDLE_COLOR,
     ).with_decorators(vec![
         // Active arc (white) covering the valid range
         Box::new(ArcDecorator::new(
             radius,
             arc_width,
-            arc_color,
+            GAUGE_BORDER_COLOR,
             start_angle,
             end_angle,
         )),
@@ -70,7 +64,7 @@ pub fn build_fuel_level_gauge(
         Box::new(ArcDecorator::new(
             radius,
             arc_width, // Arc thickness
-            inactive_arc_color,
+            GAUGE_INACTIVE_ZONE_COLOR,
             end_angle,
             start_angle + 2.0 * PI, // Complete the circle
         )),
@@ -78,7 +72,7 @@ pub fn build_fuel_level_gauge(
         Box::new(ArcDecorator::new(
             radius - gauge_major_mark_length / 2.0,
             gauge_major_mark_length,    // Thick arc section to mark low fuel
-            ui_style.get_color(GAUGE_WARNING_ZONE_COLOR, (1.0, 1.0, 0.0)),
+            GAUGE_WARNING_ZONE_COLOR,
             start_angle,
             start_angle + 45.0f32.to_radians(),
         )),
@@ -87,7 +81,7 @@ pub fn build_fuel_level_gauge(
             7, // 7 marks
             gauge_minor_mark_length,
             gauge_minor_mark_thickness,
-            gauge_minor_marks_color,
+            GAUGE_MINOR_MARK_COLOR,
             radius,
             start_angle,
             end_angle,
@@ -97,7 +91,7 @@ pub fn build_fuel_level_gauge(
             3, // 3 major marks (Empty, Half, Full)
             gauge_major_mark_length,
             gauge_major_mark_thickness,
-            gauge_major_marks_color,
+            GAUGE_MAJOR_MARK_COLOR,
             radius,
             start_angle,
             end_angle,
@@ -107,7 +101,7 @@ pub fn build_fuel_level_gauge(
             vec!["0".into(), "1/2".into(), "4/4".into()], // Empty, Half, Full labels
             gauge_labels_font,
             gauge_labels_font_size,
-            gauge_labels_color,
+            GAUGE_LABEL_COLOR,
             radius + gauge_labels_offset, // Negative offset moves labels inside the gauge
             start_angle,
             end_angle,

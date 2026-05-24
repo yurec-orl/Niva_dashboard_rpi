@@ -27,7 +27,7 @@ pub struct NeedleIndicator {
     /// Width of the needle at the tip
     needle_tip_width: f32,
     /// Color of the needle (R, G, B)
-    needle_color: (f32, f32, f32),
+    needle_color_key: &'static str,
     /// Base indicator functionality
     base: IndicatorBase,
 }
@@ -41,14 +41,14 @@ impl NeedleIndicator {
     /// - `needle_length`: Length of needle as fraction of available radius (0.0-1.0)
     /// - `needle_base_width`: Width at base in pixels
     /// - `needle_tip_width`: Width at tip in pixels
-    /// - `needle_color`: RGB color tuple (each component 0.0-1.0)
+    /// - `needle_color_key`: Style key for needle color
     pub fn new(
         start_angle: f32,
         end_angle: f32,
         needle_length: f32,
         needle_base_width: f32,
         needle_tip_width: f32,
-        needle_color: (f32, f32, f32),
+        needle_color_key: &'static str,
     ) -> Self {
         Self {
             start_angle,
@@ -56,7 +56,7 @@ impl NeedleIndicator {
             needle_length,
             needle_base_width,
             needle_tip_width,
-            needle_color,
+            needle_color_key,
             base: IndicatorBase {
                 decorators: Vec::new(),
             },
@@ -242,12 +242,15 @@ impl Indicator for NeedleIndicator {
             // Calculate needle angle
             let needle_angle = self.calculate_needle_angle(normalized_value);
             
+            // Resolve needle color from style and apply brightness
+            let needle_color = context.apply_brightness(style.get_color(self.needle_color_key, (1.0, 0.0, 1.0)));
+
             // Calculate actual needle length from the fraction and available radius
             let actual_needle_length = available_radius * self.needle_length;
         
             // Render the needle
             self.render_needle(center_x, center_y, actual_needle_length, 
-                               needle_angle, self.needle_color,
+                               needle_angle, needle_color,
                                context.width as f32, context.height as f32,
                                shader_program);
         }
@@ -269,7 +272,7 @@ pub struct NeedleGaugeMarksDecorator {
     num_marks: u32,
     mark_length: f32,
     mark_width: f32,
-    color: (f32, f32, f32),
+    color_key: &'static str,
     radius: f32,
     start_angle: f32,
     end_angle: f32,
@@ -280,7 +283,7 @@ impl NeedleGaugeMarksDecorator {
         num_marks: u32,
         mark_length: f32,
         mark_width: f32,
-        color: (f32, f32, f32),
+        color_key: &'static str,
         radius: f32,
         start_angle: f32,
         end_angle: f32,
@@ -289,7 +292,7 @@ impl NeedleGaugeMarksDecorator {
             num_marks,
             mark_length,
             mark_width,
-            color,
+            color_key,
             radius,
             start_angle,
             end_angle,
@@ -345,7 +348,7 @@ void main() {
 
     /// Calculate vertices for a single mark (returns 30 floats: 6 vertices × 5 components each)
     fn calculate_mark_vertices(&self, center_x: f32, center_y: f32, radius: f32, angle: f32,
-                               screen_w: f32, screen_h: f32) -> [f32; 30] {
+                               screen_w: f32, screen_h: f32, color: (f32, f32, f32)) -> [f32; 30] {
         let cos_a = angle.cos();
         let sin_a = angle.sin();
 
@@ -385,13 +388,13 @@ void main() {
         // Return vertices for two triangles forming a rectangle
         [
             // First triangle: inner1 -> inner2 -> outer1
-            inner1_nx, inner1_ny, self.color.0, self.color.1, self.color.2,
-            inner2_nx, inner2_ny, self.color.0, self.color.1, self.color.2,
-            outer1_nx, outer1_ny, self.color.0, self.color.1, self.color.2,
+            inner1_nx, inner1_ny, color.0, color.1, color.2,
+            inner2_nx, inner2_ny, color.0, color.1, color.2,
+            outer1_nx, outer1_ny, color.0, color.1, color.2,
             // Second triangle: inner2 -> outer2 -> outer1
-            inner2_nx, inner2_ny, self.color.0, self.color.1, self.color.2,
-            outer2_nx, outer2_ny, self.color.0, self.color.1, self.color.2,
-            outer1_nx, outer1_ny, self.color.0, self.color.1, self.color.2,
+            inner2_nx, inner2_ny, color.0, color.1, color.2,
+            outer2_nx, outer2_ny, color.0, color.1, color.2,
+            outer1_nx, outer1_ny, color.0, color.1, color.2,
         ]
     }
 
@@ -430,9 +433,11 @@ impl Decorator for NeedleGaugeMarksDecorator {
     fn render(
         &self,
         bounds: IndicatorBounds,
-        _style: &UIStyle,
+        style: &UIStyle,
         context: &mut GraphicsContext,
     ) -> Result<(), String> {
+        // Resolve color from style and apply brightness
+        let color = context.apply_brightness(style.get_color(self.color_key, (1.0, 0.0, 1.0)));
         unsafe {
             // Enable blending
             gl::Enable(gl::BLEND);
@@ -471,7 +476,7 @@ impl Decorator for NeedleGaugeMarksDecorator {
                 // Calculate mark vertices
                 let mark_vertices = self.calculate_mark_vertices(
                     center_x, center_y, radius, normalized_angle,
-                    context.width as f32, context.height as f32
+                    context.width as f32, context.height as f32, color
                 );
                 
                 // Append to batch buffer
@@ -489,7 +494,7 @@ pub struct NeedleGaugeMarkLabelsDecorator {
     labels: Vec<String>,
     font_path: String,
     font_size: u32,
-    color: (f32, f32, f32),
+    color_key: &'static str,
     radius: f32,
     start_angle: f32,
     end_angle: f32,
@@ -500,7 +505,7 @@ impl NeedleGaugeMarkLabelsDecorator {
         labels: Vec<String>,
         font_path: String,
         font_size: u32,
-        color: (f32, f32, f32),
+        color_key: &'static str,
         radius: f32,
         start_angle: f32,
         end_angle: f32,
@@ -509,7 +514,7 @@ impl NeedleGaugeMarkLabelsDecorator {
             labels,
             font_path,
             font_size,
-            color,
+            color_key,
             radius,
             start_angle,
             end_angle,
@@ -532,12 +537,14 @@ impl Decorator for NeedleGaugeMarkLabelsDecorator {
     fn render(
         &self,
         bounds: IndicatorBounds,
-        _style: &UIStyle,
+        style: &UIStyle,
         context: &mut GraphicsContext,
     ) -> Result<(), String> {
         if self.labels.is_empty() {
             return Ok(());
         }
+
+        let color = style.get_color(self.color_key, (1.0, 0.0, 1.0));
 
         // Calculate center position
         let center_x = bounds.x + bounds.width / 2.0;
@@ -579,7 +586,7 @@ impl Decorator for NeedleGaugeMarkLabelsDecorator {
                 centered_x,
                 centered_y,
                 1.0, // scale
-                self.color,
+                color,
                 &self.font_path,
                 self.font_size,
             )?;

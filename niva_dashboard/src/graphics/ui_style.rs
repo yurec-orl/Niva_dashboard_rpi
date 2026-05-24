@@ -37,7 +37,6 @@ pub const DIGITAL_DISPLAY_14SEG_ITALIC_PATH: &str = "/home/user/Work/Niva_Dashbo
 pub const DIGITAL_DISPLAY_MONO_FONT_PATH: &str = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf";
 
 // Global Style Elements
-pub const GLOBAL_BRIGHTNESS: &str = "global_brightness";
 pub const GLOBAL_CONTRAST: &str = "global_contrast";
 pub const GLOBAL_BACKGROUND_COLOR: &str = "global_background_color";
 pub const GLOBAL_FONT_PATH: &str = "global_font_path";
@@ -377,13 +376,7 @@ impl UIStyle {
     pub fn get_color_with_group(&self, key: &str, default: (f32, f32, f32), group: Option<&str>) -> (f32, f32, f32) {
         match self.get_with_group(key, group) {
             Some(value) => match value.as_color() {
-                Ok((r, g, b)) => {
-                    // Apply global brightness
-                    let brightness = self.get(GLOBAL_BRIGHTNESS)
-                        .and_then(|v| v.as_float().ok())
-                        .unwrap_or(1.0);
-                    (r * brightness, g * brightness, b * brightness)
-                },
+                Ok((r, g, b)) => (r, g, b),
                 Err(_) => {
                     print!("Warning: Style key '{}' exists but cannot be converted to color, using default: ({}, {}, {})\r\n", key, default.0, default.1, default.2);
                     default
@@ -495,48 +488,12 @@ impl UIStyle {
         }
     }
     
-    // =============================================================================
-    // BRIGHTNESS MANAGEMENT
-    // =============================================================================
-    
-    /// Set global brightness (0.0 to 1.0)
-    pub fn set_brightness(&mut self, brightness: f32) {
-        let clamped_brightness = brightness.clamp(0.0, 1.0);
-        self.set(GLOBAL_BRIGHTNESS, UIStyleValue::Float(clamped_brightness));
-    }
-    
-    /// Get current global brightness
-    pub fn get_brightness(&self) -> f32 {
-        self.get_float(GLOBAL_BRIGHTNESS, 1.0)
-    }
-    
-    /// Increase brightness by a step
-    pub fn increase_brightness(&mut self, step: f32) {
-        let current = self.get_brightness();
-        let new_brightness = (current + step).clamp(0.0, 1.0);
-        self.set_brightness(new_brightness);
-    }
-    
-    /// Decrease brightness by a step
-    pub fn decrease_brightness(&mut self, step: f32) {
-        let current = self.get_brightness();
-        let new_brightness = (current - step).clamp(0.0, 1.0);
-        self.set_brightness(new_brightness);
-    }
-    
-    /// Apply brightness to a color tuple
-    pub fn apply_brightness(&self, color: (f32, f32, f32)) -> (f32, f32, f32) {
-        let brightness = self.get_brightness();
-        (color.0 * brightness, color.1 * brightness, color.2 * brightness)
-    }
-    
     /// Load default style values
     fn load_defaults(&mut self) {
         // Ensure default group exists
         self.values.insert("default".to_string(), HashMap::new());
         
         // Global defaults
-        self.set(GLOBAL_BRIGHTNESS, UIStyleValue::Float(1.0));
         self.set(GLOBAL_CONTRAST, UIStyleValue::Float(1.0));
         self.set(GLOBAL_BACKGROUND_COLOR, UIStyleValue::Color("#000000".to_string()));
         self.set(GLOBAL_FONT_PATH, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
@@ -597,7 +554,7 @@ impl UIStyle {
         self.set(GAUGE_TITLE_OFFSET_V, UIStyleValue::Float(-20.0));
         self.set(GAUGE_TITLE_ENABLED, UIStyleValue::Boolean(true));
         
-        self.set(GAUGE_UNIT_COLOR, UIStyleValue::Color("#727272ff".to_string()));
+        self.set(GAUGE_UNIT_COLOR, UIStyleValue::Color("#727272".to_string()));
         self.set(GAUGE_UNIT_FONT, UIStyleValue::String("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()));
         self.set(GAUGE_UNIT_FONT_SIZE, UIStyleValue::Integer(16));
         self.set(GAUGE_UNIT_OFFSET_H, UIStyleValue::Float(0.0));
@@ -837,54 +794,6 @@ mod tests {
         assert_eq!(loaded_style.get_color(GAUGE_NEEDLE_COLOR, (0.0, 0.0, 0.0)), (1.0, 0.0, 0.0));
         assert_eq!(loaded_style.get_float(GAUGE_BORDER_WIDTH, 0.0), 2.5);
         assert_eq!(loaded_style.get_bool(GAUGE_LABEL_ENABLED, false), true);
-    }
-    
-    #[test]
-    fn test_brightness_application() {
-        let mut style = UIStyle::new();
-        style.set(GLOBAL_BRIGHTNESS, UIStyleValue::Float(0.5));
-        style.set(GAUGE_NEEDLE_COLOR, UIStyleValue::Color("#FF0000".to_string()));
-        
-        let color = style.get_color(GAUGE_NEEDLE_COLOR, (0.0, 0.0, 0.0));
-        assert_eq!(color, (0.5, 0.0, 0.0)); // Should be dimmed
-    }
-
-    #[test]
-    fn test_brightness_management() {
-        let mut style = UIStyle::new();
-        
-        // Test default brightness
-        assert_eq!(style.get_brightness(), 1.0);
-        
-        // Test setting brightness
-        style.set_brightness(0.7);
-        assert_eq!(style.get_brightness(), 0.7);
-        
-        // Test increasing brightness
-        style.increase_brightness(0.2);
-        assert_eq!(style.get_brightness(), 0.9);
-        
-        // Test decreasing brightness (use epsilon for floating point comparison)
-        style.decrease_brightness(0.3);
-        let brightness = style.get_brightness();
-        assert!((brightness - 0.6).abs() < 0.001, "Expected ~0.6, got {}", brightness);
-        
-        // Test clamping to bounds
-        style.set_brightness(1.5); // Should be clamped to 1.0
-        assert_eq!(style.get_brightness(), 1.0);
-        
-        style.set_brightness(-0.5); // Should be clamped to 0.0
-        assert_eq!(style.get_brightness(), 0.0);
-        
-        // Test apply_brightness function
-        let color = (1.0, 0.5, 0.2);
-        style.set_brightness(0.8);
-        let adjusted = style.apply_brightness(color);
-        
-        // Use epsilon comparison for floating point values
-        assert!((adjusted.0 - 0.8).abs() < 0.001);
-        assert!((adjusted.1 - 0.4).abs() < 0.001);
-        assert!((adjusted.2 - 0.16).abs() < 0.001);
     }
 
     #[test]
