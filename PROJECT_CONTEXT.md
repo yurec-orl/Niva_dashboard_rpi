@@ -127,7 +127,7 @@ niva_dashboard/
 
 ### Analog Sensors
 - **Engine Temperature Sensor**: 
-  - Operational range: 5-100°C (normal engine operation)
+  - Operational range: 5-100°C (engine temp sensor operating range)
   - Dashboard range: 0-120°C (extended range for diagnostics)
   - Purpose: Engine coolant temperature monitoring
   
@@ -173,6 +173,10 @@ The FreeType text rendering system uses a specific coordinate convention that's 
 - Ensure intuitive operation with physical buttons only
 - Plan for extensibility and easy addition of new pages/features
 
+Raspberry Pi login:
+user
+@Niva21#
+
 ---
 *Created: August 26, 2025*
-*Last Updated: September 2, 2025*
+*Last Updated: May 24, 2026*
