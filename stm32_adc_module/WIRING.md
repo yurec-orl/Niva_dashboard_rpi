@@ -5,9 +5,10 @@ All 12V car signals require external level conversion to 3.3V.
 
 ## Protection notes
 
-All voltage divider outputs use a **1N4728A** (DO-41, 3.3V, 1W Zener) to GND as
-an overvoltage clamp. This is a standard through-hole Zener, widely available and
-easy to hand-solder. The 1W rating handles automotive transients comfortably.
+All voltage divider outputs use a **BZX55C3V6** (DO-35, 3.6V, 500mW Zener) to GND as
+an overvoltage clamp. The 3.6V rating provides safe margin above the divider's normal
+output (≤3.37V) while clamping before the STM32 absolute maximum input voltage (3.6V).
+DO-35 glass package — same size as a 1N4148, easy to hand-solder.
 
 Analog filtering is handled in firmware via oversampling and moving averages
 (see `analog_signal_processing.rs`). Hardware filter capacitors are omitted
@@ -31,7 +32,7 @@ No hardware filter capacitors — filtering is done in firmware.
 ```
 Sensor wire ── R1 ──┬── PA_x (ADC input)
                      │
-                    R2      D1 (3.3V Zener)
+                    R2      D1 (3.6V Zener)
                      │        │
                     GND      GND
 ```
@@ -46,7 +47,7 @@ Target: 16V input → 3.3V at ADC pin.
 |-------------|-----------------------------|-------------------------------------------------------------|
 | R1 (top)    | 39 kΩ                       | 1/4W through-hole axial                                     |
 | R2 (bottom) | 10 kΩ                       | 1/4W through-hole axial; Vout = 16V × 10k/(39k+10k) = 3.27V |
-| D1          | 1N4728A (3.3V Zener, DO-41) | Overvoltage clamp to protect ADC                            |
+| D1          | BZX55C3V6 (3.6V Zener, DO-35) | Overvoltage clamp to protect ADC                            |
 
 Divider ratio: ×0.204. Normal 12V sensor range maps to 0–2.45V at ADC.
 Divider impedance: ~7.96 kΩ (within STM32 ADC recommended ≤10 kΩ source).
@@ -61,7 +62,7 @@ Target: 20V input → 3.3V at ADC pin (allows detecting overvoltage/regulator fa
 |-------------|-----------------------------|--------------------------------------------------------------------------|
 | R1 (top)    | 51 kΩ                       | 1/4W through-hole axial; higher impedance acceptable for voltage sensing |
 | R2 (bottom) | 10 kΩ                       | 1/4W through-hole axial; Vout = 20V × 10k/(51k+10k) = 3.28V              |
-| D1          | 1N4728A (3.3V Zener, DO-41) | Clamps load dump spikes                                                  |
+| D1          | BZX55C3V6 (3.6V Zener, DO-35) | Clamps load dump spikes                                                  |
 
 Divider ratio: ×0.164. Normal 14V → 2.30V at ADC.
 At 12-bit resolution: ~0.81 mV/count → ~4.9 mV/count referred to input.
@@ -79,7 +80,7 @@ Software cannot correct spurious edges after they have already been counted.
 ```
 Pulse sensor ── R1 ──┬── PA8/PA9 (TIM1 input)
                       │
-                     R2      C1 (1nF)     D1 (3.3V Zener)
+                     R2      C1 (1nF)     D1 (3.6V Zener)
                       │        │              │
                      GND      GND            GND
 ```
@@ -89,7 +90,7 @@ Pulse sensor ── R1 ──┬── PA8/PA9 (TIM1 input)
 | R1 (top)    | 10 kΩ                       | 1/4W through-hole axial; limits current during transients       |
 | R2 (bottom) | 3.9 kΩ                      | 1/4W through-hole axial; Vout = 12V × 3.9k/(10k+3.9k) = 3.37V   |
 | C1          | 1 nF ceramic                | Radial, 2.54mm pitch; suppresses ringing, preserves pulse edges |
-| D1          | 1N4728A (3.3V Zener, DO-41) | Clamps spikes from ignition noise                               |
+| D1          | BZX55C3V6 (3.6V Zener, DO-35) | Clamps spikes from ignition noise                               |
 
 | Pin | Signal               |
 |-----|----------------------|
@@ -107,7 +108,7 @@ is open-circuit (wire disconnected). The divider scales 12V down to 3.3V.
 ```
 Car 12V line ── R1 ──┬── PB_x (GPIO input, pull-up enabled)
                       │
-                     R2      D1 (3.3V Zener)
+                     R2      D1 (3.6V Zener)
                       │        │
                      GND      GND
 ```
@@ -115,8 +116,8 @@ Car 12V line ── R1 ──┬── PB_x (GPIO input, pull-up enabled)
 | Component   | Value                       | Notes                                                                                    |
 |-------------|-----------------------------|------------------------------------------------------------------------------------------|
 | R1 (top)    | 10 kΩ                       | 1/4W through-hole axial; current-limiting, also forms divider with R2                    |
-| R2 (bottom) | 3.9 kΩ                      | 1/4W through-hole axial; Vout = 12V × 3.9k/(10k+3.9k) = 3.37V → clamped to 3.3V by Zener |
-| D1          | 1N4728A (3.3V Zener, DO-41) | Overvoltage clamp                                                                        |
+| R2 (bottom) | 3.9 kΩ                        | 1/4W through-hole axial; Vout = 12V × 3.9k/(10k+3.9k) = 3.37V → clamped to 3.6V by Zener |
+| D1          | BZX55C3V6 (3.6V Zener, DO-35) | Overvoltage clamp                                                                        |
 
 No filter cap needed — digital signals, read in software with debouncing.
 When sensor shorts to GND: pin sees 0V (logic low, active state).
@@ -141,7 +142,7 @@ which reads as logic low). R2 provides a weak pull-down to ensure a clean 0V at 
 ```
 Car 12V line ── R1 ──┬── PB_x (GPIO input, no pull-up)
                       │
-                     R2      D1 (3.3V Zener)
+                     R2      D1 (3.6V Zener)
                       │        │
                      GND      GND
 ```
@@ -150,7 +151,7 @@ Car 12V line ── R1 ──┬── PB_x (GPIO input, no pull-up)
 |-------------|-----------------------------|-------------------------------------------------------------------|
 | R1 (top)    | 10 kΩ                       | 1/4W through-hole axial; current-limiting + divider               |
 | R2 (bottom) | 3.9 kΩ                      | 1/4W through-hole axial; also acts as pull-down when signal is 0V |
-| D1          | 1N4728A (3.3V Zener, DO-41) | Overvoltage clamp                                                 |
+| D1          | BZX55C3V6 (3.6V Zener, DO-35) | Overvoltage clamp                                                 |
 
 When signal is 12V: divider output ~3.3V → logic high.
 When signal is 0V: R2 pulls pin to GND → logic low.
@@ -212,6 +213,6 @@ for BSS138 board wiring details.
 | 51 kΩ resistor, 1/4W           | Axial through-hole   | 1        | 12V voltage divider R1 (PA3)                          |
 | 10 kΩ resistor, 1/4W           | Axial through-hole   | 16       | Analog R2 (×4), pulse R1 (×2), digital R1 (×10)       |
 | 3.9 kΩ resistor, 1/4W          | Axial through-hole   | 12       | Pulse R2 (×2), digital R2 (×10)                       |
-| 1N4728A Zener 3.3V, 1W         | DO-41 through-hole   | 16       | All divider outputs (4 analog + 2 pulse + 10 digital) |
+| BZX55C3V6 Zener 3.6V, 500mW    | DO-35 through-hole   | 16       | All divider outputs (4 analog + 2 pulse + 10 digital) |
 | 1 nF ceramic capacitor         | Radial, 2.54mm pitch | 2        | Pulse input ringing suppression (PA8, PA9)            |
 | 1N4148 signal diode (optional) | DO-35 through-hole   | 8        | ESD protection for button pins                        |
