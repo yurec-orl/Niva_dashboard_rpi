@@ -75,25 +75,49 @@ pub fn build_voltage_gauge(
             end_angle,
             start_angle + 2.0 * PI, // Complete the circle
         )),
-        // Critical voltage zone arc (red) at high end (15-16v)
+        // Critical voltage zone arc (red) at high end (15-16V): last 1V = 45° before end_angle
         Box::new(ArcDecorator::new(
-            radius - gauge_major_mark_length / 2.0,
-            gauge_major_mark_length,    // Thick arc section to mark critical temp
+            radius - gauge_major_mark_length / 4.0,
+            gauge_major_mark_length / 2.0,
             ui_style.get_color(GAUGE_CRITICAL_ZONE_COLOR, (1.0, 0.0, 0.0)),
-            end_angle - 35.0f32.to_radians(), // 15-16 volts range
+            end_angle - 45.0f32.to_radians(), // 15-16V range (1V = 45° out of 270°/6V)
             end_angle,
         )),
-        // Critical voltage zone arc (red) at low end (8-12.1v)
+        // Critical voltage zone arc (red) at low end (10-12V): first 2V = 90° from start_angle
         Box::new(ArcDecorator::new(
-            radius - gauge_major_mark_length / 2.0,
-            gauge_major_mark_length,    // Thick arc section to mark critical temp
+            radius - gauge_major_mark_length / 4.0,
+            gauge_major_mark_length / 2.0,
             ui_style.get_color(GAUGE_CRITICAL_ZONE_COLOR, (1.0, 0.0, 0.0)),
             start_angle,
-            start_angle + 140.0f32.to_radians(), //
+            start_angle + 90.0f32.to_radians(), // 10-12V range (2V = 90°)
         )),
-        // Fine marks for voltage readings (8-16V)
+        // Warning zone arc (orange) at lower-mid range (12-13.5V): 1.5V = 67.5° from +90°
+        Box::new(ArcDecorator::new(
+            radius - gauge_major_mark_length / 4.0,
+            gauge_major_mark_length / 2.0,
+            ui_style.get_color(GAUGE_WARNING_ZONE_COLOR, (1.0, 0.67, 0.0)),
+            start_angle + 90.0f32.to_radians(),   // 12V
+            start_angle + 157.5f32.to_radians(),  // 13.5V (1.5V × 45°)
+        )),
+        // Normal zone arc (green) at optimal range (13.5-14.5V): 1V = 45° from +157.5°
+        Box::new(ArcDecorator::new(
+            radius - gauge_major_mark_length / 2.0,
+            gauge_major_mark_length,
+            ui_style.get_color(GAUGE_NORMAL_ZONE_COLOR, (0.0, 0.67, 0.0)),
+            start_angle + 157.5f32.to_radians(),  // 13.5V
+            start_angle + 202.5f32.to_radians(),  // 14.5V (1V × 45°)
+        )),
+        // Warning zone arc (orange) at upper-mid range (14.5-15V): 0.5V = 22.5° from +202.5°
+        Box::new(ArcDecorator::new(
+            radius - gauge_major_mark_length / 4.0,
+            gauge_major_mark_length / 2.0,
+            ui_style.get_color(GAUGE_WARNING_ZONE_COLOR, (1.0, 0.67, 0.0)),
+            start_angle + 202.5f32.to_radians(),  // 14.5V
+            start_angle + 225.0f32.to_radians(),  // 15V (= end_angle - 45°)
+        )),
+        // Fine marks for voltage readings (10-16V, every 0.5V = 13 marks)
         Box::new(NeedleGaugeMarksDecorator::new(
-            17,
+            13,
             gauge_minor_mark_length,
             gauge_minor_mark_thickness,
             minor_marks_color,
@@ -101,9 +125,9 @@ pub fn build_voltage_gauge(
             start_angle,
             end_angle,
         )),
-        // Major marks for main voltage levels (Low, Normal, High)
+        // Major marks for main voltage levels (10-16V, every 1V = 7 marks)
         Box::new(NeedleGaugeMarksDecorator::new(
-            9, // 9 major marks
+            7,
             gauge_major_mark_length,
             gauge_major_mark_thickness,
             major_marks_color,
@@ -119,9 +143,9 @@ pub fn build_voltage_gauge(
             DecoratorAlignmentH::Center,
             DecoratorAlignmentV::Center,
         ).with_offset(unit_offset_h, unit_offset_v)),
-        // Voltage level labels
+        // Voltage level labels (10-16V)
         Box::new(NeedleGaugeMarkLabelsDecorator::new(
-            vec!["8".into(), "9".into(), "10".into(), "11".into(), "12".into(), "13".into(), "14".into(), "15".into(), "16".into()], // Voltage labels
+            vec!["10".into(), "11".into(), "12".into(), "13".into(), "14".into(), "15".into(), "16".into()],
             gauge_labels_font,
             gauge_labels_font_size,
             gauge_labels_color,

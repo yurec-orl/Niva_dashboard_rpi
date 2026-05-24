@@ -1697,8 +1697,8 @@ pub fn run_indicator_zero_position_test(context: &mut GraphicsContext) -> Result
     );
     
     let voltage_value = SensorValue::analog(
-        (voltage_raw as f32 / 1023.0) * 20.0, // Convert to volts
-        0.0, 20.0, "V", "12V System", "voltage_sensor"
+        (voltage_raw as f32 / 1023.0) * 6.0 + 10.0, // Convert to volts (10-16V range)
+        10.0, 16.0, "V", "12V System", "voltage_sensor"
     );
     
     let temp_value = SensorValue::analog(
@@ -1882,8 +1882,8 @@ pub fn run_indicator_middle_position_test(context: &mut GraphicsContext) -> Resu
     );
     
     let voltage_value = SensorValue::analog(
-        (voltage_raw as f32 / 1023.0) * 20.0, // Convert to volts
-        0.0, 20.0, "V", "12V System", "voltage_sensor"
+        (voltage_raw as f32 / 1023.0) * 6.0 + 10.0, // Convert to volts (10-16V range)
+        10.0, 16.0, "V", "12V System", "voltage_sensor"
     );
     
     let temp_value = SensorValue::analog(
@@ -2053,8 +2053,8 @@ pub fn run_indicator_max_position_test(context: &mut GraphicsContext) -> Result<
     );
     
     let voltage_value = SensorValue::analog(
-        (voltage_raw as f32 / 1023.0) * 20.0, // Convert to volts
-        0.0, 20.0, "V", "12V System", "voltage_sensor"
+        (voltage_raw as f32 / 1023.0) * 6.0 + 10.0, // Convert to volts (10-16V range)
+        10.0, 16.0, "V", "12V System", "voltage_sensor"
     );
     
     let temp_value = SensorValue::analog(

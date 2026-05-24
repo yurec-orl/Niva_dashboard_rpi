@@ -605,7 +605,7 @@ impl UIStyle {
         self.set(GAUGE_UNIT_ENABLED, UIStyleValue::Boolean(true));
         
         // Zone defaults
-        self.set(GAUGE_NORMAL_ZONE_COLOR, UIStyleValue::Color("#00aa00".to_string()));
+        self.set(GAUGE_NORMAL_ZONE_COLOR, UIStyleValue::Color("#008800".to_string()));
         self.set(GAUGE_NORMAL_ZONE_WIDTH, UIStyleValue::Float(4.0));
         self.set(GAUGE_NORMAL_ZONE_ENABLED, UIStyleValue::Boolean(false));
 
