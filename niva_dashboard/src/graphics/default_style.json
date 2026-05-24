@@ -44,7 +44,12 @@
   "gauge_unit_color": "#C0C0C0",
   "gauge_unit_font_size": 12,
   "gauge_unit_enabled": true,
-  
+
+  "gauge_normal_zone_color": "#00FF00",
+  "gauge_normal_zone_start": 0.0,
+  "gauge_normal_zone_end": 75.0,
+  "gauge_normal_zone_enabled": false,
+
   "gauge_warning_zone_color": "#FFAA00",
   "gauge_warning_zone_start": 75.0,
   "gauge_warning_zone_end": 90.0,

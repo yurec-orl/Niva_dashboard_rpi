@@ -61,7 +61,7 @@ pub fn build_oil_pressure_gauge(
     ).with_decorators(vec![
         // Fine marks for oil pressure readings (0-8 kgf/cm²)
         Box::new(NeedleGaugeMarksDecorator::new(
-            7, // 7 marks for oil pressure range
+            9, // 9 marks for oil pressure range - from 0 to 8
             gauge_minor_mark_length,
             gauge_minor_mark_thickness,
             minor_marks_color,
@@ -71,7 +71,7 @@ pub fn build_oil_pressure_gauge(
         )),
         // Major marks for main oil pressure levels
         Box::new(NeedleGaugeMarksDecorator::new(
-            3, // 3 major marks (Low, Normal, High)
+            3, // 3 major marks (Low 0, Normal 4, High 8)
             gauge_major_mark_length,
             gauge_major_mark_thickness,
             major_marks_color,
@@ -94,6 +94,14 @@ pub fn build_oil_pressure_gauge(
             inactive_arc_color,
             end_angle,
             start_angle + 2.0 * PI, // Complete the circle
+        )),
+        // Critical pressure zone arc (red) at low end (0-0.5)
+        Box::new(ArcDecorator::new(
+            radius - gauge_major_mark_length / 2.0,
+            gauge_major_mark_length,    // Thick arc section to mark critical temp
+            ui_style.get_color(GAUGE_CRITICAL_ZONE_COLOR, (1.0, 0.0, 0.0)),
+            start_angle,
+            start_angle + 16.875f32.to_radians(), // 0-0.5 kgf/cm² range
         )),
         Box::new(LabelDecorator::new( // Oil pressure unit label at bottom
             "кгс/см²".to_string(),

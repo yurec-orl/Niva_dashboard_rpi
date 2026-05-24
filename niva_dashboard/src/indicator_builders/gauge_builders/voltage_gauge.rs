@@ -75,13 +75,21 @@ pub fn build_voltage_gauge(
             end_angle,
             start_angle + 2.0 * PI, // Complete the circle
         )),
-        // Critical voltage zone arc (red) at high end
+        // Critical voltage zone arc (red) at high end (15-16v)
         Box::new(ArcDecorator::new(
             radius - gauge_major_mark_length / 2.0,
             gauge_major_mark_length,    // Thick arc section to mark critical temp
             ui_style.get_color(GAUGE_CRITICAL_ZONE_COLOR, (1.0, 0.0, 0.0)),
             end_angle - 35.0f32.to_radians(), // 15-16 volts range
             end_angle,
+        )),
+        // Critical voltage zone arc (red) at low end (8-12.1v)
+        Box::new(ArcDecorator::new(
+            radius - gauge_major_mark_length / 2.0,
+            gauge_major_mark_length,    // Thick arc section to mark critical temp
+            ui_style.get_color(GAUGE_CRITICAL_ZONE_COLOR, (1.0, 0.0, 0.0)),
+            start_angle,
+            start_angle + 140.0f32.to_radians(), //
         )),
         // Fine marks for voltage readings (8-16V)
         Box::new(NeedleGaugeMarksDecorator::new(

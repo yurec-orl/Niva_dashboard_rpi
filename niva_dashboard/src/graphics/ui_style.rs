@@ -106,6 +106,10 @@ pub const GAUGE_UNIT_OFFSET_V: &str = "gauge_unit_offset_v";
 pub const GAUGE_UNIT_ENABLED: &str = "gauge_unit_enabled";
 
 // Gauge Zones
+pub const GAUGE_NORMAL_ZONE_COLOR: &str = "gauge_normal_zone_color";
+pub const GAUGE_NORMAL_ZONE_WIDTH: &str = "gauge_normal_zone_width";
+pub const GAUGE_NORMAL_ZONE_ENABLED: &str = "gauge_normal_zone_enabled";
+
 pub const GAUGE_WARNING_ZONE_COLOR: &str = "gauge_warning_zone_color";
 pub const GAUGE_WARNING_ZONE_WIDTH: &str = "gauge_warning_zone_width";
 pub const GAUGE_WARNING_ZONE_ENABLED: &str = "gauge_warning_zone_enabled";
@@ -601,6 +605,10 @@ impl UIStyle {
         self.set(GAUGE_UNIT_ENABLED, UIStyleValue::Boolean(true));
         
         // Zone defaults
+        self.set(GAUGE_NORMAL_ZONE_COLOR, UIStyleValue::Color("#00aa00".to_string()));
+        self.set(GAUGE_NORMAL_ZONE_WIDTH, UIStyleValue::Float(4.0));
+        self.set(GAUGE_NORMAL_ZONE_ENABLED, UIStyleValue::Boolean(false));
+
         self.set(GAUGE_WARNING_ZONE_COLOR, UIStyleValue::Color("#FFAA00".to_string()));
         self.set(GAUGE_WARNING_ZONE_WIDTH, UIStyleValue::Float(4.0));
         self.set(GAUGE_WARNING_ZONE_ENABLED, UIStyleValue::Boolean(false));
