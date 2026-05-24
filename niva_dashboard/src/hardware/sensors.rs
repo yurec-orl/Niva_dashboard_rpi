@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use rppal::gpio::Level;
 
 use crate::hardware::sensor_value::{SensorValue, ValueConstraints, ValueMetadata};

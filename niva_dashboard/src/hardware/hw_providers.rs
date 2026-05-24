@@ -1,5 +1,5 @@
 // Hardware sensor reading framework for automotive dashboard.
-// This module provides trait-based abstractions for reading various sensor inputs
+#![allow(dead_code)]
 // and concrete implementations for different hardware interfaces.
 //
 // Defines:
@@ -79,13 +79,11 @@ impl HWDigitalProvider for GPIOProvider {
         self.input.clone()
     }
 
-    fn read_digital(&self, input: HWInput) -> Result<Level, String> {
+    fn read_digital(&self, _input: HWInput) -> Result<Level, String> {
         // Implementation for reading digital value from GPIO pin
         Ok(Level::Low)
     }
 }
-
-// Read inputs from external MC via I2C protocol
 pub struct I2CProvider {
     input: HWInput,
     // Implementation details for I2C access
@@ -104,7 +102,7 @@ impl HWAnalogProvider for I2CProvider {
     fn input(&self) -> HWInput {
         self.input.clone()
     }
-    fn read_analog(&self, input: HWInput) -> Result<u16, String> {
+    fn read_analog(&self, _input: HWInput) -> Result<u16, String> {
         // Implementation for reading analog value from external ADC via I2C
         Ok(0)
     }
@@ -114,7 +112,7 @@ impl HWDigitalProvider for I2CProvider {
     fn input(&self) -> HWInput {
         self.input.clone()
     }
-    fn read_digital(&self, input: HWInput) -> Result<Level, String> {
+    fn read_digital(&self, _input: HWInput) -> Result<Level, String> {
         // Implementation for reading digital value from external controller via I2C
         Ok(Level::Low)
     }
@@ -139,7 +137,7 @@ impl HWDigitalProvider for TestDigitalDataProvider {
         self.input.clone()
     }
 
-    fn read_digital(&self, input: HWInput) -> Result<Level, String> {
+    fn read_digital(&self, _input: HWInput) -> Result<Level, String> {
         let elapsed = self.start_time.elapsed();
         let active_duration = Duration::from_secs(4);
         
@@ -170,13 +168,13 @@ impl HWAnalogProvider for TestAnalogDataProvider {
     fn input(&self) -> HWInput {
         self.input.clone()
     }
-    fn read_analog(&self, input: HWInput) -> Result<u16, String> {
+    fn read_analog(&self, _input: HWInput) -> Result<u16, String> {
         let elapsed = self.start_time.elapsed();
         let cycle_duration = Duration::from_millis(5000); // 5 seconds total cycle
         let half_cycle = Duration::from_millis(2500); // 2.5 seconds per half
         
         // Calculate position within the cycle (0.0 to 1.0)
-        let cycle_position = (elapsed.as_millis() % cycle_duration.as_millis()) as f64 
+        let _cycle_position = (elapsed.as_millis() % cycle_duration.as_millis()) as f64 
             / cycle_duration.as_millis() as f64;
         
         let value = if elapsed.as_millis() % cycle_duration.as_millis() < half_cycle.as_millis() {
@@ -307,7 +305,7 @@ impl HWDigitalProvider for TestPulseDataProvider {
     fn input(&self) -> HWInput {
         self.input.clone()
     }
-    fn read_digital(&self, input: HWInput) -> Result<Level, String> {
+    fn read_digital(&self, _input: HWInput) -> Result<Level, String> {
         let current_frequency = self.get_current_frequency();
         
         // Debug: Log frequency periodically

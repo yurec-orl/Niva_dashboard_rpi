@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::graphics::context::GraphicsContext;
 use gl::types::*;
 use freetype_sys as ft;

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 
 //! UI Style Configuration System
 //!

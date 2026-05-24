@@ -1,3 +1,4 @@
+#![allow(dead_code)]
  
 // Raw analog data processors
 

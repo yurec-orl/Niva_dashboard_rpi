@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::time::Duration;
 use crossterm::terminal::{enable_raw_mode, disable_raw_mode};
 use crossterm::event::{self, Event, KeyCode};
@@ -43,7 +44,7 @@ impl InputHandler {
     }
 }
 
-trait InputSource {
+pub trait InputSource {
     fn button_state(&self) -> Option<ButtonState>;
 }
 

@@ -1,6 +1,6 @@
 use crate::indicators::{Indicator, IndicatorBounds};
 use crate::indicators::needle_indicator::{NeedleIndicator, NeedleGaugeMarksDecorator, NeedleGaugeMarkLabelsDecorator};
-use crate::indicators::decorator::{LabelDecorator, ArcDecorator, DecoratorAlignmentH, DecoratorAlignmentV};
+use crate::indicators::decorator::{ArcDecorator};
 use crate::graphics::ui_style::*;
 use std::f32::consts::PI;
 
@@ -41,8 +41,8 @@ pub fn build_fuel_level_gauge(
     let gauge_major_mark_length = ui_style.get_float(GAUGE_MAJOR_MARK_LENGTH, 12.0);
     let gauge_major_mark_thickness = ui_style.get_float(GAUGE_MAJOR_MARK_WIDTH, 4.0);
 
-    let unit_offset_h = ui_style.get_float(GAUGE_UNIT_OFFSET_H, 0.0);
-    let unit_offset_v = ui_style.get_float(GAUGE_UNIT_OFFSET_V, 20.0);
+    let _unit_offset_h = ui_style.get_float(GAUGE_UNIT_OFFSET_H, 0.0);
+    let _unit_offset_v = ui_style.get_float(GAUGE_UNIT_OFFSET_V, 20.0);
 
     let fuel_gauge = NeedleIndicator::new(
         start_angle,

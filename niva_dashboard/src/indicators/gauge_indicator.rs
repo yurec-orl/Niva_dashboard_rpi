@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
 use crate::indicators::indicator::{Indicator, IndicatorBounds};

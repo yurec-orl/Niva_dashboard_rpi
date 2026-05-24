@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::UIStyle;
 use crate::hardware::sensor_value::{SensorValue, ValueData};
@@ -67,7 +68,7 @@ pub trait Indicator {
     fn indicator_type(&self) -> &'static str;
     
     /// Check if indicator can handle the given value type efficiently
-    fn supports_value_type(&self, value: &ValueData) -> bool {
+    fn supports_value_type(&self, _value: &ValueData) -> bool {
         // Individual indicators can override for optimization
         false
     }

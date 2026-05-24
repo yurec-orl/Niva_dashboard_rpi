@@ -1,4 +1,5 @@
 // Graphics context manager for KMS/DRM OpenGL ES backend
+#![allow(dead_code)]
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_uint, c_void};
 use std::ptr;
@@ -13,10 +14,10 @@ type EGLConfig = *mut c_void;
 type EGLint = c_int;
 type EGLBoolean = c_uint;
 
-const EGL_SUCCESS: EGLint = 0x3000;
-const EGL_TRUE: EGLBoolean = 1;
+#[allow(dead_code)] const EGL_SUCCESS: EGLint = 0x3000;
+#[allow(dead_code)] const EGL_TRUE: EGLBoolean = 1;
 const EGL_FALSE: EGLBoolean = 0;
-const EGL_DEFAULT_DISPLAY: *mut c_void = ptr::null_mut();
+#[allow(dead_code)] const EGL_DEFAULT_DISPLAY: *mut c_void = ptr::null_mut();
 const EGL_NO_CONTEXT: EGLContext = ptr::null_mut();
 const EGL_NO_SURFACE: EGLSurface = ptr::null_mut();
 
@@ -149,6 +150,7 @@ extern "C" {
 }
 
 // OpenGL constants
+#[allow(dead_code)]
 const GL_COLOR_BUFFER_BIT: c_uint = 0x00004000;
 
 // GBM constants

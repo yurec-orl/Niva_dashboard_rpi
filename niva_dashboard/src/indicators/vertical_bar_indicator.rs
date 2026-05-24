@@ -375,7 +375,7 @@ impl Decorator for VerticalBarScaleDecorator {
         if self.scale_marks {
             base_x_pos += match self.alignment_h {
                 DecoratorAlignmentH::Left => -(self.marks_width + self.marks_thickness),
-                DecoratorAlignmentH::Right => (self.marks_width + self.marks_thickness),
+                DecoratorAlignmentH::Right => self.marks_width + self.marks_thickness,
                 DecoratorAlignmentH::Center => 0.0, // Not applicable
             };
 

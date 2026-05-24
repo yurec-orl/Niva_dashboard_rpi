@@ -1,6 +1,6 @@
+#![allow(dead_code)]
 use crate::alerts::alert_manager::{Severity, AlertStyle};
 use crate::graphics::context::GraphicsContext;
-use crate::graphics::ui_style::UIStyle;
 use crate::indicators::indicator::IndicatorBounds;
 
 pub struct Alert {

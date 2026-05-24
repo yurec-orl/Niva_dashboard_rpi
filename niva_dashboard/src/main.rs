@@ -201,7 +201,7 @@ fn setup_sensors() -> SensorManager {
 }
 
 fn setup_ui_style() -> graphics::ui_style::UIStyle {
-    let mut ui_style = graphics::ui_style::UIStyle::new();
+    let ui_style = graphics::ui_style::UIStyle::new();
     // ui_style.read_from_file("/etc/niva_dashboard/ui_style.json").unwrap_or_else(|e| {
     //     print!("Warning: Failed to read UI style config: {}\r\n", e);
     // });

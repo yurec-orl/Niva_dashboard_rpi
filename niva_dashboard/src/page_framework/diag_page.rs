@@ -1,6 +1,7 @@
+#![allow(dead_code)]
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
-use crate::page_framework::events::{EventSender, EventReceiver, SmartEventSender, UIEvent};
+use crate::page_framework::events::{EventReceiver, SmartEventSender, UIEvent};
 use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition, MAIN_PAGE_ID};
 use crate::hardware::sensor_manager::SensorManager;
 
@@ -55,7 +56,7 @@ impl Page for DiagPage {
         self.base.set_buttons(buttons);
     }
 
-    fn render(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
+    fn render(&self, context: &mut GraphicsContext, _sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
         context.render_text_with_font(
             "Diagnostics Page", 
             200.0, 

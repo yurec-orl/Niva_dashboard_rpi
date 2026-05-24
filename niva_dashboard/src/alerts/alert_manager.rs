@@ -1,9 +1,9 @@
+#![allow(dead_code)]
 use crate::hardware::sensor_manager::SensorManager;
 use crate::alerts::watchdog::Watchdog;
 use crate::alerts::alert::Alert;
 use crate::graphics::ui_style::*;
 use crate::graphics::context::GraphicsContext;
-use std::collections::HashMap;
 
 // AlertManager is responsible for managing alerts and watchdogs.
 // Watchdogs are used to monitor hardware inputs and trigger alerts when certain conditions are met.
@@ -88,7 +88,7 @@ impl AlertManager {
         }
         for (watchdog_id, watchdog) in &mut self.watchdogs {
             if watchdog.check(sensor_manager) {
-                for (alert_id, alert) in &self.alerts {
+                for (alert_id, _alert) in &self.alerts {
                     if alert_id == watchdog_id {
                         // Alert already active, skip adding a new one
                         return;
@@ -172,7 +172,7 @@ impl AlertManager {
         let mut y_offset = start_y;
 
         // Erase background
-        context.fill_rect(
+        let _ = context.fill_rect(
             x_offset - self.alert_style.margin,
             start_y - self.alert_style.margin,
             max_text_width + 2.0 * self.alert_style.margin,

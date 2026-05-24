@@ -1,10 +1,9 @@
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
 use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition, DIAG_PAGE_ID};
-use crate::page_framework::events::{EventSender, EventReceiver, SmartEventSender};
+use crate::page_framework::events::{EventReceiver, SmartEventSender};
 use crate::hardware::sensor_manager::SensorManager;
 use crate::hardware::hw_providers::{*};
-use crate::hardware::sensor_value::SensorValue;
 use crate::indicators::{Indicator, IndicatorBounds};
 use crate::indicators::text_indicator::{TextIndicator, TextAlignment};
 use crate::indicator_builders::{
@@ -173,7 +172,7 @@ impl MainPage {
         // 3. Smaller temperature and battery voltage gauges on the right
 
         let screen_width = context.width as f32;
-        let screen_height = context.height as f32;
+        let _screen_height = context.height as f32;
         
         // Layout parameters
         let button_margin = 60.0; // Space for buttons on left/right
@@ -235,7 +234,7 @@ impl MainPage {
 
         // Layout parameters
         let screen_width = context.width as f32;
-        let screen_height = context.height as f32;
+        let _screen_height = context.height as f32;
         let button_margin = 40.0; // Space for buttons on left/right
         let top_margin = 40.0;
         let available_width = screen_width - 2.0 * button_margin;

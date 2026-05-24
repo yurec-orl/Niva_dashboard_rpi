@@ -1,5 +1,4 @@
 use crate::indicators::indicator::{Indicator, IndicatorBounds, IndicatorBase};
-use crate::indicators::decorator::Decorator;
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
 use crate::hardware::sensor_value::{SensorValue, ValueData};
@@ -73,7 +72,7 @@ impl DigitalSegmentedIndicator {
     fn render_inactive_segments(
         &self,
         bounds: IndicatorBounds,
-        style: &UIStyle,
+        _style: &UIStyle,
         context: &mut GraphicsContext,
         font_path: &str,
         scale: f32,

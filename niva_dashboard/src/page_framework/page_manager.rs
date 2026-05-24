@@ -1,7 +1,8 @@
+#![allow(dead_code)]
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
 use crate::page_framework::diag_page::DiagPage;
-use crate::page_framework::events::{UIEvent, EventSender, EventReceiver, EventBus, SmartEventSender, create_event_bus};
+use crate::page_framework::events::{UIEvent, EventReceiver, EventBus, SmartEventSender, create_event_bus};
 use crate::page_framework::input::{InputHandler, ButtonState};
 use crate::page_framework::main_page::MainPage;
 use crate::hardware::sensor_manager::SensorManager;
@@ -544,7 +545,7 @@ impl PageManager {
         }
     }
     
-    fn get_button_position(&self, pos: &ButtonPosition, orientation: &String) -> (f32, f32) {
+    fn get_button_position(&self, pos: &ButtonPosition, _orientation: &String) -> (f32, f32) {
         let screen_width = self.context.width as f32;
         let screen_height = self.context.height as f32 - STATUS_LINE_Y_MARGIN;
         let x_margin = 0.0;   // No horizontal margin
@@ -671,7 +672,7 @@ impl PageManager {
     fn render_status_line(&mut self) -> Result<(), String> {
         let elapsed = self.start_time.elapsed();
         let fps = self.fps_counter.get_fps();
-        let frame_count = self.fps_counter.get_frame_count();
+        let _frame_count = self.fps_counter.get_frame_count();
         
         // Get memory information
         let (mem_total, mem_available) = self.get_memory_info().unwrap_or((0, 0));

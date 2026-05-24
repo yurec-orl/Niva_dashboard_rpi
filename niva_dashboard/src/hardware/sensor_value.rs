@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /// Enhanced sensor value that carries both the value and its context/constraints
 #[derive(Debug, Clone, PartialEq)]
 pub struct SensorValue {

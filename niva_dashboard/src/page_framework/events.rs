@@ -1,5 +1,5 @@
+#![allow(dead_code)]
 use crossbeam_channel::{bounded, Sender, Receiver};
-use crate::hardware::hw_providers::HWInput;
 
 /// Events that can be triggered by UI components
 #[derive(Debug, Clone)]
@@ -159,12 +159,12 @@ impl EventReceiver {
     }
     
     /// Create an iterator over received events
-    pub fn iter(&self) -> crossbeam_channel::Iter<UIEvent> {
+    pub fn iter(&self) -> crossbeam_channel::Iter<'_, UIEvent> {
         self.receiver.iter()
     }
     
     /// Create a non-blocking iterator over received events
-    pub fn try_iter(&self) -> crossbeam_channel::TryIter<UIEvent> {
+    pub fn try_iter(&self) -> crossbeam_channel::TryIter<'_, UIEvent> {
         self.receiver.try_iter()
     }
 }
