@@ -131,6 +131,7 @@ extern "C" {
         flags: u32,
         user_data: *mut c_void,
     ) -> c_int;
+    fn drmHandleEvent(fd: c_int, evctx: *mut DrmEventContext) -> c_int;
     
     // GBM functions
     fn gbm_create_device(fd: c_int) -> *mut c_void;
@@ -163,6 +164,17 @@ const DRM_MODE_CONNECTED: u32 = 1;
 
 // DRM page flip flags
 const DRM_MODE_PAGE_FLIP_EVENT: u32 = 0x01;
+
+// DRM event context version
+const DRM_EVENT_CONTEXT_VERSION: u32 = 2;
+
+/// DRM event context for handling vblank/page-flip events via drmHandleEvent()
+#[repr(C)]
+struct DrmEventContext {
+    version: u32,
+    vblank_handler: Option<unsafe extern "C" fn(c_int, u32, u32, u32, *mut c_void)>,
+    page_flip_handler: Option<unsafe extern "C" fn(c_int, u32, u32, u32, *mut c_void)>,
+}
 
 // Basic DRM structures (simplified)
 #[repr(C)]
@@ -382,6 +394,7 @@ pub struct GraphicsContext {
     // Framebuffer management
     current_fb: u32,
     previous_fb: u32,
+    flip_pending: bool,
     
     // Display properties
     pub width: i32,
@@ -410,6 +423,15 @@ pub struct GraphicsContext {
     display_configured: bool,
 }
 
+/// No-op page flip handler — we only need to drain the DRM event, not inspect it.
+unsafe extern "C" fn page_flip_handler_stub(
+    _fd: c_int,
+    _sequence: u32,
+    _tv_sec: u32,
+    _tv_usec: u32,
+    _user_data: *mut c_void,
+) {}
+
 impl GraphicsContext {
     /// Create a new graphics context with KMS/DRM backend
     pub fn new(title: &str, width: i32, height: i32) -> Result<Self, String> {
@@ -427,6 +449,7 @@ impl GraphicsContext {
             previous_crtc: ptr::null_mut(),
             current_fb: 0,
             previous_fb: 0,
+            flip_pending: false,
             width,
             height,
             text_renderers: HashMap::new(),
@@ -835,6 +858,32 @@ impl GraphicsContext {
     /// Handle page flipping for smooth double buffering
     fn page_flip_display(&mut self) {
         unsafe {
+            // If a page flip is already queued, wait for its vblank event before proceeding.
+            // Without this, drmModePageFlip returns -EBUSY and we fall back to drmModeSetCrtc,
+            // which causes erratic frame timing (60 → 30 FPS cliff effect).
+            if self.flip_pending {
+                let mut evctx = DrmEventContext {
+                    version: DRM_EVENT_CONTEXT_VERSION,
+                    vblank_handler: None,
+                    page_flip_handler: Some(page_flip_handler_stub),
+                };
+                // Use select() to wait up to 50ms for the event (one full vblank at 60Hz = 16.7ms)
+                let mut fds: libc::fd_set = std::mem::zeroed();
+                libc::FD_SET(self.drm_fd, &mut fds);
+                let mut timeout = libc::timeval { tv_sec: 0, tv_usec: 50_000 };
+                let ready = libc::select(
+                    self.drm_fd + 1,
+                    &mut fds,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    &mut timeout,
+                );
+                if ready > 0 {
+                    drmHandleEvent(self.drm_fd, &mut evctx);
+                }
+                self.flip_pending = false;
+            }
+
             // Get the current front buffer from GBM
             let bo = gbm_surface_lock_front_buffer(self.gbm_surface);
             if bo.is_null() {
@@ -859,7 +908,7 @@ impl GraphicsContext {
             );
             
             if result == 0 {
-                // Try page flip first (smooth, async)
+                // Queue a vsync-aligned page flip
                 let flip_result = drmModePageFlip(
                     self.drm_fd,
                     self.crtc_id,
@@ -869,14 +918,15 @@ impl GraphicsContext {
                 );
                 
                 if flip_result == 0 {
-                    // Page flip successful - clean up old framebuffer
+                    // Flip queued — mark pending and rotate framebuffers
+                    self.flip_pending = true;
                     if self.previous_fb != 0 {
                         drmModeRmFB(self.drm_fd, self.previous_fb);
                     }
                     self.previous_fb = self.current_fb;
                     self.current_fb = new_fb_id;
                 } else {
-                    // Page flip failed - fallback to immediate mode set (might flicker)
+                    // Page flip failed — fallback to immediate modeset
                     let mut connector_id = self.connector_id;
                     let mut mode = self.mode;
                     let crtc_result = drmModeSetCrtc(
@@ -891,13 +941,11 @@ impl GraphicsContext {
                     );
                     
                     if crtc_result == 0 {
-                        // Clean up old framebuffer
                         if self.current_fb != 0 {
                             drmModeRmFB(self.drm_fd, self.current_fb);
                         }
                         self.current_fb = new_fb_id;
                     } else {
-                        // Both failed - clean up new framebuffer
                         drmModeRmFB(self.drm_fd, new_fb_id);
                     }
                 }

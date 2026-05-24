@@ -199,6 +199,14 @@ pub struct PageManager {
     fps_counter: FpsCounter,
     start_time: Instant,
 
+    // Cached /proc/stat snapshot for non-blocking CPU load calculation.
+    // Every frame a new sample is taken and appended to cpu_load_samples.
+    // Every CPU_LOAD_UPDATE_INTERVAL the samples are averaged into cpu_load.
+    last_cpu_stat: Option<(u64, u64)>,  // (idle, total)
+    cpu_load_samples: Vec<f32>,         // per-frame samples since last update
+    cpu_load_last_update: Instant,      // time of the last average flush
+    cpu_load: f32,                      // last published average, shown in status line
+
     // If set to false, main loop will exit.
     running: bool,
 }
@@ -237,6 +245,10 @@ impl PageManager {
             alert_manager,
             fps_counter: FpsCounter::new(),
             start_time: Instant::now(),
+            last_cpu_stat: None,
+            cpu_load_samples: Vec::new(),
+            cpu_load_last_update: Instant::now(),
+            cpu_load: 0.0,
             running: false,
         }
     }
@@ -393,19 +405,10 @@ impl PageManager {
     }
 
     fn event_loop(&mut self) -> Result<(), String> {
-        const TARGET_FPS: u64 = 60;
-        const FRAME_DURATION: Duration = Duration::from_micros(1_000_000 / TARGET_FPS);
-
-        print!("Starting event loop (target: {} FPS)\r\n", TARGET_FPS);
+        print!("Starting event loop\r\n");
         self.toggle_bloom();    // Turn off for now
-        // self.set_bloom_intensity(1.0);
-        // let start_time = Instant::now();
-        
-        let mut last_render_time = Instant::now();
         
         while self.running {
-            let loop_start = Instant::now();
-            
             // Continuous sensor polling - poll sensors every loop iteration
             // This ensures sensor data is always up to date regardless of render timing
             if let Err(e) = self.sensor_manager.read_all_sensors() {
@@ -413,53 +416,43 @@ impl PageManager {
             }
             self.alert_manager.check_watchdogs(&self.sensor_manager);
             
-            // Check if it's time to render based on target framerate
-            let time_since_last_render = loop_start.duration_since(last_render_time);
-            let should_render = time_since_last_render >= FRAME_DURATION;
+            // Update FPS counter
+            self.fps_counter.update();
             
-            if should_render {
-                let frame_start = Instant::now();
-
-                // Update FPS counter only when rendering
-                self.fps_counter.update();
-                
-                // Begin bloom rendering if enabled
-                let bloom_enabled = self.context.is_bloom_enabled();
-                if bloom_enabled {
-                    if let Err(e) = self.context.begin_bloom_render() {
-                        print!("Bloom render error: {}\r\n", e);
-                    }
-                } else {
-                    // Clear screen with black for normal rendering
-                    self.context.clear_screen();
+            // Begin bloom rendering if enabled
+            let bloom_enabled = self.context.is_bloom_enabled();
+            if bloom_enabled {
+                if let Err(e) = self.context.begin_bloom_render() {
+                    print!("Bloom render error: {}\r\n", e);
                 }
-            
-                unsafe {
-                    gl::Enable(gl::BLEND);
-                    gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-                }
-
-                // Render the frame - sensors were already read above
-                self.render_current_page()?;
-
-                self.alert_manager.render_alerts(&mut self.context);
-
-                self.render_button_labels()?;
-                
-                self.render_status_line()?;
-                
-                // Apply bloom effect and swap buffers
-                if bloom_enabled {
-                    if let Err(e) = self.context.end_bloom_render() {
-                        print!("Bloom end render error: {}\r\n", e);
-                    }
-                }
-                
-                // Swap buffers
-                self.context.swap_buffers();
-                
-                last_render_time = frame_start;
+            } else {
+                // Clear screen with black for normal rendering
+                self.context.clear_screen();
             }
+        
+            unsafe {
+                gl::Enable(gl::BLEND);
+                gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+            }
+
+            // Render the frame - sensors were already read above
+            self.render_current_page()?;
+
+            self.alert_manager.render_alerts(&mut self.context);
+
+            self.render_button_labels()?;
+            
+            self.render_status_line()?;
+            
+            // Apply bloom effect and swap buffers
+            if bloom_enabled {
+                if let Err(e) = self.context.end_bloom_render() {
+                    print!("Bloom end render error: {}\r\n", e);
+                }
+            }
+            
+            // Swap buffers - pacing is handled by the DRM page flip
+            self.context.swap_buffers();
 
             // Check for button state changes (processed every loop iteration for responsiveness)
             if let Some(state) = self.input_handler.button_state() {
@@ -490,10 +483,6 @@ impl PageManager {
             if let Some(current_page) = self.get_current_page_mut() {
                 current_page.process_events();
             }
-
-            // Small sleep to prevent excessive CPU usage while maintaining high sensor polling rate
-            // 0.1ms sleep allows for ~10kHz max polling rate while being CPU-friendly
-            std::thread::sleep(Duration::from_micros(100));
         }
         
         print!("Event loop finished\r\n");
@@ -676,6 +665,13 @@ impl PageManager {
         
         // Get memory information
         let (mem_total, mem_available) = self.get_memory_info().unwrap_or((0, 0));
+
+        // Get CPU load and temperature.
+        // sample_cpu_stat snapshots /proc/stat and computes load from the delta
+        // since the last frame — no blocking sleep needed.
+        self.sample_cpu_stat();
+        let cpu_load = self.get_cpu_load();
+        let cpu_temp = self.get_cpu_temperature();
         
         // Format status information
         let total_seconds = elapsed.as_secs();
@@ -684,21 +680,21 @@ impl PageManager {
         let minutes = (total_seconds % 3600) / 60;
         let seconds = total_seconds % 60;
 
-        let status_text = if days > 0 {
-            format!(
-                "Работа: {}д {:02}:{:02}:{:02} | К/С: {:.1} | Память: {}/{}МБ",
-                days, hours, minutes, seconds,
-                fps,
-                mem_available, mem_total
-            )
+        let uptime_str = if days > 0 {
+            format!("{}д {:02}:{:02}:{:02}", days, hours, minutes, seconds)
         } else {
-            format!(
-                "Работа: {:02}:{:02}:{:02} | К/С: {:.1} | Память: {}/{}МБ",
-                hours, minutes, seconds,
-                fps,
-                mem_available, mem_total
-            )
+            format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
         };
+
+        let cpu_temp_str = match cpu_temp {
+            Some(t) => format!("{:.0}°C", t),
+            None    => "–".to_string(),
+        };
+
+        let status_text = format!(
+            "Работа: {} | К/С: {:.1} | ЦП: {:>3.0}% {} | Память: {}/{}МБ",
+            uptime_str, fps, cpu_load, cpu_temp_str, mem_available, mem_total
+        );
 
         // Render status line at bottom of screen
         let status_y = self.context.height as f32 - STATUS_LINE_Y_MARGIN; // 25 pixels from bottom
@@ -777,7 +773,7 @@ impl PageManager {
     // Memory Information
     // =============================================================================
 
-    /// Get system memory information (available memory in MB)
+    /// Get system memory information (total and available memory in MB)
     fn get_memory_info(&self) -> Result<(u32, u32), String> {
         // Read memory information from /proc/meminfo
         let meminfo = fs::read_to_string("/proc/meminfo")
@@ -801,6 +797,67 @@ impl PageManager {
         }
         
         Ok((mem_total, mem_available))
+    }
+
+    /// Get CPU load as a percentage, averaged across all cores.
+    /// Non-blocking: returns the last 3-second average updated by `sample_cpu_stat`.
+    fn get_cpu_load(&self) -> f32 {
+        self.cpu_load
+    }
+
+    /// Read a fresh /proc/stat snapshot and accumulate a per-frame CPU load sample.
+    /// Every CPU_LOAD_UPDATE_INTERVAL the accumulated samples are averaged and
+    /// committed to `cpu_load`. Must be called once per frame.
+    fn sample_cpu_stat(&mut self) {
+        const CPU_LOAD_UPDATE_INTERVAL: Duration = Duration::from_secs(3);
+
+        let stat = match fs::read_to_string("/proc/stat") {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let first_line = match stat.lines().next() {
+            Some(l) => l,
+            None => return,
+        };
+        // Format: cpu  user nice system idle iowait irq softirq steal guest guest_nice
+        let fields: Vec<u64> = first_line.split_whitespace()
+            .skip(1)  // skip the "cpu" label
+            .filter_map(|s| s.parse().ok())
+            .collect();
+        if fields.len() < 4 {
+            return;
+        }
+        let idle = fields[3] + fields.get(4).copied().unwrap_or(0); // idle + iowait
+        let total: u64 = fields.iter().sum();
+
+        if let Some((prev_idle, prev_total)) = self.last_cpu_stat {
+            let total_delta = total.saturating_sub(prev_total);
+            let idle_delta  = idle.saturating_sub(prev_idle);
+            if total_delta > 0 {
+                let sample = (1.0 - idle_delta as f32 / total_delta as f32) * 100.0;
+                self.cpu_load_samples.push(sample);
+            }
+        }
+        self.last_cpu_stat = Some((idle, total));
+
+        // Flush the average every CPU_LOAD_UPDATE_INTERVAL
+        if self.cpu_load_last_update.elapsed() >= CPU_LOAD_UPDATE_INTERVAL {
+            if !self.cpu_load_samples.is_empty() {
+                let avg = self.cpu_load_samples.iter().sum::<f32>()
+                    / self.cpu_load_samples.len() as f32;
+                self.cpu_load = avg;
+                self.cpu_load_samples.clear();
+            }
+            self.cpu_load_last_update = Instant::now();
+        }
+    }
+
+    /// Get CPU temperature in degrees Celsius from the thermal zone sysfs interface.
+    /// Returns None if the file is unavailable (e.g. not running on Raspberry Pi).
+    fn get_cpu_temperature(&self) -> Option<f32> {
+        let raw = fs::read_to_string("/sys/class/thermal/thermal_zone0/temp").ok()?;
+        let millidegrees: i32 = raw.trim().parse().ok()?;
+        Some(millidegrees as f32 / 1000.0)
     }
 
 }
