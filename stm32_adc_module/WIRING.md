@@ -3,6 +3,88 @@
 Wiring reference for the STM32F103C8T6 sensor acquisition module.
 All 12V car signals require external level conversion to 3.3V.
 
+---
+
+## Power Supply
+
+### Architecture
+
+All system components are powered from a single regulated **5V rail** derived from the
+car's ignition-switched 12V line via a **TPS40057-based synchronous buck converter**
+(5V / 5A output).
+
+```
+Car battery ── F1 (5A fuse) ── D1 (SS34 Schottky) ──┬── TPS40057 buck converter (5V/5A)
+                                                       │         │
+                                            (permanent │)        │ 5V regulated
+                                          for UPS charging       │
+                                                       │    ┌────┴──────────────────────┐
+                                                       │    │                           │
+                                               ┌───────▼──────────┐         ┌───────────▼──────┐
+                                               │  Pi UPS HAT      │         │  Display (USB)   │
+                                               │  (5V USB input)  │         └──────────────────┘
+                                               └───────┬──────────┘
+                                                       │ powers
+                                                ┌──────▼──────┐
+                                                │ Raspberry Pi │
+                                                │              ├──USB──► STM32 (data + VBUS)
+                                                └─────────────┘
+```
+
+### Powered components
+
+| Component         | Supply source              | Typical current |
+|-------------------|----------------------------|-----------------|
+| Raspberry Pi 4    | Pi UPS HAT (from 5V rail)  | 1.5–2.0 A       |
+| Display (7" HDMI) | 5V rail (USB)              | 0.4–0.8 A       |
+| STM32F103C8T6     | RPi USB port (VBUS)        | ~0.05 A         |
+| UPS HAT overhead  | 5V rail                    | ~0.3 A          |
+| **Total**         |                            | **~2.3–3.1 A**  |
+
+The 5A converter rating provides ~2A of headroom for display backlight peaks and
+cold-start current spikes.
+
+**STM32 power note:** The STM32 is powered entirely through its USB data cable to the
+Raspberry Pi. The RPi USB port supplies VBUS (5V), which feeds the Blue Pill's onboard
+AMS1117-3.3V LDO. No separate regulator or power wire is needed for the STM32.
+
+### TPS40057 converter
+
+| Parameter       | Value                     |
+|-----------------|---------------------------|
+| Topology        | Synchronous buck (controller) |
+| Input voltage   | Up to 40V (covers automotive load dumps) |
+| Output voltage  | 5V                        |
+| Output current  | 5A                        |
+| Efficiency      | ~90%+ at typical load     |
+
+### Input protection
+
+```
+Car 12V ── F1 (5A blade fuse) ── D1 (SS34 Schottky) ── TPS40057 VIN
+```
+
+| Component | Value / Part    | Purpose                                      |
+|-----------|-----------------|----------------------------------------------|
+| F1        | 5A automotive blade fuse | Protects car wiring from short circuit |
+| D1        | SS34 Schottky diode     | Reverse polarity protection (~0.3V drop at 3A) |
+
+No external TVS diode is required — the TPS40057's 40V-rated VIN handles
+automotive load dump transients directly.
+
+### Ignition vs. permanent 12V
+
+- **Ignition-switched 12V** → TPS40057 VIN. System powers on/off with the car.
+- **Permanent 12V** (optional) → Pi UPS HAT battery charging input directly.
+  Keeps the UPS battery topped up and allows the RPi to complete a clean
+  shutdown after ignition is cut, preventing SD card corruption.
+
+Verify the TPS40057 module's **VREG pin** (gate driver bias, rated 4.5–13.2V) is
+internally tied to VIN through a zener or LDO on your specific module, as is typical
+for automotive-input designs.
+
+---
+
 ## Protection notes
 
 All voltage divider outputs use a **BZX55C3V6** (DO-35, 3.6V, 500mW Zener) to GND as
