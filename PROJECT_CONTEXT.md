@@ -173,10 +173,23 @@ The FreeType text rendering system uses a specific coordinate convention that's 
 - Ensure intuitive operation with physical buttons only
 - Plan for extensibility and easy addition of new pages/features
 
+## Render Loop Performance
+
+FPS is hardware-controlled and cannot be increased beyond the display's refresh rate by software means alone.
+
+The render loop does **not** use any manual frame timing, sleep, or target FPS constant. All frame pacing is delegated entirely to the KMS/DRM layer:
+
+- `eglSwapInterval` has no practical effect here — the KMS/DRM path bypasses it.
+- Frame timing is governed by `drmModePageFlip` with the `DRM_MODE_PAGE_FLIP_EVENT` flag (0x01), which queues a vsync-aligned page flip. The completion event is consumed via `drmHandleEvent()` at the start of the next frame, using `select()` with a 50ms timeout as the wait mechanism.
+- This produces steady **60 FPS**, matching the display's 60Hz refresh rate.
+- If uncapped rendering is needed (e.g. for benchmarking), change the flag to `DRM_MODE_PAGE_FLIP_ASYNC` (0x02). This disables vsync alignment and allows 120+ FPS, but may produce visible tearing.
+- Any FPS below 60 indicates that a frame took longer than one vblank interval (16.67ms), causing a miss to the next vblank (30 FPS cliff), or that `drmModePageFlip` returned `-EBUSY` due to a pending flip event not being drained — both of which are handled by the current implementation.
+
 Raspberry Pi login:
 user
 @Niva21#
+root - standard password (1 numeric char)
 
 ---
 *Created: August 26, 2025*
-*Last Updated: May 24, 2026*
+*Last Updated: May 25, 2026*

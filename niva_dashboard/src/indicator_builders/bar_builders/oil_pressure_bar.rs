@@ -27,7 +27,7 @@ pub fn build_oil_pressure_bar(
 
     // Text styling from UI configuration
     let font_path = ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH);
-    let title_font_size = ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 14) as u32;
+    let title_font_size = ui_style.get_integer(TEXT_PRIMARY_FONT_SIZE, 14) as u32;
     let unit_font_size = ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32;
     let scale_font_size = ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32;
     let text_color = BAR_MARK_LABELS_COLOR;

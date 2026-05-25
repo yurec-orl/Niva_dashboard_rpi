@@ -75,8 +75,8 @@ impl LabelDecorator {
         
         // Calculate vertical position
         let y = match self.alignment_v {
-            DecoratorAlignmentV::Top => bounds.y - text_height - 5.0, // 5px margin
-            DecoratorAlignmentV::Bottom => bounds.y + bounds.height + 5.0,
+            DecoratorAlignmentV::Top => bounds.y - text_height - 10.0, // 10px margin
+            DecoratorAlignmentV::Bottom => bounds.y + bounds.height + 10.0,
             DecoratorAlignmentV::Center => bounds.y + (bounds.height - text_height) / 2.0,
         };
         

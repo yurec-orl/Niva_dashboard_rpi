@@ -131,6 +131,7 @@ extern "C" {
         flags: u32,
         user_data: *mut c_void,
     ) -> c_int;
+    fn drmHandleEvent(fd: c_int, evctx: *mut DrmEventContext) -> c_int;
     
     // GBM functions
     fn gbm_create_device(fd: c_int) -> *mut c_void;
@@ -163,6 +164,17 @@ const DRM_MODE_CONNECTED: u32 = 1;
 
 // DRM page flip flags
 const DRM_MODE_PAGE_FLIP_EVENT: u32 = 0x01;
+
+// DRM event context version
+const DRM_EVENT_CONTEXT_VERSION: u32 = 2;
+
+/// DRM event context for handling vblank/page-flip events via drmHandleEvent()
+#[repr(C)]
+struct DrmEventContext {
+    version: u32,
+    vblank_handler: Option<unsafe extern "C" fn(c_int, u32, u32, u32, *mut c_void)>,
+    page_flip_handler: Option<unsafe extern "C" fn(c_int, u32, u32, u32, *mut c_void)>,
+}
 
 // Basic DRM structures (simplified)
 #[repr(C)]
@@ -282,6 +294,84 @@ pub enum TextOrientation {
     Vertical,    // Characters stacked vertically (top-to-bottom, not rotated)
 }
 
+/// Converts a FreeType error code into a human-readable description.
+/// Covers the most common error codes defined in freetype/fterrdef.h.
+fn ft_error_description(code: freetype_sys::FT_Error) -> &'static str {
+    match code {
+        0x00 => "no error",
+        0x01 => "cannot open resource",
+        0x02 => "unknown file format",
+        0x03 => "broken file: invalid content",
+        0x04 => "invalid FreeType version",
+        0x05 => "module version is too low",
+        0x06 => "invalid argument",
+        0x07 => "unimplemented feature",
+        0x08 => "broken table",
+        0x09 => "broken offset within table",
+        0x0A => "array allocation size too large",
+        0x0B => "missing module",
+        0x0C => "missing property",
+        0x10 => "invalid glyph index",
+        0x11 => "invalid character code",
+        0x12 => "unsupported glyph image format",
+        0x13 => "cannot render this glyph format",
+        0x14 => "invalid outline",
+        0x15 => "invalid composite glyph",
+        0x16 => "too many hints",
+        0x17 => "invalid pixel size",
+        0x18 => "invalid SVG document",
+        0x20 => "invalid object handle",
+        0x21 => "invalid library handle",
+        0x22 => "invalid module handle",
+        0x23 => "invalid face handle",
+        0x24 => "invalid size handle",
+        0x25 => "invalid glyph slot handle",
+        0x26 => "invalid charmap handle",
+        0x27 => "invalid cache manager handle",
+        0x28 => "invalid stream handle",
+        0x30 => "too many modules",
+        0x31 => "too many extensions",
+        0x40 => "out of memory",
+        0x41 => "unlisted object",
+        0x51 => "cannot open stream",
+        0x52 => "invalid stream seek",
+        0x53 => "invalid stream skip",
+        0x54 => "invalid stream read",
+        0x55 => "invalid stream operation",
+        0x56 => "invalid frame operation",
+        0x57 => "nested frame access",
+        0x58 => "invalid frame read",
+        0x60 => "raster uninitialized",
+        0x61 => "raster corrupted",
+        0x62 => "raster overflow",
+        0x63 => "negative height while rastering",
+        0x70 => "too many registered caches",
+        0x80 => "invalid opcode",
+        0x81 => "too few arguments",
+        0x82 => "stack overflow",
+        0x83 => "code overflow",
+        0x84 => "bad argument",
+        0x85 => "division by zero",
+        0x86 => "invalid reference",
+        0x87 => "found debug opcode",
+        0x88 => "found ENDF opcode in execution stream",
+        0x89 => "nested DEFS",
+        0x8A => "invalid code range",
+        0x8B => "execution context too long",
+        0x8C => "too many function definitions",
+        0x8D => "too many instruction definitions",
+        0x8E => "SFNT font table missing",
+        0x8F => "horizontal header (hhea) table missing",
+        0x90 => "locations (loca) table missing",
+        0x91 => "name table missing",
+        0x92 => "character map (cmap) table missing",
+        0x93 => "horizontal metrics (hmtx) table missing",
+        0x94 => "PostScript (post) table missing",
+        0x95 => "OS/2 table missing",
+        _    => "unknown error",
+    }
+}
+
 /// Graphics context using KMS/DRM backend with OpenGL ES
 pub struct GraphicsContext {
     // DRM/KMS handles
@@ -304,6 +394,7 @@ pub struct GraphicsContext {
     // Framebuffer management
     current_fb: u32,
     previous_fb: u32,
+    flip_pending: bool,
     
     // Display properties
     pub width: i32,
@@ -332,6 +423,15 @@ pub struct GraphicsContext {
     display_configured: bool,
 }
 
+/// No-op page flip handler — we only need to drain the DRM event, not inspect it.
+unsafe extern "C" fn page_flip_handler_stub(
+    _fd: c_int,
+    _sequence: u32,
+    _tv_sec: u32,
+    _tv_usec: u32,
+    _user_data: *mut c_void,
+) {}
+
 impl GraphicsContext {
     /// Create a new graphics context with KMS/DRM backend
     pub fn new(title: &str, width: i32, height: i32) -> Result<Self, String> {
@@ -349,6 +449,7 @@ impl GraphicsContext {
             previous_crtc: ptr::null_mut(),
             current_fb: 0,
             previous_fb: 0,
+            flip_pending: false,
             width,
             height,
             text_renderers: HashMap::new(),
@@ -757,6 +858,32 @@ impl GraphicsContext {
     /// Handle page flipping for smooth double buffering
     fn page_flip_display(&mut self) {
         unsafe {
+            // If a page flip is already queued, wait for its vblank event before proceeding.
+            // Without this, drmModePageFlip returns -EBUSY and we fall back to drmModeSetCrtc,
+            // which causes erratic frame timing (60 → 30 FPS cliff effect).
+            if self.flip_pending {
+                let mut evctx = DrmEventContext {
+                    version: DRM_EVENT_CONTEXT_VERSION,
+                    vblank_handler: None,
+                    page_flip_handler: Some(page_flip_handler_stub),
+                };
+                // Use select() to wait up to 50ms for the event (one full vblank at 60Hz = 16.7ms)
+                let mut fds: libc::fd_set = std::mem::zeroed();
+                libc::FD_SET(self.drm_fd, &mut fds);
+                let mut timeout = libc::timeval { tv_sec: 0, tv_usec: 50_000 };
+                let ready = libc::select(
+                    self.drm_fd + 1,
+                    &mut fds,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    &mut timeout,
+                );
+                if ready > 0 {
+                    drmHandleEvent(self.drm_fd, &mut evctx);
+                }
+                self.flip_pending = false;
+            }
+
             // Get the current front buffer from GBM
             let bo = gbm_surface_lock_front_buffer(self.gbm_surface);
             if bo.is_null() {
@@ -781,7 +908,7 @@ impl GraphicsContext {
             );
             
             if result == 0 {
-                // Try page flip first (smooth, async)
+                // Queue a vsync-aligned page flip
                 let flip_result = drmModePageFlip(
                     self.drm_fd,
                     self.crtc_id,
@@ -791,14 +918,15 @@ impl GraphicsContext {
                 );
                 
                 if flip_result == 0 {
-                    // Page flip successful - clean up old framebuffer
+                    // Flip queued — mark pending and rotate framebuffers
+                    self.flip_pending = true;
                     if self.previous_fb != 0 {
                         drmModeRmFB(self.drm_fd, self.previous_fb);
                     }
                     self.previous_fb = self.current_fb;
                     self.current_fb = new_fb_id;
                 } else {
-                    // Page flip failed - fallback to immediate mode set (might flicker)
+                    // Page flip failed — fallback to immediate modeset
                     let mut connector_id = self.connector_id;
                     let mut mode = self.mode;
                     let crtc_result = drmModeSetCrtc(
@@ -813,13 +941,11 @@ impl GraphicsContext {
                     );
                     
                     if crtc_result == 0 {
-                        // Clean up old framebuffer
                         if self.current_fb != 0 {
                             drmModeRmFB(self.drm_fd, self.current_fb);
                         }
                         self.current_fb = new_fb_id;
                     } else {
-                        // Both failed - clean up new framebuffer
                         drmModeRmFB(self.drm_fd, new_fb_id);
                     }
                 }
@@ -2166,9 +2292,11 @@ impl OpenGLTextRenderer {
         let mut ft_face: ft::FT_Face = std::ptr::null_mut();
         let font_path_cstr = std::ffi::CString::new(font_path).map_err(|_| "Invalid font path")?;
         
-        if ft::FT_New_Face(ft_library, font_path_cstr.as_ptr(), 0, &mut ft_face) != 0 {
+        let ft_error = ft::FT_New_Face(ft_library, font_path_cstr.as_ptr(), 0, &mut ft_face);
+        if ft_error != 0 {
             ft::FT_Done_FreeType(ft_library);
-            return Err(format!("Failed to load font: {}", font_path));
+            return Err(format!("Failed to load font '{}': FreeType error code 0x{:02X} ({})",
+                font_path, ft_error, ft_error_description(ft_error)));
         }
         
         // Set font size

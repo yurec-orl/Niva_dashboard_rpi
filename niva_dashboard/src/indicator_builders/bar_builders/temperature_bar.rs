@@ -27,7 +27,7 @@ pub fn build_temperature_bar(
 
     // Text styling from UI configuration
     let font_path = ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH);
-    let title_font_size = ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 14) as u32;
+    let title_font_size = ui_style.get_integer(TEXT_PRIMARY_FONT_SIZE, 14) as u32;
     let unit_font_size = ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32;
     let scale_font_size = ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32;
     let text_color = BAR_MARK_LABELS_COLOR;
@@ -60,7 +60,7 @@ pub fn build_temperature_bar(
             )),
             // Scale with marks
             Box::new(VerticalBarScaleDecorator::new(
-                vec!["120-".into(), "90-".into(), "50-".into()],
+                vec!["120".into(), "90".into(), "50".into()],
                 font_path,
                 scale_font_size,
                 text_color,
