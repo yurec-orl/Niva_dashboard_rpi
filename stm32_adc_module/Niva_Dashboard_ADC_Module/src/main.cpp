@@ -33,16 +33,16 @@
 //
 // === Pulse/Counter Inputs (interrupt-capable) ===
 //
-//   PA8  (TIM1_CH1) — Tachometer signal, 2 pulses per revolution
-//   PA9  (TIM1_CH2) — Speed sensor signal, 4 pulses per revolution
+//   PB0  (EXTI0) — Tachometer signal, 2 pulses per revolution
+//   PB1  (EXTI1) — Speed sensor signal, 4 pulses per revolution
 //
-//   Using hardware timer input capture for jitter-free pulse counting.
-//   5V sensor signals need a voltage divider or level shifter to 3.3V.
+//   Using external interrupts (EXTI) for pulse counting.
+//   12V sensor signals go through voltage divider + 1nF filter cap to 3.3V.
 //
 // === Digital Indicator Inputs ===
 //
-//   PB0  — Oil pressure low warning        (INPUT_PULLUP, active-low)
-//   PB1  — Fuel low warning                (INPUT_PULLUP, active-low)
+//   PA8  — Oil pressure low warning        (INPUT_PULLUP, active-low)
+//   PA9  — Fuel low warning                (INPUT_PULLUP, active-low)
 //   PB3  — Charging indicator              (INPUT_PULLUP, active-low)
 //   PB4  — Exterior lights on              (INPUT, active-high)
 //   PB5  — Brake fluid low                 (INPUT, active-high)
@@ -120,14 +120,14 @@
 //   PA5   | Button 5                | GPIO IN PU  | Active-low, 3.3V direct
 //   PA6   | Button 6                | GPIO IN PU  | Active-low, 3.3V direct
 //   PA7   | Button 7                | GPIO IN PU  | Active-low, 3.3V direct
-//   PA8   | Tachometer pulse        | TIM1_CH1    | Ext. level shift to 3.3V
-//   PA9   | Speed sensor pulse      | TIM1_CH2    | Ext. level shift to 3.3V
+//   PA8   | Oil pressure warning    | GPIO IN PU  | Active-low, level shifted
+//   PA9   | Fuel low warning        | GPIO IN PU  | Active-low, level shifted
 //   PA10  | (free / future use)     |             |
 //   PA11  | USB D-                  | USB         | To Raspberry Pi
 //   PA12  | USB D+                  | USB         | To Raspberry Pi
 //   PA15  | Diff lock indicator     | GPIO IN PU  | Active-low, level shifted
-//   PB0   | Oil pressure warning    | GPIO IN PU  | Active-low, level shifted
-//   PB1   | Fuel low warning        | GPIO IN PU  | Active-low, level shifted
+//   PB0   | Tachometer pulse        | EXTI0       | Divider + 1nF cap, level shifted
+//   PB1   | Speed sensor pulse      | EXTI1       | Divider + 1nF cap, level shifted
 //   PB3   | Charging indicator      | GPIO IN PU  | Active-low, level shifted
 //   PB4   | Exterior lights         | GPIO IN     | Active-high, level shifted
 //   PB5   | Brake fluid low         | GPIO IN     | Active-high, level shifted
@@ -157,6 +157,17 @@
 
 #include <Arduino.h>
 
-// TODO: Implement STM32 firmware
-// This file currently serves as pin mapping documentation.
-// Full implementation will follow.
+// PC13 — onboard Blue Pill LED, active-low (LOW = on, HIGH = off)
+#define LED_PIN PC13
+
+void setup() {
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, HIGH); // off initially
+}
+
+void loop() {
+  digitalWrite(LED_PIN, LOW);  // on
+  delay(1000);
+  digitalWrite(LED_PIN, HIGH); // off
+  delay(1000);
+}

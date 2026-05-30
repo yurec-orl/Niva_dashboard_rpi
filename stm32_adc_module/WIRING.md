@@ -15,31 +15,31 @@ car's ignition-switched 12V line via a **TPS40057-based synchronous buck convert
 
 ```
 Car battery ── F1 (5A fuse) ── D1 (SS34 Schottky) ──┬── TPS40057 buck converter (5V/5A)
-                                                       │         │
-                                            (permanent │)        │ 5V regulated
-                                          for UPS charging       │
-                                                       │    ┌────┴──────────────────────┐
-                                                       │    │                           │
-                                               ┌───────▼──────────┐         ┌───────────▼──────┐
+                                                                 │
+                                                                 │ 5V regulated
+                                                                 │
+                                                            ┌────┴──────────────────────┐
+                                                            │                           │
+                                               ┌──────────────────┐         ┌───────────▼──────┐
                                                │  Pi UPS HAT      │         │  Display (USB)   │
                                                │  (5V USB input)  │         └──────────────────┘
                                                └───────┬──────────┘
                                                        │ powers
-                                                ┌──────▼──────┐
+                                                ┌──────▼───────┐
                                                 │ Raspberry Pi │
                                                 │              ├──USB──► STM32 (data + VBUS)
-                                                └─────────────┘
+                                                └──────────────┘
 ```
 
 ### Powered components
 
-| Component         | Supply source              | Typical current |
-|-------------------|----------------------------|-----------------|
-| Raspberry Pi 4    | Pi UPS HAT (from 5V rail)  | 1.5–2.0 A       |
-| Display (7" HDMI) | 5V rail (USB)              | 0.4–0.8 A       |
-| STM32F103C8T6     | RPi USB port (VBUS)        | ~0.05 A         |
-| UPS HAT overhead  | 5V rail                    | ~0.3 A          |
-| **Total**         |                            | **~2.3–3.1 A**  |
+| Component         | Supply source             | Typical current |
+|-------------------|---------------------------|-----------------|
+| Raspberry Pi 4    | Pi UPS HAT (from 5V rail) | 1.5–2.0 A       |
+| Display (7" HDMI) | 5V rail (USB)             | 0.4–0.8 A       |
+| STM32F103C8T6     | RPi USB port (VBUS)       | ~0.05 A         |
+| UPS HAT overhead  | 5V rail                   | ~0.3 A          |
+| **Total**         |                           | **~2.3–3.1 A**  |
 
 The 5A converter rating provides ~2A of headroom for display backlight peaks and
 cold-start current spikes.
@@ -50,13 +50,13 @@ AMS1117-3.3V LDO. No separate regulator or power wire is needed for the STM32.
 
 ### TPS40057 converter
 
-| Parameter       | Value                     |
-|-----------------|---------------------------|
-| Topology        | Synchronous buck (controller) |
-| Input voltage   | Up to 40V (covers automotive load dumps) |
-| Output voltage  | 5V                        |
-| Output current  | 5A                        |
-| Efficiency      | ~90%+ at typical load     |
+| Parameter      | Value                                    |
+|----------------|------------------------------------------|
+| Topology       | Synchronous buck (controller)            |
+| Input voltage  | Up to 40V (covers automotive load dumps) |
+| Output voltage | 5V                                       |
+| Output current | 5A                                       |
+| Efficiency     | ~90%+ at typical load                    |
 
 ### Input protection
 
@@ -64,10 +64,10 @@ AMS1117-3.3V LDO. No separate regulator or power wire is needed for the STM32.
 Car 12V ── F1 (5A blade fuse) ── D1 (SS34 Schottky) ── TPS40057 VIN
 ```
 
-| Component | Value / Part    | Purpose                                      |
-|-----------|-----------------|----------------------------------------------|
-| F1        | 5A automotive blade fuse | Protects car wiring from short circuit |
-| D1        | SS34 Schottky diode     | Reverse polarity protection (~0.3V drop at 3A) |
+| Component | Value / Part             | Purpose                                        |
+|-----------|--------------------------|------------------------------------------------|
+| F1        | 5A automotive blade fuse | Protects car wiring from short circuit         |
+| D1        | SS34 Schottky diode      | Reverse polarity protection (~0.3V drop at 3A) |
 
 No external TVS diode is required — the TPS40057's 40V-rated VIN handles
 automotive load dump transients directly.
@@ -113,10 +113,10 @@ No hardware filter capacitors — filtering is done in firmware.
 
 ```
 Sensor wire ── R1 ──┬── PA_x (ADC input)
-                     │
-                    R2      D1 (3.6V Zener)
-                     │        │
-                    GND      GND
+                    │
+                   R2      D1 (3.6V Zener)
+                    │        │
+                   GND      GND
 ```
 
 ### PA0, PA1, PA2 — Sensor inputs (0–16V range)
@@ -125,10 +125,10 @@ Oil pressure, fuel level, and coolant temperature sensors.
 Tapped from existing car instrument cluster wiring.
 Target: 16V input → 3.3V at ADC pin.
 
-| Component   | Value                       | Notes                                                       |
-|-------------|-----------------------------|-------------------------------------------------------------|
-| R1 (top)    | 39 kΩ                       | 1/4W through-hole axial                                     |
-| R2 (bottom) | 10 kΩ                       | 1/4W through-hole axial; Vout = 16V × 10k/(39k+10k) = 3.27V |
+| Component   | Value                         | Notes                                                       |
+|-------------|-------------------------------|-------------------------------------------------------------|
+| R1 (top)    | 39 kΩ                         | 1/4W through-hole axial                                     |
+| R2 (bottom) | 10 kΩ                         | 1/4W through-hole axial; Vout = 16V × 10k/(39k+10k) = 3.27V |
 | D1          | BZX55C3V6 (3.6V Zener, DO-35) | Overvoltage clamp to protect ADC                            |
 
 Divider ratio: ×0.204. Normal 12V sensor range maps to 0–2.45V at ADC.
@@ -140,10 +140,10 @@ At 12-bit resolution: ~0.81 mV/count → ~3.9 mV/count referred to input.
 Direct measurement of the car battery/alternator voltage.
 Target: 20V input → 3.3V at ADC pin (allows detecting overvoltage/regulator failure).
 
-| Component   | Value                       | Notes                                                                    |
-|-------------|-----------------------------|--------------------------------------------------------------------------|
-| R1 (top)    | 51 kΩ                       | 1/4W through-hole axial; higher impedance acceptable for voltage sensing |
-| R2 (bottom) | 10 kΩ                       | 1/4W through-hole axial; Vout = 20V × 10k/(51k+10k) = 3.28V              |
+| Component   | Value                         | Notes                                                                    |
+|-------------|-------------------------------|--------------------------------------------------------------------------|
+| R1 (top)    | 51 kΩ                         | 1/4W through-hole axial; higher impedance acceptable for voltage sensing |
+| R2 (bottom) | 10 kΩ                         | 1/4W through-hole axial; Vout = 20V × 10k/(51k+10k) = 3.28V              |
 | D1          | BZX55C3V6 (3.6V Zener, DO-35) | Clamps load dump spikes                                                  |
 
 Divider ratio: ×0.164. Normal 14V → 2.30V at ADC.
@@ -161,23 +161,23 @@ Software cannot correct spurious edges after they have already been counted.
 
 ```
 Pulse sensor ── R1 ──┬── PA8/PA9 (TIM1 input)
-                      │
-                     R2      C1 (1nF)     D1 (3.6V Zener)
-                      │        │              │
-                     GND      GND            GND
+                     │
+                    R2      C1 (1nF)     D1 (3.6V Zener)
+                     │        │              │
+                    GND      GND            GND
 ```
 
-| Component   | Value                       | Notes                                                           |
-|-------------|-----------------------------|-----------------------------------------------------------------|
-| R1 (top)    | 10 kΩ                       | 1/4W through-hole axial; limits current during transients       |
-| R2 (bottom) | 3.9 kΩ                      | 1/4W through-hole axial; Vout = 12V × 3.9k/(10k+3.9k) = 3.37V   |
-| C1          | 1 nF ceramic                | Radial, 2.54mm pitch; suppresses ringing, preserves pulse edges |
+| Component   | Value                         | Notes                                                           |
+|-------------|-------------------------------|-----------------------------------------------------------------|
+| R1 (top)    | 10 kΩ                         | 1/4W through-hole axial; limits current during transients       |
+| R2 (bottom) | 3.9 kΩ                        | 1/4W through-hole axial; Vout = 12V × 3.9k/(10k+3.9k) = 3.37V   |
+| C1          | 1 nF ceramic                  | Radial, 2.54mm pitch; suppresses ringing, preserves pulse edges |
 | D1          | BZX55C3V6 (3.6V Zener, DO-35) | Clamps spikes from ignition noise                               |
 
 | Pin | Signal               |
 |-----|----------------------|
-| PA8 | Tachometer (2 PPR)   |
-| PA9 | Speed sensor (4 PPR) |
+| PB0 | Tachometer (2 PPR)   |
+| PB1 | Speed sensor (4 PPR) |
 
 ---
 
@@ -189,15 +189,15 @@ is open-circuit (wire disconnected). The divider scales 12V down to 3.3V.
 
 ```
 Car 12V line ── R1 ──┬── PB_x (GPIO input, pull-up enabled)
-                      │
-                     R2      D1 (3.6V Zener)
-                      │        │
-                     GND      GND
+                     │
+                    R2      D1 (3.6V Zener)
+                     │        │
+                    GND      GND
 ```
 
-| Component   | Value                       | Notes                                                                                    |
-|-------------|-----------------------------|------------------------------------------------------------------------------------------|
-| R1 (top)    | 10 kΩ                       | 1/4W through-hole axial; current-limiting, also forms divider with R2                    |
+| Component   | Value                         | Notes                                                                                    |
+|-------------|-------------------------------|------------------------------------------------------------------------------------------|
+| R1 (top)    | 10 kΩ                         | 1/4W through-hole axial; current-limiting, also forms divider with R2                    |
 | R2 (bottom) | 3.9 kΩ                        | 1/4W through-hole axial; Vout = 12V × 3.9k/(10k+3.9k) = 3.37V → clamped to 3.6V by Zener |
 | D1          | BZX55C3V6 (3.6V Zener, DO-35) | Overvoltage clamp                                                                        |
 
@@ -207,8 +207,8 @@ When sensor open: 12V through divider → ~3.3V (logic high, idle state).
 
 | Pin  | Signal                   |
 |------|--------------------------|
-| PB0  | Oil pressure low warning |
-| PB1  | Fuel low warning         |
+| PA8  | Oil pressure low warning |
+| PA9  | Fuel low warning         |
 | PB3  | Charging indicator       |
 | PB9  | Parking brake on         |
 | PA15 | Diff lock on             |
@@ -223,16 +223,16 @@ which reads as logic low). R2 provides a weak pull-down to ensure a clean 0V at 
 
 ```
 Car 12V line ── R1 ──┬── PB_x (GPIO input, no pull-up)
-                      │
-                     R2      D1 (3.6V Zener)
-                      │        │
-                     GND      GND
+                     │
+                    R2      D1 (3.6V Zener)
+                     │        │
+                    GND      GND
 ```
 
-| Component   | Value                       | Notes                                                             |
-|-------------|-----------------------------|-------------------------------------------------------------------|
-| R1 (top)    | 10 kΩ                       | 1/4W through-hole axial; current-limiting + divider               |
-| R2 (bottom) | 3.9 kΩ                      | 1/4W through-hole axial; also acts as pull-down when signal is 0V |
+| Component   | Value                         | Notes                                                             |
+|-------------|-------------------------------|-------------------------------------------------------------------|
+| R1 (top)    | 10 kΩ                         | 1/4W through-hole axial; current-limiting + divider               |
+| R2 (bottom) | 3.9 kΩ                        | 1/4W through-hole axial; also acts as pull-down when signal is 0V |
 | D1          | BZX55C3V6 (3.6V Zener, DO-35) | Overvoltage clamp                                                 |
 
 When signal is 12V: divider output ~3.3V → logic high.
@@ -296,5 +296,5 @@ for BSS138 board wiring details.
 | 10 kΩ resistor, 1/4W           | Axial through-hole   | 16       | Analog R2 (×4), pulse R1 (×2), digital R1 (×10)       |
 | 3.9 kΩ resistor, 1/4W          | Axial through-hole   | 12       | Pulse R2 (×2), digital R2 (×10)                       |
 | BZX55C3V6 Zener 3.6V, 500mW    | DO-35 through-hole   | 16       | All divider outputs (4 analog + 2 pulse + 10 digital) |
-| 1 nF ceramic capacitor         | Radial, 2.54mm pitch | 2        | Pulse input ringing suppression (PA8, PA9)            |
+| 1 nF ceramic capacitor         | Radial, 2.54mm pitch | 2        | Pulse input ringing suppression (PB0, PB1)            |
 | 1N4148 signal diode (optional) | DO-35 through-hole   | 8        | ESD protection for button pins                        |
