@@ -24,6 +24,20 @@ On-screen text is in Russian, with a military-style abbreviations and shortened 
 [BTN]           [BTN]
 ```
 
+## Power Supply Layout
+```
+Car 12V
+  └── XWST XW-0945-5-40W-ISO (DC-DC, 9-45V in, 5V 8A out, isolated)
+        └── UPS HAT (battery-backed 5V supply)
+              └── Raspberry Pi 4
+                    ├── USB port → Display (power only, video via HDMI)
+                    └── USB port → STM32 ADC module
+```
+- **XWST** is the primary power source, handles automotive voltage transients and spikes (up to 45V)
+- **UPS HAT** provides battery backup and clean 5V to the Pi
+- **Display** is powered via Pi USB port (software-controlled via `uhubctl`)
+- **STM32 ADC module** is powered via Pi USB port
+
 ## Software Architecture
 
 ### Core Components
