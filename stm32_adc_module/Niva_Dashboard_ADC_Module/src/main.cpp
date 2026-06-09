@@ -154,20 +154,267 @@
 // Free pins (available for future expansion):
 //   PA10, PB2 (if BOOT1 not needed at runtime)
 // ============================================================
+//
+// Problem with USB enumeration on Blue Pill clones: R10 resistor across 3v3
+// and D+ (PA12) has wrong value (10kΩ instead of 1.5kΩ)
+// Hardware fix applied on this board: 2kΩ resistor soldered in parallel
+// with R10 (10kΩ), giving ~1.67kΩ effective — within USB Full Speed spec.
 
 #include <Arduino.h>
+#include <HardwareTimer.h>
 
-// PC13 — onboard Blue Pill LED, active-low (LOW = on, HIGH = off)
-#define LED_PIN PC13
+// ============================================================
+// Pin definitions
+// ============================================================
 
-void setup() {
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, HIGH); // off initially
+// Analog inputs (12-bit ADC via voltage dividers)
+#define PIN_OIL_PRESS_ANA   PA0
+#define PIN_FUEL_LEVEL_ANA  PA1
+#define PIN_COOLANT_ANA     PA2
+#define PIN_VOLTAGE_ANA     PA3
+
+// Pulse inputs (EXTI interrupt-based counting)
+#define PIN_TACHO           PB0   // Tachometer, 2 PPR
+#define PIN_SPEED           PB1   // Speed sensor, 4 PPR
+
+// Digital indicators — active-low (INPUT_PULLUP)
+#define PIN_D_OIL_WARN      PA8   // D0
+#define PIN_D_FUEL_WARN     PA9   // D1
+#define PIN_D_CHARGING      PB3   // D2
+#define PIN_D_PARKING       PB9   // D8
+#define PIN_D_DIFF_LOCK     PA15  // D9
+
+// Digital indicators — active-high (INPUT, R2 acts as pull-down)
+#define PIN_D_EXT_LIGHTS    PB4   // D3
+#define PIN_D_BRAKE_FLUID   PB5   // D4
+#define PIN_D_HEADLIGHTS    PB6   // D5
+#define PIN_D_TURN          PB7   // D6
+#define PIN_D_HIGHBEAMS     PB8   // D7
+
+// Buttons — active-low (INPUT_PULLUP), B0..B7
+static const uint32_t BTN_PINS[8] = {
+    PB12, PB13, PB14, PB15,   // B0..B3 (left column)
+    PA4,  PA5,  PA6,  PA7     // B4..B7 (right column)
+};
+
+// K-Line UART (USART3 via L9637D + BSS138)
+// RX=PB11, TX=PB10
+HardwareSerial KLine(PB11, PB10);
+
+// Onboard LED (active-low)
+#define PIN_LED             PC13
+
+// ============================================================
+// Configuration
+// ============================================================
+
+#define TICK_HZ             50          // data frame rate (Hz)
+#define ADC_OVERSAMPLE      16          // samples averaged per ADC channel
+#define BTN_DEBOUNCE_MASK   0xFF        // 8 consecutive reads to confirm state
+#define KLINE_BUF_SIZE      64          // K-Line RX ring buffer size
+
+// ============================================================
+// Pulse counters — updated in ISR, read atomically in loop
+// ============================================================
+
+static volatile uint32_t tacho_count = 0;
+static volatile uint32_t speed_count = 0;
+
+void tacho_isr() { tacho_count++; }
+void speed_isr() { speed_count++; }
+
+// ============================================================
+// 50 Hz tick flag — set by hardware timer ISR
+// ============================================================
+
+static volatile bool tick_flag = false;
+
+void on_tick() { tick_flag = true; }
+
+// ============================================================
+// Button debounce state
+// ============================================================
+
+static uint8_t btn_history[8];
+static uint8_t btn_state[8];
+
+// ============================================================
+// K-Line RX ring buffer
+// ============================================================
+
+static uint8_t kline_buf[KLINE_BUF_SIZE];
+static uint8_t kline_head = 0;
+static uint8_t kline_tail = 0;
+
+// ============================================================
+// Helpers
+// ============================================================
+
+// Average ADC_OVERSAMPLE reads — reduces noise, effective extra bits
+static uint16_t read_adc_avg(uint32_t pin) {
+    uint32_t sum = 0;
+    for (int i = 0; i < ADC_OVERSAMPLE; i++) {
+        sum += analogRead(pin);
+    }
+    return (uint16_t)(sum / ADC_OVERSAMPLE);
 }
 
+// Active-low: LOW = asserted = 1
+static inline uint8_t read_lo(uint32_t pin) {
+    return digitalRead(pin) == LOW ? 1 : 0;
+}
+
+// Active-high: HIGH = asserted = 1
+static inline uint8_t read_hi(uint32_t pin) {
+    return digitalRead(pin) == HIGH ? 1 : 0;
+}
+
+// ============================================================
+// setup()
+// ============================================================
+
+void setup() {
+    // LED on during init
+    pinMode(PIN_LED, OUTPUT);
+    digitalWrite(PIN_LED, LOW);
+
+    // ADC: 12-bit resolution (default on STM32, explicit for clarity)
+    analogReadResolution(12);
+
+    // Pulse inputs — no pull (external divider + Zener provides defined levels)
+    pinMode(PIN_TACHO, INPUT);
+    pinMode(PIN_SPEED, INPUT);
+    attachInterrupt(digitalPinToInterrupt(PIN_TACHO), tacho_isr, RISING);
+    attachInterrupt(digitalPinToInterrupt(PIN_SPEED), speed_isr, RISING);
+
+    // Digital indicators — active-low (external divider idles at ~3.3V = HIGH)
+    pinMode(PIN_D_OIL_WARN,    INPUT_PULLUP);
+    pinMode(PIN_D_FUEL_WARN,   INPUT_PULLUP);
+    pinMode(PIN_D_CHARGING,    INPUT_PULLUP);
+    pinMode(PIN_D_PARKING,     INPUT_PULLUP);
+    pinMode(PIN_D_DIFF_LOCK,   INPUT_PULLUP);
+
+    // Digital indicators — active-high (R2 pull-down holds 0V when signal is off)
+    pinMode(PIN_D_EXT_LIGHTS,  INPUT);
+    pinMode(PIN_D_BRAKE_FLUID, INPUT);
+    pinMode(PIN_D_HEADLIGHTS,  INPUT);
+    pinMode(PIN_D_TURN,        INPUT);
+    pinMode(PIN_D_HIGHBEAMS,   INPUT);
+
+    // Buttons — active-low, direct 3.3V connection
+    for (int i = 0; i < 8; i++) {
+        pinMode(BTN_PINS[i], INPUT_PULLUP);
+        btn_history[i] = BTN_DEBOUNCE_MASK; // assume released at startup
+        btn_state[i] = 0;
+    }
+
+    // K-Line UART — ISO 9141-2 / KWP2000 baud rate
+    KLine.begin(10400);
+
+    // Serial.begin() hands PA12 to the USB peripheral from here
+    Serial.begin(115200);
+
+    // 50 Hz tick timer — TIM2 (free on Blue Pill, not used by Arduino core)
+    HardwareTimer *ticker = new HardwareTimer(TIM2);
+    ticker->setOverflow(TICK_HZ, HERTZ_FORMAT);
+    ticker->attachInterrupt(on_tick);
+    ticker->resume();
+
+    // Init complete — LED off
+    digitalWrite(PIN_LED, HIGH);
+}
+
+// ============================================================
+// loop()
+// ============================================================
+
 void loop() {
-  digitalWrite(LED_PIN, LOW);  // on
-  delay(1000);
-  digitalWrite(LED_PIN, HIGH); // off
-  delay(1000);
+    // Spin until the 50 Hz tick fires
+    if (!tick_flag) return;
+    tick_flag = false;
+
+    // ----------------------------------------------------------
+    // 1. ADC — 4 channels, oversampled
+    // ----------------------------------------------------------
+    uint16_t adc[4];
+    adc[0] = read_adc_avg(PIN_OIL_PRESS_ANA);
+    adc[1] = read_adc_avg(PIN_FUEL_LEVEL_ANA);
+    adc[2] = read_adc_avg(PIN_COOLANT_ANA);
+    adc[3] = read_adc_avg(PIN_VOLTAGE_ANA);
+
+    // ----------------------------------------------------------
+    // 2. Pulse counters — atomic snapshot and reset
+    // ----------------------------------------------------------
+    noInterrupts();
+    uint32_t tacho = tacho_count; tacho_count = 0;
+    uint32_t speed = speed_count; speed_count = 0;
+    interrupts();
+
+    // ----------------------------------------------------------
+    // 3. Digital indicators — D0..D9
+    // ----------------------------------------------------------
+    uint8_t d[10];
+    d[0] = read_lo(PIN_D_OIL_WARN);     // PA8,  active-low
+    d[1] = read_lo(PIN_D_FUEL_WARN);    // PA9,  active-low
+    d[2] = read_lo(PIN_D_CHARGING);     // PB3,  active-low
+    d[3] = read_hi(PIN_D_EXT_LIGHTS);   // PB4,  active-high
+    d[4] = read_hi(PIN_D_BRAKE_FLUID);  // PB5,  active-high
+    d[5] = read_hi(PIN_D_HEADLIGHTS);   // PB6,  active-high
+    d[6] = read_hi(PIN_D_TURN);         // PB7,  active-high
+    d[7] = read_hi(PIN_D_HIGHBEAMS);    // PB8,  active-high
+    d[8] = read_lo(PIN_D_PARKING);      // PB9,  active-low
+    d[9] = read_lo(PIN_D_DIFF_LOCK);    // PA15, active-low
+
+    // ----------------------------------------------------------
+    // 4. Buttons — shift-register debounce, B0..B7
+    //    Active-low: 8 consecutive LOWs = pressed (history == 0x00)
+    //                8 consecutive HIGHs = released (history == 0xFF)
+    //                transitional: state unchanged
+    // ----------------------------------------------------------
+    for (int i = 0; i < 8; i++) {
+        uint8_t bit = (digitalRead(BTN_PINS[i]) == HIGH) ? 1 : 0;
+        btn_history[i] = (btn_history[i] << 1) | bit;
+        if      (btn_history[i] == 0x00) btn_state[i] = 1; // confirmed pressed
+        else if (btn_history[i] == 0xFF) btn_state[i] = 0; // confirmed released
+        // else: bouncing — hold last known state
+    }
+
+    // ----------------------------------------------------------
+    // 5. K-Line RX — drain USART3 into ring buffer each tick
+    //    Full ISO 9141 state machine to be added as separate module
+    // ----------------------------------------------------------
+    while (KLine.available()) {
+        uint8_t byte = (uint8_t)KLine.read();
+        uint8_t next = (kline_head + 1) % KLINE_BUF_SIZE;
+        if (next != kline_tail) {          // drop byte if buffer full
+            kline_buf[kline_head] = byte;
+            kline_head = next;
+        }
+    }
+
+    // ----------------------------------------------------------
+    // 6. Heartbeat LED — toggle every 25 ticks (0.5 s)
+    // ----------------------------------------------------------
+    static uint8_t led_tick = 0;
+    if (++led_tick >= 25) {
+        led_tick = 0;
+        digitalWrite(PIN_LED, !digitalRead(PIN_LED));
+    }
+
+    // ----------------------------------------------------------
+    // 7. Transmit data frame over USB to Raspberry Pi
+    //    Format: $A0,A1,A2,A3,TACHO,SPEED,D0..D9,B0..B7\n
+    // ----------------------------------------------------------
+    char frame[128];
+    snprintf(frame, sizeof(frame),
+        "$%u,%u,%u,%u,%u,%u,"
+        "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
+        "%u,%u,%u,%u,%u,%u,%u,%u\n",
+        adc[0], adc[1], adc[2], adc[3],
+        (unsigned)tacho, (unsigned)speed,
+        d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], d[8], d[9],
+        btn_state[0], btn_state[1], btn_state[2], btn_state[3],
+        btn_state[4], btn_state[5], btn_state[6], btn_state[7]
+    );
+    Serial.print(frame);
 }
