@@ -207,6 +207,10 @@ pub struct PageManager {
     cpu_load_last_update: Instant,      // time of the last average flush
     cpu_load: f32,                      // last published average, shown in status line
 
+    // CPU temperature is read from sysfs at most once every 3 seconds.
+    cpu_temp: Option<f32>,
+    cpu_temp_last_update: Instant,
+
     // If set to false, main loop will exit.
     running: bool,
 }
@@ -249,6 +253,8 @@ impl PageManager {
             cpu_load_samples: Vec::new(),
             cpu_load_last_update: Instant::now(),
             cpu_load: 0.0,
+            cpu_temp: None,
+            cpu_temp_last_update: Instant::now(),
             running: false,
         }
     }
@@ -853,11 +859,19 @@ impl PageManager {
     }
 
     /// Get CPU temperature in degrees Celsius from the thermal zone sysfs interface.
+    /// Refreshes the cached value at most once every 3 seconds.
     /// Returns None if the file is unavailable (e.g. not running on Raspberry Pi).
-    fn get_cpu_temperature(&self) -> Option<f32> {
-        let raw = fs::read_to_string("/sys/class/thermal/thermal_zone0/temp").ok()?;
-        let millidegrees: i32 = raw.trim().parse().ok()?;
-        Some(millidegrees as f32 / 1000.0)
+    fn get_cpu_temperature(&mut self) -> Option<f32> {
+        const CPU_TEMP_UPDATE_INTERVAL: Duration = Duration::from_secs(3);
+
+        if self.cpu_temp.is_none() || self.cpu_temp_last_update.elapsed() >= CPU_TEMP_UPDATE_INTERVAL {
+            let raw = fs::read_to_string("/sys/class/thermal/thermal_zone0/temp").ok()?;
+            let millidegrees: i32 = raw.trim().parse().ok()?;
+            self.cpu_temp = Some(millidegrees as f32 / 1000.0);
+            self.cpu_temp_last_update = Instant::now();
+        }
+
+        self.cpu_temp
     }
 
 }

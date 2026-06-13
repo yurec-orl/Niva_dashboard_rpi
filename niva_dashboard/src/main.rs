@@ -208,6 +208,13 @@ fn setup_ui_style() -> graphics::ui_style::UIStyle {
     ui_style
 }
 
+// Setup USB-serial communication with ADC module
+// fn setup_usb_serial_communication() {
+//     // Initialize USB-serial communication
+//     let usb_serial = UsbSerial::new("/dev/ttyUSB0", 115200).expect("Failed to initialize USB-serial");
+//     usb_serial.start().expect("Failed to start USB-serial");
+// }
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     
