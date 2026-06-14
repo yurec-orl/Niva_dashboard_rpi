@@ -444,7 +444,7 @@ impl PageManager {
             // Render the frame - sensors were already read above
             self.render_current_page()?;
 
-            self.alert_manager.render_alerts(&mut self.context);
+            //self.alert_manager.render_alerts(&mut self.context);
 
             self.render_button_labels()?;
             

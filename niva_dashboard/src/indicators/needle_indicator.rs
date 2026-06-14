@@ -7,11 +7,18 @@ use std::f32::consts::PI;
 use std::sync::Once;
 use gl;
 
-// Cached shader programs - created once and reused
+// Cached shader programs and VBOs - created once and reused across all frames.
+// Creating a new VBO every frame with glGenBuffers/glDeleteBuffers causes the driver
+// to accumulate deferred deletions (the GPU must finish with a buffer before the driver
+// can actually free it), leading to a growing memory and CPU leak at 60 fps.
 static mut NEEDLE_SHADER_PROGRAM: u32 = 0;
 static mut MARK_SHADER_PROGRAM: u32 = 0;
+static mut NEEDLE_VBO: u32 = 0;
+static mut MARKS_VBO: u32 = 0;
 static NEEDLE_SHADER_INIT: Once = Once::new();
 static MARK_SHADER_INIT: Once = Once::new();
+static NEEDLE_VBO_INIT: Once = Once::new();
+static MARKS_VBO_INIT: Once = Once::new();
 
 /// Needle indicator that displays sensor values as a rotating needle
 /// The needle rotates between start_angle and end_angle based on normalized sensor value
@@ -110,6 +117,16 @@ void main() {
         NEEDLE_SHADER_PROGRAM
     }
 
+    /// Return the persistent VBO used for needle geometry, allocating it on first call.
+    /// The needle always uploads exactly 6 vertices × 5 floats, so one global VBO
+    /// is sufficient regardless of how many NeedleIndicator instances exist.
+    unsafe fn get_needle_vbo() -> u32 {
+        NEEDLE_VBO_INIT.call_once(|| {
+            gl::GenBuffers(1, &raw mut NEEDLE_VBO);
+        });
+        NEEDLE_VBO
+    }
+
     /// Calculate the current needle angle based on normalized value (0.0-1.0)
     fn calculate_needle_angle(&self, normalized_value: f32) -> f32 {
         let clamped_value = normalized_value.clamp(0.0, 1.0);
@@ -183,10 +200,11 @@ void main() {
             tip1_nx, tip1_ny, color.0, color.1, color.2,
         ];
         
-        let mut vbo = 0;
-        gl::GenBuffers(1, &mut vbo);
+        // Reuse the persistent VBO — no glGenBuffers/glDeleteBuffers per frame.
+        // GL_DYNAMIC_DRAW signals the driver to optimise for frequent data updates.
+        let vbo = Self::get_needle_vbo();
         gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
-        gl::BufferData(gl::ARRAY_BUFFER, (vertices.len() * 4) as isize, vertices.as_ptr() as *const _, gl::STATIC_DRAW);
+        gl::BufferData(gl::ARRAY_BUFFER, (vertices.len() * std::mem::size_of::<f32>()) as isize, vertices.as_ptr() as *const _, gl::DYNAMIC_DRAW);
         
         let pos_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr());
         let color_attr = gl::GetAttribLocation(shader_program, b"color\0".as_ptr());
@@ -200,8 +218,6 @@ void main() {
         gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
         
         gl::DrawArrays(gl::TRIANGLES, 0, 6);
-        
-        gl::DeleteBuffers(1, &vbo);
         
         // Restore normal blending mode
         gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
@@ -228,7 +244,7 @@ impl Indicator for NeedleIndicator {
         let center_y = bounds.y + bounds.height / 2.0;
         let available_radius = (bounds.width.min(bounds.height)) / 2.0;
         
-        // Render decorators
+        // Render decorators before the needle so the needle draws on top
         self.base.render_decorators(bounds, style, context)?;
         
         unsafe {
@@ -346,6 +362,16 @@ void main() {
         MARK_SHADER_PROGRAM
     }
 
+    /// Return the persistent VBO used for marks geometry, allocating it on first call.
+    /// Marks vertex count varies per decorator but the buffer is grown as needed via
+    /// GL_DYNAMIC_DRAW — the driver reuses the backing allocation when the size is stable.
+    unsafe fn get_marks_vbo() -> u32 {
+        MARKS_VBO_INIT.call_once(|| {
+            gl::GenBuffers(1, &raw mut MARKS_VBO);
+        });
+        MARKS_VBO
+    }
+
     /// Calculate vertices for a single mark (returns 30 floats: 6 vertices × 5 components each)
     fn calculate_mark_vertices(&self, center_x: f32, center_y: f32, radius: f32, angle: f32,
                                screen_w: f32, screen_h: f32, color: (f32, f32, f32)) -> [f32; 30] {
@@ -400,15 +426,14 @@ void main() {
 
     /// Render all marks in a single batched draw call
     unsafe fn render_batched_marks(&self, vertices: &[f32], shader_program: u32) {
-        // Create and bind VBO for all marks
-        let mut vbo = 0;
-        gl::GenBuffers(1, &mut vbo);
+        // Reuse the persistent VBO — no glGenBuffers/glDeleteBuffers per frame.
+        let vbo = Self::get_marks_vbo();
         gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
         gl::BufferData(
-            gl::ARRAY_BUFFER, 
-            (vertices.len() * std::mem::size_of::<f32>()) as isize, 
-            vertices.as_ptr() as *const _, 
-            gl::STATIC_DRAW
+            gl::ARRAY_BUFFER,
+            (vertices.len() * std::mem::size_of::<f32>()) as isize,
+            vertices.as_ptr() as *const _,
+            gl::DYNAMIC_DRAW
         );
 
         // Set up vertex attributes
@@ -423,9 +448,6 @@ void main() {
         // Single draw call for all marks
         let vertex_count = (vertices.len() / 5) as i32; // 5 floats per vertex
         gl::DrawArrays(gl::TRIANGLES, 0, vertex_count);
-
-        // Clean up
-        gl::DeleteBuffers(1, &vbo);
     }
 }
 

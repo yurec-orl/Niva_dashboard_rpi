@@ -6,9 +6,11 @@ use crate::hardware::sensor_value::{SensorValue, ValueData};
 use std::sync::Once;
 use gl;
 
-// Cached shader programs
+// Cached shader programs and VBOs
 static mut VERTICAL_BAR_SHADER_PROGRAM: u32 = 0;
 static VERTICAL_BAR_SHADER_INIT: Once = Once::new();
+static mut VERTICAL_BAR_VBO: u32 = 0;
+static VERTICAL_BAR_VBO_INIT: Once = Once::new();
 
 /// Vertical bar indicator that fills from bottom to top
 pub struct VerticalBarIndicator {
@@ -112,6 +114,14 @@ void main() {
         VERTICAL_BAR_SHADER_PROGRAM
     }
 
+    /// Return the persistent VBO for segment geometry, allocating it on first call.
+    unsafe fn get_vertical_bar_vbo() -> u32 {
+        VERTICAL_BAR_VBO_INIT.call_once(|| {
+            gl::GenBuffers(1, &raw mut VERTICAL_BAR_VBO);
+        });
+        VERTICAL_BAR_VBO
+    }
+
     /// Calculate vertices for a single rectangle segment (returns 30 floats: 6 vertices × 5 components each)
     fn calculate_segment_vertices(&self, x: f32, y: f32, width: f32, height: f32, 
                                  color: (f32, f32, f32), screen_w: f32, screen_h: f32) -> [f32; 30] {
@@ -136,15 +146,14 @@ void main() {
 
     /// Render all segments in a single batched draw call for optimal performance
     unsafe fn render_batched_segments(&self, vertices: &[f32], shader_program: u32) {
-        // Create and bind VBO for all segments
-        let mut vbo = 0;
-        gl::GenBuffers(1, &mut vbo);
+        // Reuse the persistent VBO — no glGenBuffers/glDeleteBuffers per frame
+        let vbo = Self::get_vertical_bar_vbo();
         gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
         gl::BufferData(
             gl::ARRAY_BUFFER, 
             (vertices.len() * std::mem::size_of::<f32>()) as isize, 
             vertices.as_ptr() as *const _, 
-            gl::STATIC_DRAW
+            gl::DYNAMIC_DRAW
         );
 
         // Set up vertex attributes
@@ -159,9 +168,6 @@ void main() {
         // Single draw call for all segments
         let vertex_count = (vertices.len() / 5) as i32; // 5 floats per vertex
         gl::DrawArrays(gl::TRIANGLES, 0, vertex_count);
-
-        // Clean up
-        gl::DeleteBuffers(1, &vbo);
     }
 }
 

@@ -2,7 +2,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::graphics::context::GraphicsContext;
-use crate::graphics::opengl_test::{run_basic_geometry_test, run_opengl_text_rendering_test, run_dashboard_performance_test, run_rotating_needle_gauge_test, run_indicator_zero_position_test, run_indicator_middle_position_test, run_indicator_max_position_test};
+use crate::graphics::opengl_test::{run_basic_geometry_test, run_opengl_text_rendering_test, run_dashboard_performance_test, run_rotating_needle_gauge_test, run_indicator_zero_position_test, run_indicator_middle_position_test, run_indicator_max_position_test, run_fuel_level_grid_test};
 use crate::hardware::hw_providers::*;
 use crate::hardware::GpioInput;
 use crate::hardware::sensor_manager::SensorManager;
@@ -61,9 +61,13 @@ pub fn run_test(name: &str) {
             println!("\n=== Indicator Maximum Position Test ===");
             run_graphics_test("Niva Dashboard - Maximum Position Test", run_indicator_max_position_test);
         }
+        "fuel_grid" => {
+            println!("\n=== Fuel Level Grid Stress Test ===");
+            run_graphics_test("Niva Dashboard - Fuel Grid Stress Test", run_fuel_level_grid_test);
+        }
         _ => {
             eprintln!("Unknown test: {}", name);
-            eprintln!("Valid options: basic, gltext, dashboard, needle, gpio, sensors, digital, ind_zero_pos, ind_middle_pos, ind_max_pos");
+            eprintln!("Valid options: basic, gltext, dashboard, needle, gpio, sensors, digital, ind_zero_pos, ind_middle_pos, ind_max_pos, fuel_grid");
             eprintln!("Note: SDL2-based tests (sdl2, advanced, etc.) are disabled after KMS/DRM migration");
             std::process::exit(1);
         }

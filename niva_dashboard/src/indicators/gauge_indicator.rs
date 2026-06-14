@@ -3,6 +3,19 @@ use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
 use crate::indicators::indicator::{Indicator, IndicatorBounds};
 use crate::hardware::sensor_value::{SensorValue, ValueData};
+use std::sync::Once;
+
+// Cached shader and VBOs — created once, never deleted.
+// create_simple_color_shader() was previously called every frame followed by
+// glDeleteProgram, compiling and linking a full shader program 60 times/second.
+// The VBOs follow the same per-frame gen/delete anti-pattern.
+static mut GAUGE_SHADER_PROGRAM: u32 = 0;
+static GAUGE_SHADER_INIT: Once = Once::new();
+static mut GAUGE_CIRCLE_BORDER_VBO: u32 = 0;
+static mut GAUGE_MARKS_VBO: u32 = 0;
+static mut GAUGE_NEEDLE_VBO: u32 = 0;
+static mut GAUGE_CENTER_CIRCLE_VBO: u32 = 0;
+static GAUGE_VBOS_INIT: Once = Once::new();
 
 /// A circular gauge indicator with a rotating needle, similar to automotive gauges
 /// Features:
@@ -70,8 +83,9 @@ impl Indicator for GaugeIndicator {
             gl::Enable(gl::BLEND);
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
             
-            // Create shader program for shapes
-            let shader_program = Self::create_simple_color_shader();
+            // Ensure persistent GPU resources are allocated
+            Self::get_vbos();
+            let shader_program = Self::get_shader();
             
             // Render gauge components
             self.render_gauge_circle_border(center_x, center_y, outer_radius, inner_radius, 
@@ -94,8 +108,7 @@ impl Indicator for GaugeIndicator {
             self.render_gauge_center_circle(center_x, center_y, 8.0, (0.4, 0.4, 0.5), 
                                           context.width as f32, context.height as f32, shader_program);
             
-            // Clean up shader
-            gl::DeleteProgram(shader_program);
+            // shader_program is a persistent cached resource — do not delete it
         }
         
         Ok(())
@@ -112,9 +125,10 @@ impl Indicator for GaugeIndicator {
 }
 
 impl GaugeIndicator {
-    /// Create a simple color shader for basic shapes
-    unsafe fn create_simple_color_shader() -> u32 {
-        let vertex_shader_source = b"
+    /// Return the cached shader program, compiling it on first call.
+    unsafe fn get_shader() -> u32 {
+        GAUGE_SHADER_INIT.call_once(|| {
+            let vertex_shader_source = b"
 attribute vec2 position;
 attribute vec3 color;
 varying vec3 v_color;
@@ -124,7 +138,7 @@ void main() {
 }
 \0";
 
-        let fragment_shader_source = b"
+            let fragment_shader_source = b"
 precision mediump float;
 varying vec3 v_color;
 void main() {
@@ -132,31 +146,39 @@ void main() {
 }
 \0";
 
-        // Create vertex shader
-        let vertex_shader = gl::CreateShader(gl::VERTEX_SHADER);
-        let vertex_src_ptr = vertex_shader_source.as_ptr();
-        gl::ShaderSource(vertex_shader, 1, &vertex_src_ptr, std::ptr::null());
-        gl::CompileShader(vertex_shader);
+            let vertex_shader = gl::CreateShader(gl::VERTEX_SHADER);
+            let vertex_src_ptr = vertex_shader_source.as_ptr();
+            gl::ShaderSource(vertex_shader, 1, &vertex_src_ptr, std::ptr::null());
+            gl::CompileShader(vertex_shader);
 
-        // Create fragment shader
-        let fragment_shader = gl::CreateShader(gl::FRAGMENT_SHADER);
-        let fragment_src_ptr = fragment_shader_source.as_ptr();
-        gl::ShaderSource(fragment_shader, 1, &fragment_src_ptr, std::ptr::null());
-        gl::CompileShader(fragment_shader);
+            let fragment_shader = gl::CreateShader(gl::FRAGMENT_SHADER);
+            let fragment_src_ptr = fragment_shader_source.as_ptr();
+            gl::ShaderSource(fragment_shader, 1, &fragment_src_ptr, std::ptr::null());
+            gl::CompileShader(fragment_shader);
 
-        // Create program
-        let program = gl::CreateProgram();
-        gl::AttachShader(program, vertex_shader);
-        gl::AttachShader(program, fragment_shader);
-        gl::LinkProgram(program);
+            let program = gl::CreateProgram();
+            gl::AttachShader(program, vertex_shader);
+            gl::AttachShader(program, fragment_shader);
+            gl::LinkProgram(program);
 
-        // Clean up shaders
-        gl::DeleteShader(vertex_shader);
-        gl::DeleteShader(fragment_shader);
+            gl::DeleteShader(vertex_shader);
+            gl::DeleteShader(fragment_shader);
 
-        program
+            GAUGE_SHADER_PROGRAM = program;
+        });
+        GAUGE_SHADER_PROGRAM
     }
-    
+
+    /// Allocate all persistent VBOs on first call.
+    unsafe fn get_vbos() {
+        GAUGE_VBOS_INIT.call_once(|| {
+            gl::GenBuffers(1, &raw mut GAUGE_CIRCLE_BORDER_VBO);
+            gl::GenBuffers(1, &raw mut GAUGE_MARKS_VBO);
+            gl::GenBuffers(1, &raw mut GAUGE_NEEDLE_VBO);
+            gl::GenBuffers(1, &raw mut GAUGE_CENTER_CIRCLE_VBO);
+        });
+    }
+
     /// Render circular border for the gauge
     unsafe fn render_gauge_circle_border(&self, center_x: f32, center_y: f32, outer_radius: f32, inner_radius: f32, color: (f32, f32, f32), screen_w: f32, screen_h: f32, shader_program: u32) {
         gl::UseProgram(shader_program);
@@ -181,10 +203,9 @@ void main() {
             vertices.extend_from_slice(&[inner_x, inner_y, color.0, color.1, color.2]);
         }
         
-        let mut vbo = 0;
-        gl::GenBuffers(1, &mut vbo);
+        let vbo = GAUGE_CIRCLE_BORDER_VBO;
         gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
-        gl::BufferData(gl::ARRAY_BUFFER, (vertices.len() * 4) as isize, vertices.as_ptr() as *const _, gl::STATIC_DRAW);
+        gl::BufferData(gl::ARRAY_BUFFER, (vertices.len() * std::mem::size_of::<f32>()) as isize, vertices.as_ptr() as *const _, gl::DYNAMIC_DRAW);
         
         let pos_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr());
         let color_attr = gl::GetAttribLocation(shader_program, b"color\0".as_ptr());
@@ -195,8 +216,6 @@ void main() {
         gl::VertexAttribPointer(color_attr as u32, 3, gl::FLOAT, gl::FALSE, 20, (8) as *const _);
         
         gl::DrawArrays(gl::TRIANGLE_STRIP, 0, vertices.len() as i32 / 5);
-        
-        gl::DeleteBuffers(1, &vbo);
     }
     
     /// Render tick marks on the gauge
@@ -206,48 +225,41 @@ void main() {
         let angle_range = end_angle - start_angle;
         let mark_length = 15.0;
         
+        // Collect all mark line vertices into one buffer for a single draw call
+        let mut all_mark_vertices: Vec<f32> = Vec::with_capacity(num_marks as usize * 10); // 2 endpoints × 5 floats
         for i in 0..num_marks {
             let t = i as f32 / (num_marks - 1) as f32;
             let angle = start_angle + t * angle_range;
-            
             let cos_a = angle.cos();
             let sin_a = angle.sin();
             
-            // Mark line from radius to radius + mark_length
             let x1 = center_x + cos_a * radius;
             let y1 = center_y + sin_a * radius;
             let x2 = center_x + cos_a * (radius + mark_length);
             let y2 = center_y + sin_a * (radius + mark_length);
             
-            // Convert to normalized coordinates
             let nx1 = x1 / screen_w * 2.0 - 1.0;
             let ny1 = 1.0 - y1 / screen_h * 2.0;
             let nx2 = x2 / screen_w * 2.0 - 1.0;
             let ny2 = 1.0 - y2 / screen_h * 2.0;
             
-            let vertices = [
-                nx1, ny1, color.0, color.1, color.2,
-                nx2, ny2, color.0, color.1, color.2,
-            ];
-            
-            let mut vbo = 0;
-            gl::GenBuffers(1, &mut vbo);
-            gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
-            gl::BufferData(gl::ARRAY_BUFFER, (vertices.len() * 4) as isize, vertices.as_ptr() as *const _, gl::STATIC_DRAW);
-            
-            let pos_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr());
-            let color_attr = gl::GetAttribLocation(shader_program, b"color\0".as_ptr());
-            
-            gl::EnableVertexAttribArray(pos_attr as u32);
-            gl::VertexAttribPointer(pos_attr as u32, 2, gl::FLOAT, gl::FALSE, 20, std::ptr::null());
-            gl::EnableVertexAttribArray(color_attr as u32);
-            gl::VertexAttribPointer(color_attr as u32, 3, gl::FLOAT, gl::FALSE, 20, (8) as *const _);
-            
-            gl::LineWidth(2.0);
-            gl::DrawArrays(gl::LINES, 0, 2);
-            
-            gl::DeleteBuffers(1, &vbo);
+            all_mark_vertices.extend_from_slice(&[nx1, ny1, color.0, color.1, color.2]);
+            all_mark_vertices.extend_from_slice(&[nx2, ny2, color.0, color.1, color.2]);
         }
+        
+        gl::BindBuffer(gl::ARRAY_BUFFER, GAUGE_MARKS_VBO);
+        gl::BufferData(gl::ARRAY_BUFFER, (all_mark_vertices.len() * std::mem::size_of::<f32>()) as isize, all_mark_vertices.as_ptr() as *const _, gl::DYNAMIC_DRAW);
+        
+        let pos_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr());
+        let color_attr = gl::GetAttribLocation(shader_program, b"color\0".as_ptr());
+        
+        gl::EnableVertexAttribArray(pos_attr as u32);
+        gl::VertexAttribPointer(pos_attr as u32, 2, gl::FLOAT, gl::FALSE, 20, std::ptr::null());
+        gl::EnableVertexAttribArray(color_attr as u32);
+        gl::VertexAttribPointer(color_attr as u32, 3, gl::FLOAT, gl::FALSE, 20, (8) as *const _);
+        
+        gl::LineWidth(2.0);
+        gl::DrawArrays(gl::LINES, 0, num_marks * 2); // 2 endpoints per mark
     }
     
     /// Render numbered scale marks
@@ -389,10 +401,9 @@ void main() {
                 tip1_nx, tip1_ny, glow_color.0, glow_color.1, glow_color.2,
             ];
             
-            let mut vbo = 0;
-            gl::GenBuffers(1, &mut vbo);
-            gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
-            gl::BufferData(gl::ARRAY_BUFFER, (vertices.len() * 4) as isize, vertices.as_ptr() as *const _, gl::STATIC_DRAW);
+            // Reuse the single persistent needle VBO — update data for each glow layer
+            gl::BindBuffer(gl::ARRAY_BUFFER, GAUGE_NEEDLE_VBO);
+            gl::BufferData(gl::ARRAY_BUFFER, (vertices.len() * std::mem::size_of::<f32>()) as isize, vertices.as_ptr() as *const _, gl::DYNAMIC_DRAW);
             
             let pos_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr());
             let color_attr = gl::GetAttribLocation(shader_program, b"color\0".as_ptr());
@@ -404,14 +415,12 @@ void main() {
             
             // Enable additive blending for glow effect
             if *size_multiplier > 1.0 {
-                gl::BlendFunc(gl::SRC_ALPHA, gl::ONE); // Additive blending for glow
+                gl::BlendFunc(gl::SRC_ALPHA, gl::ONE);
             } else {
-                gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA); // Normal blending for core
+                gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
             }
             
             gl::DrawArrays(gl::TRIANGLES, 0, 6);
-            
-            gl::DeleteBuffers(1, &vbo);
         }
         
         // Restore normal blending mode
@@ -441,10 +450,8 @@ void main() {
             vertices.extend_from_slice(&[nx, ny, color.0, color.1, color.2]);
         }
         
-        let mut vbo = 0;
-        gl::GenBuffers(1, &mut vbo);
-        gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
-        gl::BufferData(gl::ARRAY_BUFFER, (vertices.len() * 4) as isize, vertices.as_ptr() as *const _, gl::STATIC_DRAW);
+        gl::BindBuffer(gl::ARRAY_BUFFER, GAUGE_CENTER_CIRCLE_VBO);
+        gl::BufferData(gl::ARRAY_BUFFER, (vertices.len() * std::mem::size_of::<f32>()) as isize, vertices.as_ptr() as *const _, gl::DYNAMIC_DRAW);
         
         let pos_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr());
         let color_attr = gl::GetAttribLocation(shader_program, b"color\0".as_ptr());
@@ -455,7 +462,5 @@ void main() {
         gl::VertexAttribPointer(color_attr as u32, 3, gl::FLOAT, gl::FALSE, 20, (8) as *const _);
         
         gl::DrawArrays(gl::TRIANGLE_FAN, 0, vertices.len() as i32 / 5);
-        
-        gl::DeleteBuffers(1, &vbo);
     }
 }

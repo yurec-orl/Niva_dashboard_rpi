@@ -409,6 +409,11 @@ pub struct GraphicsContext {
     
     // Cached shader programs for performance
     rectangle_shader: Option<u32>,
+    // Persistent VBOs for per-frame primitive rendering — never deleted in the hot path.
+    // Shared by render_filled_rectangle, render_circle_segment, render_circle_arc_outline.
+    geometry_vbo: Option<u32>,
+    // Persistent VBO for the bloom fullscreen quad.
+    bloom_quad_vbo: Option<u32>,
     
     // Bloom post-processing effect
     bloom_enabled: bool,
@@ -455,6 +460,8 @@ impl GraphicsContext {
             text_renderers: HashMap::new(),
             brightness: 1.0,
             rectangle_shader: None,
+            geometry_vbo: None,
+            bloom_quad_vbo: None,
             bloom_enabled: true,
             bloom_intensity: 0.5,  // Increased for more visible glow
             bloom_threshold: 0.3,  // Lowered to catch more bright pixels
@@ -1195,13 +1202,8 @@ impl GraphicsContext {
             x,         y + height, // Bottom-left
         ];
         
-        // Create and bind VAO/VBO
-        let mut vao = 0u32;
-        let mut vbo = 0u32;
-        gl::GenVertexArrays(1, &mut vao);
-        gl::GenBuffers(1, &mut vbo);
-        
-        gl::BindVertexArray(vao);
+        // Bind persistent VBO — no per-call gen/delete
+        let vbo = self.get_or_create_geometry_vbo();
         gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
         
         // Upload vertex data
@@ -1209,7 +1211,7 @@ impl GraphicsContext {
             gl::ARRAY_BUFFER,
             (vertices.len() * std::mem::size_of::<f32>()) as isize,
             vertices.as_ptr() as *const std::ffi::c_void,
-            gl::STATIC_DRAW,
+            gl::DYNAMIC_DRAW,
         );
         
         // Set up vertex attributes
@@ -1219,10 +1221,6 @@ impl GraphicsContext {
         
         // Render
         gl::DrawArrays(gl::TRIANGLES, 0, 6);
-        
-        // Clean up
-        gl::DeleteBuffers(1, &vbo);
-        gl::DeleteVertexArrays(1, &vao);
         
         Ok(())
     }
@@ -1352,13 +1350,9 @@ impl GraphicsContext {
             vertices.push(center_y + radius * angle.sin());
         }
         
-        // Create and bind VAO/VBO
-        let mut vao = 0u32;
-        let mut vbo = 0u32;
-        gl::GenVertexArrays(1, &mut vao);
-        gl::GenBuffers(1, &mut vbo);
+        // Bind persistent VBO — no per-call gen/delete
+        let vbo = self.get_or_create_geometry_vbo();
         
-        gl::BindVertexArray(vao);
         gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
         
         // Upload vertex data
@@ -1366,7 +1360,7 @@ impl GraphicsContext {
             gl::ARRAY_BUFFER,
             (vertices.len() * std::mem::size_of::<f32>()) as isize,
             vertices.as_ptr() as *const std::ffi::c_void,
-            gl::STATIC_DRAW,
+            gl::DYNAMIC_DRAW,
         );
         
         // Set up vertex attributes
@@ -1376,10 +1370,6 @@ impl GraphicsContext {
         
         // Render as triangle fan
         gl::DrawArrays(gl::TRIANGLE_FAN, 0, vertices.len() as i32 / 2);
-        
-        // Clean up
-        gl::DeleteBuffers(1, &vbo);
-        gl::DeleteVertexArrays(1, &vao);
         
         Ok(())
     }
@@ -1432,13 +1422,9 @@ impl GraphicsContext {
                 vertices.push(center_y + outer_radius * sin_a);
             }
             
-            // Create and bind VAO/VBO
-            let mut vao = 0u32;
-            let mut vbo = 0u32;
-            gl::GenVertexArrays(1, &mut vao);
-            gl::GenBuffers(1, &mut vbo);
+            // Bind persistent VBO — no per-call gen/delete
+            let vbo = self.get_or_create_geometry_vbo();
             
-            gl::BindVertexArray(vao);
             gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
             
             // Upload vertex data
@@ -1446,7 +1432,7 @@ impl GraphicsContext {
                 gl::ARRAY_BUFFER,
                 (vertices.len() * std::mem::size_of::<f32>()) as isize,
                 vertices.as_ptr() as *const std::ffi::c_void,
-                gl::STATIC_DRAW,
+                gl::DYNAMIC_DRAW,
             );
             
             // Set up vertex attributes
@@ -1456,10 +1442,6 @@ impl GraphicsContext {
             
             // Render as triangle strip
             gl::DrawArrays(gl::TRIANGLE_STRIP, 0, vertices.len() as i32 / 2);
-            
-            // Clean up
-            gl::DeleteBuffers(1, &vbo);
-            gl::DeleteVertexArrays(1, &vao);
         }
         
         Ok(())
@@ -1475,6 +1457,28 @@ impl GraphicsContext {
             print!("Rectangle shader program cached for reuse\r\n");
             Ok(shader)
         }
+    }
+
+    /// Return the persistent VBO used by all primitive geometry functions, allocating on first call.
+    /// Shared across render_filled_rectangle, render_circle_segment, and render_circle_arc_outline —
+    /// these render sequentially so a single buffer is sufficient.
+    unsafe fn get_or_create_geometry_vbo(&mut self) -> u32 {
+        if self.geometry_vbo.is_none() {
+            let mut vbo = 0u32;
+            gl::GenBuffers(1, &mut vbo);
+            self.geometry_vbo = Some(vbo);
+        }
+        self.geometry_vbo.unwrap()
+    }
+
+    /// Return the persistent VBO used for the bloom fullscreen quad, allocating on first call.
+    unsafe fn get_or_create_bloom_quad_vbo(&mut self) -> u32 {
+        if self.bloom_quad_vbo.is_none() {
+            let mut vbo = 0u32;
+            gl::GenBuffers(1, &mut vbo);
+            self.bloom_quad_vbo = Some(vbo);
+        }
+        self.bloom_quad_vbo.unwrap()
     }
     
     /// Create shader program for rectangle rendering
@@ -1603,11 +1607,17 @@ void main() {
         (color.0 * b, color.1 * b, color.2 * b)
     }
 
-    /// Cleanup rectangle shader when context is destroyed
+    /// Cleanup rectangle shader and persistent geometry buffers when context is destroyed
     unsafe fn cleanup_rectangle_shader(&mut self) {
         if let Some(shader) = self.rectangle_shader.take() {
             gl::DeleteProgram(shader);
             print!("Rectangle shader program cleaned up\r\n");
+        }
+        if let Some(vbo) = self.geometry_vbo.take() {
+            gl::DeleteBuffers(1, &vbo);
+        }
+        if let Some(vbo) = self.bloom_quad_vbo.take() {
+            gl::DeleteBuffers(1, &vbo);
         }
     }
 
@@ -2001,7 +2011,7 @@ void main() {
     }
     
     /// End bloom rendering and apply bloom effect to screen
-    pub fn end_bloom_render(&self) -> Result<(), String> {
+    pub fn end_bloom_render(&mut self) -> Result<(), String> {
         if let (Some(texture), Some(shader)) = (self.bloom_texture, self.bloom_shader) {
             unsafe {
                 // Restore default framebuffer
@@ -2034,7 +2044,7 @@ void main() {
     }
     
     /// Render a fullscreen quad for post-processing
-    fn render_fullscreen_quad(&self) {
+    fn render_fullscreen_quad(&mut self) {
         unsafe {
             // Simple fullscreen quad vertices
             let vertices: [f32; 24] = [
@@ -2048,19 +2058,14 @@ void main() {
                 -1.0,  1.0,    0.0, 1.0,  // Top-left
             ];
             
-            let mut vbo = 0;
-            let mut vao = 0;
+            let vbo = self.get_or_create_bloom_quad_vbo();
             
-            gl::GenVertexArrays(1, &mut vao);
-            gl::GenBuffers(1, &mut vbo);
-            
-            gl::BindVertexArray(vao);
             gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
             gl::BufferData(
                 gl::ARRAY_BUFFER,
                 (vertices.len() * std::mem::size_of::<f32>()) as isize,
                 vertices.as_ptr() as *const _,
-                gl::STATIC_DRAW
+                gl::DYNAMIC_DRAW
             );
             
             // Position attribute
@@ -2073,10 +2078,6 @@ void main() {
             gl::EnableVertexAttribArray(1);
             
             gl::DrawArrays(gl::TRIANGLES, 0, 6);
-            
-            // Cleanup
-            gl::DeleteVertexArrays(1, &vao);
-            gl::DeleteBuffers(1, &vbo);
         }
     }
     
@@ -2118,7 +2119,7 @@ void main() {
     }
 
     /// Apply bloom from selective rendering to the current scene
-    pub fn apply_selective_bloom(&self) -> Result<(), String> {
+    pub fn apply_selective_bloom(&mut self) -> Result<(), String> {
         if let (Some(texture), Some(shader)) = (self.bloom_texture, self.bloom_shader) {
             unsafe {
                 // Use bloom shader
@@ -2195,7 +2196,7 @@ void main() {
     }
 
     /// End custom bloom element group
-    pub fn end_bloom_element(&self) -> Result<(), String> {
+    pub fn end_bloom_element(&mut self) -> Result<(), String> {
         if self.bloom_enabled {
             self.end_selective_bloom_render()?;
             self.apply_selective_bloom()

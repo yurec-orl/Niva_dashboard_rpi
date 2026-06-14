@@ -204,6 +204,26 @@ user
 @Niva21#
 root - standard password (1 numeric char)
 
+## Known Issues & Fixes
+
+### OpenGL VBO per-frame leak (fixed — June 2026)
+
+**Symptom:** CPU core load and process `VmRSS` grew steadily over time until the loaded core caused FPS to drop. Occasional sharp recovery in frame times was observed mid-run.
+
+**Affected code:** `NeedleIndicator::render_needle` and `NeedleGaugeMarksDecorator::render_batched_marks` in `indicators/needle_indicator.rs`.
+
+**Root cause:** Both functions called `glGenBuffers` + `glDeleteBuffers` on every rendered frame. `glDeleteBuffers` on the RPi V3D driver is **deferred** — the driver cannot release the backing GPU memory until the GPU is actually done reading the buffer, which is always at least one vsync behind the CPU. With 50 needle indicators at 60 fps this produced ~3 000 GPU buffer objects queued for deletion per second. The driver's internal deletion queue accumulated continuously, growing both resident memory and the CPU cost of processing the queue. The occasional sudden frame-time drop was the driver flushing a large batch of accumulated pending deletions at once.
+
+**Confirmed by `run_fuel_level_grid_test` measurements (50 gauges, decorators disabled):**
+| Before fix (~2500 s run) | After fix (~2800 s run) |
+|---|---|
+| VmRSS grew from 135 MB → 160 MB | VmRSS stable at ~72 MB |
+| Render avg grew from 11 584 µs → 13 922 µs | Render avg stable at ~1 000–2 200 µs |
+
+**Fix:** Two persistent statics (`NEEDLE_VBO`, `MARKS_VBO`) with `Once` guards — the same pattern already used for the shader programs. Both render functions now call `get_needle_vbo()` / `get_marks_vbo()` once (allocated on first call) and reuse the same GPU buffer object every frame via `glBufferData` with `GL_DYNAMIC_DRAW`. `glGenBuffers` / `glDeleteBuffers` are never called in the hot path.
+
+**General rule:** Never call `glGenBuffers` / `glDeleteBuffers` inside a per-frame render function on the RPi V3D driver. Always pre-allocate VBOs at init time and stream new data with `GL_DYNAMIC_DRAW`.
+
 ---
 *Created: August 26, 2025*
-*Last Updated: May 25, 2026*
+*Last Updated: June 13, 2026*

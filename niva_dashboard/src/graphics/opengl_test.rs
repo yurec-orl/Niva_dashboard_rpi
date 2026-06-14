@@ -2171,3 +2171,113 @@ pub fn run_indicator_max_position_test(context: &mut GraphicsContext) -> Result<
     
     Ok(())
 }
+
+/// Stress test: 10×5 grid of fuel level gauges (50 total) with all decorators enabled.
+/// Runs indefinitely (Ctrl+C to stop), printing per-second stats to stdout:
+///
+///   elapsed | total frames | FPS | render avg/max µs | process VmRSS
+///
+/// If render avg grows over time → CPU leak is inside the render path.
+/// If VmRSS grows → heap memory is leaking.
+/// If FPS drops while render avg stays flat → leak is outside render (e.g. swap_buffers / DRM).
+pub fn run_fuel_level_grid_test(context: &mut GraphicsContext) -> Result<(), String> {
+    use crate::indicator_builders::gauge_builders::fuel_level_gauge::build_fuel_level_gauge;
+    use crate::hardware::sensor_value::{SensorValue, ValueData};
+    use crate::graphics::ui_style::UIStyle;
+    use crate::indicators::indicator::Indicator;
+    use std::time::Instant;
+
+    println!("=== Fuel Level Grid Stress Test ===");
+    println!("50 fuel level gauges (10×5 grid) with all decorators enabled");
+    println!("Watching per-frame render time for CPU/memory leak detection");
+    println!("{:>9} | {:>8} | {:>6} | {:>10} {:>10} | {}", "elapsed", "frames", "fps", "avg µs", "max µs", "VmRSS");
+    println!("{}", "-".repeat(72));
+
+    let ui_style = UIStyle::new();
+
+    const COLS: usize = 10;
+    const ROWS: usize = 5;
+    const RADIUS: f32 = 35.0;
+    let cell_w = context.width as f32 / COLS as f32;   // 80 px
+    let cell_h = context.height as f32 / ROWS as f32;  // 96 px
+
+    // Build all 50 indicators once — no per-frame allocation for setup
+    let mut indicators = Vec::with_capacity(COLS * ROWS);
+    for row in 0..ROWS {
+        for col in 0..COLS {
+            let cx = cell_w * col as f32 + cell_w / 2.0;
+            let cy = cell_h * row as f32 + cell_h / 2.0;
+            let (indicator, bounds) = build_fuel_level_gauge(cx, cy, RADIUS, &ui_style);
+            indicators.push((indicator, bounds));
+        }
+    }
+
+    // Single SensorValue reused across all frames — update value field in-place to
+    // avoid per-frame String allocations from SensorValue::analog(...)
+    let mut fuel_value = SensorValue::analog(50.0, 0.0, 100.0, "%", "Топливо", "fuel");
+
+    unsafe {
+        gl::Viewport(0, 0, context.width, context.height);
+        gl::Enable(gl::BLEND);
+        gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+    }
+
+    let test_start = Instant::now();
+    let mut last_report = Instant::now();
+    let mut total_frames: u64 = 0;
+    // Per-second accumulator for render timing
+    let mut render_us_bucket: Vec<u64> = Vec::with_capacity(120);
+
+    loop {
+        let elapsed = test_start.elapsed().as_secs_f32();
+
+        // Slow sine sweep: 0→100→0% over 10 seconds, exercises the full needle arc
+        fuel_value.value = ValueData::Analog(
+            ((elapsed * std::f32::consts::PI / 5.0).sin() * 0.5 + 0.5) * 100.0,
+        );
+
+        unsafe {
+            gl::ClearColor(0.05, 0.05, 0.1, 1.0);
+            gl::Clear(gl::COLOR_BUFFER_BIT);
+        }
+
+        // Time only the render calls — not swap_buffers — so the measurement is
+        // purely about GL submission cost, unaffected by DRM vsync wait time
+        let render_start = Instant::now();
+        for (indicator, bounds) in &indicators {
+            indicator.render(&fuel_value, *bounds, &ui_style, context)?;
+        }
+        render_us_bucket.push(render_start.elapsed().as_micros() as u64);
+
+        context.swap_buffers();
+        total_frames += 1;
+
+        // Print one stats line per second
+        let report_secs = last_report.elapsed().as_secs_f32();
+        if report_secs >= 1.0 {
+            let n = render_us_bucket.len().max(1);
+            let fps = n as f32 / report_secs;
+            let avg_us = render_us_bucket.iter().sum::<u64>() / n as u64;
+            let max_us = render_us_bucket.iter().copied().max().unwrap_or(0);
+
+            // Read resident set size from /proc/self/status (KB)
+            let vmrss_kb = std::fs::read_to_string("/proc/self/status")
+                .ok()
+                .and_then(|s| {
+                    s.lines()
+                        .find(|l| l.starts_with("VmRSS:"))
+                        .and_then(|l| l.split_whitespace().nth(1))
+                        .and_then(|v| v.parse::<u64>().ok())
+                })
+                .unwrap_or(0);
+
+            println!(
+                "{:>8.1}s | {:>8} | {:>5.1} | {:>9}µs {:>9}µs | {}KB",
+                elapsed, total_frames, fps, avg_us, max_us, vmrss_kb
+            );
+
+            render_us_bucket.clear();
+            last_report = Instant::now();
+        }
+    }
+}
