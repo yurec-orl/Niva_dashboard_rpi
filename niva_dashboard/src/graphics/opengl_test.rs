@@ -2184,7 +2184,6 @@ pub fn run_fuel_level_grid_test(context: &mut GraphicsContext) -> Result<(), Str
     use crate::indicator_builders::gauge_builders::fuel_level_gauge::build_fuel_level_gauge;
     use crate::hardware::sensor_value::{SensorValue, ValueData};
     use crate::graphics::ui_style::UIStyle;
-    use crate::indicators::indicator::Indicator;
     use std::time::Instant;
 
     println!("=== Fuel Level Grid Stress Test ===");

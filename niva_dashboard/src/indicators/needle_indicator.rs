@@ -594,13 +594,18 @@ impl Decorator for NeedleGaugeMarkLabelsDecorator {
             // Calculate label position
             let (label_x, label_y) = self.calculate_label_position(center_x, center_y, normalized_angle);
 
-            // Center the text at the calculated position
-            // Estimate text width and height for centering
-            let estimated_text_width = label.len() as f32 * self.font_size as f32 * 0.6; // Rough estimate
-            let estimated_text_height = self.font_size as f32;
-            
-            let centered_x = label_x - estimated_text_width / 2.0;
-            let centered_y = label_y - estimated_text_height / 2.0; // Adjust for baseline positioning
+            // Use the actual rendered text dimensions for accurate centering.
+            // The estimated approach (len * font_size * 0.6) was systematically wrong
+            // for variable-width fonts and labels of different lengths.
+            let (text_width, text_height) = context.calculate_text_dimensions_with_font(
+                label,
+                1.0,
+                &self.font_path,
+                self.font_size,
+            )?;
+
+            let centered_x = label_x - text_width / 2.0;
+            let centered_y = label_y - text_height / 2.0;
 
             // Render the text label using the graphics context
             context.render_text_with_font(
