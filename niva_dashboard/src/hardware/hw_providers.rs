@@ -19,6 +19,8 @@
 //   HWAnalogProvider -> analog signal processing (filtering, smoothing) ->
 //   -> AnalogSensor(convert raw data to logical values) -> UI Rendering
 
+use crate::util::adc_serial_reader::*;
+
 use rppal::gpio::Level;
 use std::time::{Duration, Instant};
 
@@ -58,6 +60,20 @@ pub trait HWDigitalProvider {
     fn read_digital(&self, input: HWInput) -> Result<Level, String>;
 }
 
+// Reads analog hardware input values from ADC module via USB serial
+pub struct HWUSBSerialAnalogProvider {
+}
+
+// Reads digital hardware input values from ADC module via USB serial
+pub struct HWUSBSerialDigitalProvider {
+}
+
+impl HWUSBSerialAnalogProvider {
+    pub fn new() -> Self {
+        HWUSBSerialAnalogProvider {}
+    }
+}
+
 // Read directly from GPIO pins
 // Digital inputs only - Raspi does not have built-in ADC
 pub struct GPIOProvider {
@@ -84,6 +100,7 @@ impl HWDigitalProvider for GPIOProvider {
         Ok(Level::Low)
     }
 }
+
 pub struct I2CProvider {
     input: HWInput,
     // Implementation details for I2C access
