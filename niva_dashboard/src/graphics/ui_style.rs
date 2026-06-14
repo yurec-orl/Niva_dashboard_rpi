@@ -502,7 +502,7 @@ impl UIStyle {
         
         // Page manager defaults
         self.set(PAGE_BUTTON_LABEL_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
-        self.set(PAGE_BUTTON_LABEL_FONT_SIZE, UIStyleValue::Integer(20));
+        self.set(PAGE_BUTTON_LABEL_FONT_SIZE, UIStyleValue::Integer(24));
         self.set(PAGE_BUTTON_LABEL_ORIENTATION, UIStyleValue::String("vertical".to_string()));
         self.set(PAGE_BUTTON_LABEL_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
         self.set(PAGE_STATUS_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));

@@ -5,6 +5,7 @@ mod test;
 mod indicators;
 mod indicator_builders;
 mod alerts;
+mod util;
 
 use crate::test::run_test::run_test;
 use crate::graphics::context::GraphicsContext;
@@ -15,6 +16,7 @@ use crate::hardware::digital_signal_processing::DigitalSignalDebouncer;
 use crate::hardware::analog_signal_processing::AnalogSignalProcessorMovingAverage;
 use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor, SpeedSensor, EngineTemperatureSensor};
 use crate::hardware::sensor_value::ValueConstraints;
+use crate::util::adc_serial_reader::*;
 use rppal::gpio::Level;
 use std::env;
 
@@ -209,11 +211,10 @@ fn setup_ui_style() -> graphics::ui_style::UIStyle {
 }
 
 // Setup USB-serial communication with ADC module
-// fn setup_usb_serial_communication() {
-//     // Initialize USB-serial communication
-//     let usb_serial = UsbSerial::new("/dev/ttyUSB0", 115200).expect("Failed to initialize USB-serial");
-//     usb_serial.start().expect("Failed to start USB-serial");
-// }
+fn setup_usb_serial_communication() -> ADCSerialReader {
+    // /dev/niva_adc is a symlink to pre-configured STM32 port
+    ADCSerialReader::new("/dev/niva_adc", 115200)
+}
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -246,6 +247,15 @@ fn main() {
             }
         }
     }
+
+    // let mut reader = setup_usb_serial_communication();
+    // loop {
+    //     if let Some(line) = reader.read_line() {
+    //         print!("Received: {}\r\n", line);
+    //     } else {
+    //         break;
+    //     }
+    // }
 
     let context = setup_context();
     let sensors = setup_sensors();
