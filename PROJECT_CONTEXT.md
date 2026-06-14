@@ -12,6 +12,7 @@ On-screen text is in Russian, with a military-style abbreviations and shortened 
 
 ## Hardware Platform
 - **Target Device**: Raspberry Pi 4
+- **ADC Module**: STM32F103C8T6 (via USB Serial)
 - **Graphics**: Raspberry Pi OpenGL library
 - **Input**: GPIO-connected physical buttons (2 rows, left and right sides)
 - **Display**: Central screen for data visualization, 800x480 pixels.
@@ -198,6 +199,15 @@ The render loop does **not** use any manual frame timing, sleep, or target FPS c
 - This produces steady **60 FPS**, matching the display's 60Hz refresh rate.
 - If uncapped rendering is needed (e.g. for benchmarking), change the flag to `DRM_MODE_PAGE_FLIP_ASYNC` (0x02). This disables vsync alignment and allows 120+ FPS, but may produce visible tearing.
 - Any FPS below 60 indicates that a frame took longer than one vblank interval (16.67ms), causing a miss to the next vblank (30 FPS cliff), or that `drmModePageFlip` returned `-EBUSY` due to a pending flip event not being drained — both of which are handled by the current implementation.
+
+## ADC module connectivity
+udev rules file: /etc/udev/rules.d/99-niva-adc.rules
+udev rule for ADC module: 
+```
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", ATTRS{serial}=="8D8E416F4957", SYMLINK+="niva_adc", MODE="0666"
+```
+
+## PiOS login information
 
 Raspberry Pi login:
 user
