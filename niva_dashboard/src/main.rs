@@ -10,6 +10,7 @@ mod util;
 use crate::test::run_test::run_test;
 use crate::graphics::context::GraphicsContext;
 use crate::page_framework::page_manager::PageManager;
+use crate::page_framework::events::UIEvent;
 use crate::hardware::sensor_manager::{SensorManager, SensorDigitalInputChain, SensorAnalogInputChain};
 use crate::hardware::hw_providers::*;
 use crate::hardware::digital_signal_processing::DigitalSignalDebouncer;
@@ -20,6 +21,8 @@ use crate::util::adc_serial_reader::ADCSerialReader;
 use crate::util::adc_data_provider::ADCDataProvider;
 use rppal::gpio::Level;
 use std::env;
+use std::thread;
+use std::time::Duration;
 
 fn setup_context() -> GraphicsContext {
     let context = GraphicsContext::new_dashboard("Niva Dashboard").expect("Failed to create graphics context");
@@ -34,7 +37,7 @@ fn setup_context() -> GraphicsContext {
     context
 }
 
-fn setup_sensors() -> SensorManager {
+fn setup_self_test_sensors() -> SensorManager {
     let mut mgr = SensorManager::new();
     
     // Sensor value constraints:
@@ -203,6 +206,12 @@ fn setup_sensors() -> SensorManager {
     mgr
 }
 
+fn setup_sensors() -> SensorManager {
+    let mut mgr = SensorManager::new();
+
+    mgr
+}
+
 fn setup_ui_style() -> graphics::ui_style::UIStyle {
     let ui_style = graphics::ui_style::UIStyle::new();
     // ui_style.read_from_file("/etc/niva_dashboard/ui_style.json").unwrap_or_else(|e| {
@@ -211,11 +220,12 @@ fn setup_ui_style() -> graphics::ui_style::UIStyle {
     ui_style
 }
 
-fn setup_adc_data_provider() -> ADCDataProvider {
+fn setup_adc_data_provider() -> Result<ADCDataProvider, std::string::String> {
     // Start ADC data provider thread
     // "/dev/niva_adc" is the sym link for pre-configured STM32 ADC module port
     // Manages thread lifetime - calls stop() and join() when dropped
-    ADCDataProvider::new(ADCSerialReader::new("/dev/niva_adc", 115200))
+    let serial_reader = ADCSerialReader::try_new("/dev/niva_adc", 115200)?;
+    Ok(ADCDataProvider::new(serial_reader))
 }
 
 fn main() {
@@ -250,20 +260,44 @@ fn main() {
         }
     }
 
-    let mut adc_data_provider = setup_adc_data_provider();
+    let mut adc_data_provider = match setup_adc_data_provider() {
+        Ok(mut provider) => Some(provider),    // Read data from ADC module via USB serial in separate thread
+        Err(_) => {
+            print!("Failed to initialize ADC data provider\r\n");
+            None
+        }
+    };
+
+    if let Some(mut provider) = adc_data_provider {
+        print!("Running ADC data provider\r\n");
+        if let Err(e) = provider.run() {
+            print!("Error running ADC data provider: {}\r\n", e);
+        }
+    }
 
     let context = setup_context();
+    let self_test_sensors = setup_self_test_sensors();
     let sensors = setup_sensors();
     let ui_style = setup_ui_style();
 
-    adc_data_provider.run();
-
-    let mut mgr = PageManager::new(context, sensors, ui_style);
+    let mut mgr = PageManager::new(context, self_test_sensors, ui_style);
 
     mgr.setup().expect("Failed to setup page manager");
+
+    // Setup timer to switch self-tests sensor manager to functional set after 5 seconds
+    let sender = mgr.get_smart_event_sender();
+    let sensor_config_tx = mgr.get_sensor_config_tx();
+    let thread_handle = thread::spawn(move || {
+        thread::sleep(Duration::from_secs(5));      // Switch sensor manager after 5 seconds
+        print!("Switching sensor set...\r\n");
+        sensor_config_tx.send(sensors).ok();        // Send new sensor manager
+        sender.send(UIEvent::SwitchSensorSet);      // Signal event handler to poll sensor_config channel
+    });
 
     match mgr.start() {
         Ok(()) => print!("Dashboard finished successfully!\r\n"),
         Err(e) => print!("Failed to start dashboard: {}\r\n", e),
     }
+
+    thread_handle.join().unwrap();
 }

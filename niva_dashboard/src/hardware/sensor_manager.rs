@@ -66,17 +66,17 @@ use std::collections::HashMap;
 
 // Sensor management - chains hardware providers, signal processors, and logical sensors
 pub struct SensorDigitalInputChain {
-    hw_provider: Box<dyn HWDigitalProvider>,
+    hw_provider: Box<dyn HWDigitalProvider + Send>,
     // Signal processors are applied in sequence
-    signal_processors: Vec<Box<dyn DigitalSignalProcessor>>,
-    sensor: Box<dyn DigitalSensor>,
+    signal_processors: Vec<Box<dyn DigitalSignalProcessor + Send>>,
+    sensor: Box<dyn DigitalSensor + Send>,
 }
 
 impl SensorDigitalInputChain {
     pub fn new(
-        hw_provider: Box<dyn HWDigitalProvider>,
-        signal_processors: Vec<Box<dyn DigitalSignalProcessor>>,
-        sensor: Box<dyn DigitalSensor>,
+        hw_provider: Box<dyn HWDigitalProvider + Send>,
+        signal_processors: Vec<Box<dyn DigitalSignalProcessor + Send>>,
+        sensor: Box<dyn DigitalSensor + Send>,
     ) -> Self {
         SensorDigitalInputChain {
             hw_provider,
@@ -88,17 +88,17 @@ impl SensorDigitalInputChain {
 
 // Analog sensor input chain, similar to SensorDigitalInputChain
 pub struct SensorAnalogInputChain {
-    hw_provider: Box<dyn HWAnalogProvider>,
+    hw_provider: Box<dyn HWAnalogProvider + Send>,
     // Signal processors are applied in sequence
-    signal_processors: Vec<Box<dyn AnalogSignalProcessor>>,
-    sensor: Box<dyn AnalogSensor>,
+    signal_processors: Vec<Box<dyn AnalogSignalProcessor + Send>>,
+    sensor: Box<dyn AnalogSensor + Send>,
 }
 
 impl SensorAnalogInputChain {
     pub fn new(
-        hw_provider: Box<dyn HWAnalogProvider>,
-        signal_processors: Vec<Box<dyn AnalogSignalProcessor>>,
-        sensor: Box<dyn AnalogSensor>,
+        hw_provider: Box<dyn HWAnalogProvider + Send>,
+        signal_processors: Vec<Box<dyn AnalogSignalProcessor + Send>>,
+        sensor: Box<dyn AnalogSensor + Send>,
     ) -> Self {
         SensorAnalogInputChain {
             hw_provider,

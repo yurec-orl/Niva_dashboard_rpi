@@ -40,6 +40,9 @@ pub enum UIEvent {
 
     // Alert events
     SuppressAlerts,
+
+    // Switch sensors event
+    SwitchSensorSet,
 }
 
 /// Event bus that manages dual-channel communication for global and page events
@@ -191,7 +194,8 @@ impl SmartEventSender {
             UIEvent::BrightnessDown |
             UIEvent::SetBrightness(_) |
             UIEvent::SwitchToPage(_) |
-            UIEvent::SuppressAlerts => {
+            UIEvent::SuppressAlerts |
+            UIEvent::SwitchSensorSet => {
                 self.global_sender.send(event);
             }
             // Page-specific events go to current page

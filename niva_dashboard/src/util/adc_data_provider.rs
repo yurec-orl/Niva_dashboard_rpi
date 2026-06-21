@@ -1,4 +1,4 @@
-use crate::util::adc_serial_reader::ADCSerialReader;
+use crate::util::adc_serial_reader::{ADCSerialReader,SerialReader};
 
 use std::fmt;
 use std::thread;
@@ -13,12 +13,15 @@ const MAX_DATA: usize = 32;           // Headroom if consumer lags
 pub enum AdcDataProviderError {
     /// The provider was already started (cannot be run twice).
     AlreadyStarted,
+    /// Failed to spawn the background thread.
+    SpawnFailed(std::io::Error),
 }
 
 impl fmt::Display for AdcDataProviderError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::AlreadyStarted => write!(f, "ADC data provider already started"),
+            Self::SpawnFailed(err) => write!(f, "Failed to spawn thread: {}", err),
         }
     }
 }
@@ -47,15 +50,17 @@ impl ADCDataProvider {
     ///
     /// Returns `Err` if the provider has already been started.
     pub fn run(&mut self) -> Result<(), AdcDataProviderError> {
-        if self.adc_reader.is_none() {
+        // Check if we've already started by verifying the thread handle exists
+        if self.thread.is_some() {
             return Err(AdcDataProviderError::AlreadyStarted);
         }
 
-        let mut adc_reader = self.adc_reader.take().expect("checked above");
+        let mut adc_reader = self.adc_reader.take().expect("ADC reader should be available");
         let should_stop = Arc::clone(&self.should_stop);
         let data = Arc::clone(&self.data);
 
-        self.thread = Some(std::thread::Builder::new()
+        // Handle spawn error explicitly since we can't convert it to AdcDataProviderError
+        match std::thread::Builder::new()
             .name("adc-data-provider".into())
             .spawn(move || {
                 while !should_stop.load(Ordering::Relaxed) {
@@ -74,8 +79,10 @@ impl ADCDataProvider {
                         thread::sleep(std::time::Duration::from_millis(10));
                     }
                 }
-            })?)
-        ;
+            }) {
+            Ok(handle) => self.thread = Some(handle),
+            Err(e) => return Err(AdcDataProviderError::SpawnFailed(e)),
+        }
 
         Ok(())
     }    
