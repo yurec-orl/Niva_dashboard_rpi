@@ -19,7 +19,7 @@
 //   HWAnalogProvider -> analog signal processing (filtering, smoothing) ->
 //   -> AnalogSensor(convert raw data to logical values) -> UI Rendering
 
-use crate::util::adc_serial_reader::*;
+use crate::util::adc_data_provider::ADCFrame;
 
 use rppal::gpio::Level;
 use std::time::{Duration, Instant};
@@ -60,17 +60,35 @@ pub trait HWDigitalProvider {
     fn read_digital(&self, input: HWInput) -> Result<Level, String>;
 }
 
-// Reads analog hardware input values from ADC module via USB serial
-pub struct HWUSBSerialAnalogProvider {
+/// Reads a single ADC channel from the shared ADCFrame.
+/// Cloning ADCFrame is cheap (Arc clone) — each provider holds its own handle.
+/// The background thread in ADCDataProvider keeps the frame current.
+pub struct ADCChannelProvider {
+    input: HWInput,
+    channel_index: usize,
+    frame: ADCFrame,
 }
 
-// Reads digital hardware input values from ADC module via USB serial
-pub struct HWUSBSerialDigitalProvider {
+impl ADCChannelProvider {
+    pub fn new(input: HWInput, channel_index: usize, frame: ADCFrame) -> Self {
+        ADCChannelProvider { input, channel_index, frame }
+    }
 }
 
-impl HWUSBSerialAnalogProvider {
-    pub fn new() -> Self {
-        HWUSBSerialAnalogProvider {}
+impl HWAnalogProvider for ADCChannelProvider {
+    fn input(&self) -> HWInput { self.input }
+
+    fn read_analog(&self, _input: HWInput) -> Result<u16, String> {
+        self.frame.get_channel(self.channel_index)
+    }
+}
+
+impl HWDigitalProvider for ADCChannelProvider {
+    fn input(&self) -> HWInput { self.input }
+
+    fn read_digital(&self, _input: HWInput) -> Result<Level, String> {
+        self.frame.get_channel(self.channel_index)
+            .map(|value| if value > 0 { Level::High } else { Level::Low })
     }
 }
 
