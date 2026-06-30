@@ -207,6 +207,11 @@ udev rule for ADC module:
 SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", ATTRS{serial}=="8D8E416F4957", SYMLINK+="niva_adc", MODE="0666"
 ```
 
+## TODO list
+- Data-driven sensors creation: json describing hardware inputs, sensor chains and logical sensor parameters
+- UPS Hat integration (automatic startup/shutdown)
+- Display power control (via USB port shutdown during boot, then re-enable when dashboard is ready)
+
 ## PiOS login information
 
 Raspberry Pi login:
