@@ -13,6 +13,7 @@ use crate::alerts::watchdog::Watchdog;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use std::fs;
+use std::sync::mpsc::{Sender, Receiver};
 
 const STATUS_LINE_X_MARGIN : f32 = 20.0;
 const STATUS_LINE_Y_MARGIN : f32 = 25.0;
@@ -193,6 +194,10 @@ pub struct PageManager {
     global_event_receiver: EventReceiver,  // PageManager listens to global events
     smart_event_sender: SmartEventSender,  // Smart sender routes events automatically
 
+    // Sensors switching event channel
+    sensor_config_rx: Receiver<SensorManager>,
+    sensor_config_tx: Sender<SensorManager>,
+
     // Alert system
     alert_manager: AlertManager,
 
@@ -234,6 +239,9 @@ impl PageManager {
 
         let alert_manager = AlertManager::new(true, &ui_style);
 
+        // Event channel for switching self-test sequence sensors to real ones
+        let (sensor_config_tx, sensor_config_rx) = std::sync::mpsc::channel::<SensorManager>();
+
         PageManager {
             context,
             ui_style,
@@ -246,6 +254,8 @@ impl PageManager {
             event_bus,
             global_event_receiver,
             smart_event_sender,
+            sensor_config_rx,
+            sensor_config_tx,
             alert_manager,
             fps_counter: FpsCounter::new(),
             start_time: Instant::now(),
@@ -275,6 +285,11 @@ impl PageManager {
     /// Get the smart event sender for UI components (auto-routes events)
     pub fn get_smart_event_sender(&self) -> SmartEventSender {
         self.smart_event_sender.clone()
+    }
+
+    // Set sensor manager switch receiver
+    pub fn get_sensor_config_tx(&self) -> Sender<SensorManager>  {
+        self.sensor_config_tx.clone()
     }
 
     fn get_page(&self, id: u32) -> Option<&Box<dyn Page>> {
@@ -534,6 +549,11 @@ impl PageManager {
                     "engine_data" => print!("Engine data diagnostic action\r\n"),
                     "clear_codes" => print!("Clear diagnostic codes action\r\n"),
                     _ => print!("Unknown action: {}\r\n", action),
+                }
+            }
+            UIEvent::SwitchSensorSet => {
+                if let Ok(new_manager) = self.sensor_config_rx.try_recv() {
+                    self.sensor_manager = new_manager;
                 }
             }
             _ => {}

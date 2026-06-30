@@ -12,13 +12,15 @@ pub struct ADCSerialReader {
 }
 
 impl ADCSerialReader {
-    pub fn new(port: &str, baud: u32) -> Self {
-        let port = serialport::new(port, baud)
+    pub fn try_new(port: &str, baud: u32) -> Result<Self, String> {
+        let port = match serialport::new(port, baud)
             .timeout(Duration::from_millis(100))
-            .open()
-            .expect("Failed to open serial port");
+            .open() {
+                Ok(p) => p,
+                Err(e) => return Err(format!("Error opening serial port '{}': {}", port, e)),
+            };
 
-        ADCSerialReader { reader: BufReader::new(port) }
+        Ok(ADCSerialReader { reader: BufReader::new(port) })
     }
 }
 
