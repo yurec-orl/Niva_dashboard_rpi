@@ -19,12 +19,12 @@ pub enum ButtonState {
 
 impl InputHandler {
     pub fn new() -> Self {
-        InputHandler {
-            input_sources: vec![
-                Box::new(PhysicalButtonInput {}),
-                Box::new(KeyboardInput::new()),
-            ],
+        let mut sources: Vec<Box<dyn InputSource>> = vec![Box::new(PhysicalButtonInput {})];
+        match KeyboardInput::try_new() {
+            Ok(kb) => sources.push(Box::new(kb)),
+            Err(e) => print!("Keyboard input unavailable (no TTY?): {}\r\n", e),
         }
+        InputHandler { input_sources: sources }
     }
 
     // Add a new input source dynamically
@@ -62,9 +62,9 @@ struct KeyboardInput {
 }
 
 impl KeyboardInput {
-    pub fn new() -> Self {
-        enable_raw_mode().unwrap();
-        KeyboardInput {_private: ()}
+    fn try_new() -> std::io::Result<Self> {
+        enable_raw_mode()?;
+        Ok(KeyboardInput { _private: () })
     }
 }
 
