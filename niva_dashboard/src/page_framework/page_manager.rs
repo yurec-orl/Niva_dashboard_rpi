@@ -430,6 +430,17 @@ impl PageManager {
         self.toggle_bloom();    // Turn off for now
         
         while self.running {
+            if crate::util::shutdown::shutdown_requested() {
+                log::info!("Shutdown signal received (SIGTERM/SIGINT)");
+                self.running = false;
+                continue;
+            }
+            if crate::util::shutdown::binary_updated() {
+                log::info!("New binary detected on disk");
+                self.running = false;
+                continue;
+            }
+
             // Continuous sensor polling - poll sensors every loop iteration
             // This ensures sensor data is always up to date regardless of render timing
             if let Err(e) = self.sensor_manager.read_all_sensors() {

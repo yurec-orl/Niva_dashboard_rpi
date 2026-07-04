@@ -392,10 +392,12 @@ fn show_help() {
     log::info!("10. Indicator maximum position test (needle and bar gauges at maximum)");
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
     // Keep the handle alive for the whole process — dropping it early stops the logger's
     // background writer thread.
     let _logger_handle = init_logging();
+    crate::util::shutdown::install_signal_handlers();
+    crate::util::shutdown::watch_for_binary_update();
 
     let args: Vec<String> = env::args().collect();
 
@@ -408,7 +410,7 @@ fn main() {
             match parm[0] {
                 "test" => {
                     run_test(parm[1]);
-                    return;
+                    return std::process::ExitCode::SUCCESS;
                 }
                 _ => {
                     log::warn!("Unknown argument: {}", parm[0]);
@@ -418,7 +420,7 @@ fn main() {
             match arg.as_str() {
                 "help" => {
                     show_help();
-                    return;
+                    return std::process::ExitCode::SUCCESS;
                 }
                 _ => {
                     log::warn!("Unknown argument: {}", arg);
@@ -459,10 +461,27 @@ fn main() {
         sender.send(UIEvent::SwitchSensorSet);      // Signal event handler to poll sensor_config channel
     });
 
-    match mgr.start() {
-        Ok(()) => log::info!("Dashboard finished successfully!"),
-        Err(e) => log::error!("Failed to start dashboard: {}", e),
-    }
+    // Exit code doubles as a restart signal for the auto-start login script: a clean
+    // exit (0) means the dashboard quit intentionally (e.g. 'q' for debugging) and should
+    // not be relaunched, a non-zero code means it crashed and should be restarted after
+    // a delay, and BINARY_UPDATED_EXIT_CODE means it quit because it was rebuilt and
+    // should be restarted immediately with the new binary.
+    let exit_code = match mgr.start() {
+        Ok(()) if crate::util::shutdown::binary_updated() => {
+            log::info!("Restarting to pick up newly built binary");
+            std::process::ExitCode::from(crate::util::shutdown::BINARY_UPDATED_EXIT_CODE)
+        }
+        Ok(()) => {
+            log::info!("Dashboard finished successfully!");
+            std::process::ExitCode::SUCCESS
+        }
+        Err(e) => {
+            log::error!("Failed to start dashboard: {}", e);
+            std::process::ExitCode::FAILURE
+        }
+    };
 
     thread_handle.join().unwrap();
+
+    exit_code
 }
