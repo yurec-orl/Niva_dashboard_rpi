@@ -33,7 +33,7 @@ impl SerialReader for ADCSerialReader {
                 return Some(line.trim().to_string());
             }
             Err(e) => {
-                print!("Read error: {}", e);
+                log::error!("Read error: {}", e);
                 return None;
             }
         }

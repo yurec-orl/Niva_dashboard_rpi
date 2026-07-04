@@ -19,6 +19,7 @@ use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor, SpeedS
 use crate::hardware::sensor_value::ValueConstraints;
 use crate::util::adc_serial_reader::ADCSerialReader;
 use crate::util::adc_data_provider::{ADCDataProvider, ADCFrame};
+use crate::util::logging::init_logging;
 use rppal::gpio::Level;
 use std::env;
 use std::thread;
@@ -29,9 +30,9 @@ fn setup_context() -> GraphicsContext {
 
     // Hide mouse cursor for dashboard application
     if let Err(e) = context.hide_cursor() {
-        print!("Warning: Failed to hide cursor: {}\r\n", e);
+        log::warn!("Warning: Failed to hide cursor: {}", e);
     } else {
-        print!("✓ Mouse cursor hidden for dashboard mode\r\n");
+        log::info!("✓ Mouse cursor hidden for dashboard mode");
     }
 
     context
@@ -201,7 +202,7 @@ fn setup_self_test_sensors() -> SensorManager {
     );
     mgr.add_analog_sensor_chain(temperature_chain);
 
-    print!("✓ Sensor manager initialized with digital and analog sensor chains\r\n");
+    log::info!("✓ Sensor manager initialized with digital and analog sensor chains");
     
     mgr
 }
@@ -210,7 +211,7 @@ fn setup_sensors(adc: Option<ADCFrame>) -> SensorManager {
     let mut mgr = SensorManager::new();
 
     let Some(frame) = adc else {
-        print!("ADC unavailable — real sensor set will be empty\r\n");
+        log::info!("ADC unavailable — real sensor set will be empty");
         return mgr;
     };
 
@@ -355,7 +356,7 @@ fn setup_sensors(adc: Option<ADCFrame>) -> SensorManager {
     );
     mgr.add_analog_sensor_chain(temperature_chain);
 
-    print!("✓ Sensor manager initialized with ADC sensor chains\r\n");
+    log::info!("✓ Sensor manager initialized with ADC sensor chains");
 
     mgr
 }
@@ -377,22 +378,29 @@ fn setup_adc_data_provider() -> Result<ADCDataProvider, std::string::String> {
     Ok(provider)
 }
 
+fn show_help() {
+    log::info!("Available test modes:");
+    log::info!("1. Basic OpenGL triangle test");
+    log::info!("2. OpenGL text rendering test with FreeType");
+    log::info!("3. Dashboard performance test (9 animated gauges)");
+    log::info!("4. Rotating needle gauge test (circular gauge with numbers)");
+    log::info!("5. GPIO input test");
+    log::info!("6. Sensor manager test");
+    log::info!("7. Digital segmented display test");
+    log::info!("8. Indicator zero position test (needle and bar gauges at minimum)");
+    log::info!("9. Indicator middle position test (needle and bar gauges at 50%)");
+    log::info!("10. Indicator maximum position test (needle and bar gauges at maximum)");
+}
+
 fn main() {
+    // Keep the handle alive for the whole process — dropping it early stops the logger's
+    // background writer thread.
+    let _logger_handle = init_logging();
+
     let args: Vec<String> = env::args().collect();
-    
-    print!("Niva Dashboard - Raspberry Pi Version (KMS/DRM Backend)\r\n");
-    print!("Available test modes:\r\n");
-    print!("1. Basic OpenGL triangle test\r\n");
-    print!("2. OpenGL text rendering test with FreeType\r\n");
-    print!("3. Dashboard performance test (9 animated gauges)\r\n");
-    print!("4. Rotating needle gauge test (circular gauge with numbers)\r\n");
-    print!("5. GPIO input test\r\n");
-    print!("6. Sensor manager test\r\n");
-    print!("7. Digital segmented display test\r\n");
-    print!("8. Indicator zero position test (needle and bar gauges at minimum)\r\n");
-    print!("9. Indicator middle position test (needle and bar gauges at 50%)\r\n");
-    print!("10. Indicator maximum position test (needle and bar gauges at maximum)\r\n");
-    print!("Usage: cargo run -- [test={{basic|gltext|dashboard|needle|gpio|sensors|digital|ind_zero_pos|ind_middle_pos|ind_max_pos}}]\r\n");
+
+    log::info!("Niva Dashboard - Raspberry Pi Version (KMS/DRM Backend)");
+    log::info!("Usage: cargo run -- [help|test={{basic|gltext|dashboard|needle|gpio|sensors|digital|ind_zero_pos|ind_middle_pos|ind_max_pos}}]");
 
     for arg in args {
         let parm = arg.split("=").collect::<Vec<&str>>();
@@ -403,7 +411,17 @@ fn main() {
                     return;
                 }
                 _ => {
-                    print!("Unknown argument: {}\r\n", parm[0]);
+                    log::warn!("Unknown argument: {}", parm[0]);
+                }
+            }
+        } else {
+            match arg.as_str() {
+                "help" => {
+                    show_help();
+                    return;
+                }
+                _ => {
+                    log::warn!("Unknown argument: {}", arg);
                 }
             }
         }
@@ -411,11 +429,11 @@ fn main() {
 
     let adc = match setup_adc_data_provider() {
         Ok(provider) => {
-            print!("✓ ADC data provider started\r\n");
+            log::info!("✓ ADC data provider started");
             Some(provider)
         }
         Err(e) => {
-            print!("ADC data provider unavailable: {}\r\n", e);
+            log::info!("ADC data provider unavailable: {}", e);
             None
         }
     };
@@ -436,14 +454,14 @@ fn main() {
     let sensor_config_tx = mgr.get_sensor_config_tx();
     let thread_handle = thread::spawn(move || {
         thread::sleep(Duration::from_secs(5));      // Switch sensor manager after 5 seconds
-        print!("Switching sensor set...\r\n");
+        log::info!("Switching sensor set...");
         sensor_config_tx.send(sensors).ok();        // Send new sensor manager
         sender.send(UIEvent::SwitchSensorSet);      // Signal event handler to poll sensor_config channel
     });
 
     match mgr.start() {
-        Ok(()) => print!("Dashboard finished successfully!\r\n"),
-        Err(e) => print!("Failed to start dashboard: {}\r\n", e),
+        Ok(()) => log::info!("Dashboard finished successfully!"),
+        Err(e) => log::error!("Failed to start dashboard: {}", e),
     }
 
     thread_handle.join().unwrap();

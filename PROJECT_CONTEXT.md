@@ -207,6 +207,11 @@ udev rule for ADC module:
 SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", ATTRS{serial}=="8D8E416F4957", SYMLINK+="niva_adc", MODE="0666"
 ```
 
+## Logging
+`src/util/logging.rs` sets up logging via `flexi_logger`, writing to `~/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/Logs` and duplicating everything to stdout. Rotation is size-based (5 MB, keep last 10 files).
+
+Each process start forces a rotation so every run gets its own fresh log file, instead of appending to whatever `_rCURRENT.log` was left by the previous run. This requires one throwaway log write before calling `trigger_rotation()`, because flexi_logger opens the file lazily on first write — calling it any earlier is a silent no-op. **Side effect:** that startup marker line ends up as the last line of the *previous* run's rotated file, not the new one.
+
 ## TODO list
 - Data-driven sensors creation: json describing hardware inputs, sensor chains and logical sensor parameters
 - UPS Hat integration (automatic startup/shutdown)

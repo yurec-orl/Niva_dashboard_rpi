@@ -478,8 +478,8 @@ impl GraphicsContext {
             context.get_proc_address(c_str.as_ptr()) as *const _
         });
         
-        print!("Initializing KMS/DRM graphics context: {} ({}x{})\r\n", title, width, height);
-        print!("Setting up direct display output...\r\n");
+        log::info!("Initializing KMS/DRM graphics context: {} ({}x{})", title, width, height);
+        log::info!("Setting up direct display output...");
         
         // Initialize DRM
         context.init_drm()?;
@@ -503,15 +503,15 @@ impl GraphicsContext {
         
         // Initialize bloom effect
         if let Err(e) = context.init_bloom() {
-            print!("Warning: Failed to initialize bloom effect: {}\r\n", e);
+            log::warn!("Warning: Failed to initialize bloom effect: {}", e);
             context.bloom_enabled = false;
         }
         
         context.initialized = true;
-        print!("Graphics context initialized successfully: {}x{}\r\n", context.width, context.height);
-        print!("✓ Display setup complete - output should be visible on screen\r\n");
-        print!("  Resolution: {}x{}@{}Hz\r\n", context.width, context.height, context.mode.vrefresh);
-        print!("  CRTC: {}, Connector: {}\r\n", context.crtc_id, context.connector_id);
+        log::info!("Graphics context initialized successfully: {}x{}", context.width, context.height);
+        log::info!("✓ Display setup complete - output should be visible on screen");
+        log::info!("  Resolution: {}x{}@{}Hz", context.width, context.height, context.mode.vrefresh);
+        log::info!("  CRTC: {}, Connector: {}", context.crtc_id, context.connector_id);
         
         Ok(context)
     }
@@ -538,26 +538,26 @@ impl GraphicsContext {
                 }
             }
             
-            print!("DRM device opened successfully (fd: {})\r\n", self.drm_fd);
+            log::info!("DRM device opened successfully (fd: {})", self.drm_fd);
             
             // Get DRM resources to check display configuration
             let resources = drmModeGetResources(self.drm_fd);
             if !resources.is_null() {
                 let res = &*(resources as *const DrmModeRes);
-                print!("DRM Resources found:\r\n");
-                print!("  CRTCs: {}\r\n", res.count_crtcs);
-                print!("  Connectors: {}\r\n", res.count_connectors);
-                print!("  Encoders: {}\r\n", res.count_encoders);
+                log::info!("DRM Resources found:");
+                log::info!("  CRTCs: {}", res.count_crtcs);
+                log::info!("  Connectors: {}", res.count_connectors);
+                log::info!("  Encoders: {}", res.count_encoders);
                 
                 if res.count_connectors > 0 {
-                    print!("  Display appears to be available\r\n");
+                    log::info!("  Display appears to be available");
                 } else {
-                    print!("  Warning: No display connectors found\r\n");
+                    log::warn!("  Warning: No display connectors found");
                 }
                 
                 drmModeFreeResources(resources);
             } else {
-                print!("Warning: Could not get DRM resources\r\n");
+                log::warn!("Warning: Could not get DRM resources");
             }
         }
         
@@ -573,8 +573,8 @@ impl GraphicsContext {
             }
             
             let res = &*(resources as *const DrmModeRes);
-            print!("Setting up display mode...\r\n");
-            print!("Available CRTCs: {}, Connectors: {}\r\n", res.count_crtcs, res.count_connectors);
+            log::info!("Setting up display mode...");
+            log::info!("Available CRTCs: {}, Connectors: {}", res.count_crtcs, res.count_connectors);
             
             // Find a connected display
             let mut found_display = false;
@@ -586,7 +586,7 @@ impl GraphicsContext {
                     let conn = &*(connector as *const DrmModeConnector);
                     
                     if conn.connection == DRM_MODE_CONNECTED && conn.count_modes > 0 {
-                        print!("Found connected display on connector {}\r\n", connector_id);
+                        log::info!("Found connected display on connector {}", connector_id);
                         
                         // Use the first mode (usually the preferred mode)
                         let mode = &*conn.modes;
@@ -611,9 +611,9 @@ impl GraphicsContext {
                         // Save current CRTC configuration for restoration
                         self.previous_crtc = drmModeGetCrtc(self.drm_fd, self.crtc_id);
                         
-                        print!("Display mode: {}x{}@{}Hz\r\n", 
+                        log::info!("Display mode: {}x{}@{}Hz", 
                                 mode.hdisplay, mode.vdisplay, mode.vrefresh);
-                        print!("Using CRTC: {}, Connector: {}\r\n", self.crtc_id, self.connector_id);
+                        log::info!("Using CRTC: {}, Connector: {}", self.crtc_id, self.connector_id);
                         
                         // Update dimensions to match display mode
                         self.width = mode.hdisplay as i32;
@@ -660,7 +660,7 @@ impl GraphicsContext {
                 return Err("Failed to create GBM surface".to_string());
             }
             
-            print!("GBM device and surface created successfully\r\n");
+            log::info!("GBM device and surface created successfully");
         }
         
         Ok(())
@@ -686,7 +686,7 @@ impl GraphicsContext {
                 return Err(format!("Failed to initialize EGL: error {}", eglGetError()));
             }
             
-            print!("EGL initialized: version {}.{}\r\n", major, minor);
+            log::info!("EGL initialized: version {}.{}", major, minor);
             
             // Choose EGL configuration
             let config_attribs = [
@@ -757,7 +757,7 @@ impl GraphicsContext {
             // Enable vsync to prevent tearing
             eglSwapInterval(self.egl_display, 1);
             
-            print!("EGL context created and made current\r\n");
+            log::info!("EGL context created and made current");
         }
         
         Ok(())
@@ -766,7 +766,7 @@ impl GraphicsContext {
     /// Configure the display to show our framebuffer
     fn configure_display(&mut self) -> Result<(), String> {
         unsafe {
-            print!("Configuring display output...\r\n");
+            log::info!("Configuring display output...");
             
             // Get the initial front buffer to set up the display
             let bo = gbm_surface_lock_front_buffer(self.gbm_surface);
@@ -777,7 +777,7 @@ impl GraphicsContext {
             // Get buffer properties
             let handle = gbm_bo_get_handle(bo).u32;
             let stride = gbm_bo_get_stride(bo);
-            print!("Buffer handle: {}, stride: {}\r\n", handle, stride);
+            log::info!("Buffer handle: {}, stride: {}", handle, stride);
             
             // Create DRM framebuffer
             let mut fb_id = 0;
@@ -797,7 +797,7 @@ impl GraphicsContext {
                 return Err(format!("Failed to create framebuffer: error {}", result));
             }
             
-            print!("Created framebuffer: {}\r\n", fb_id);
+            log::info!("Created framebuffer: {}", fb_id);
             self.current_fb = fb_id;
             
             // Set the CRTC to display our framebuffer
@@ -820,7 +820,7 @@ impl GraphicsContext {
                 return Err(format!("Failed to set CRTC: error {}", result));
             }
             
-            print!("✓ Display CRTC configured - framebuffer {} is now showing\r\n", fb_id);
+            log::info!("✓ Display CRTC configured - framebuffer {} is now showing", fb_id);
             
             // Release the buffer back to GBM
             gbm_surface_release_buffer(self.gbm_surface, bo);
@@ -837,7 +837,7 @@ impl GraphicsContext {
                 let result = eglSwapBuffers(self.egl_display, self.egl_surface);
                 if result == EGL_FALSE {
                     let error = eglGetError();
-                    print!("Warning: eglSwapBuffers failed with error: 0x{:X}\r\n", error);
+                    log::warn!("Warning: eglSwapBuffers failed with error: 0x{:X}", error);
                     return;
                 }
                 
@@ -847,11 +847,11 @@ impl GraphicsContext {
                     
                     match self.configure_display() {
                         Ok(_) => {
-                            print!("✓ Display configured successfully after first swap\r\n");
+                            log::info!("✓ Display configured successfully after first swap");
                         },
                         Err(e) => {
-                            print!("Warning: Failed to configure display: {}\r\n", e);
-                            print!("Continuing with off-screen rendering...\r\n");
+                            log::warn!("Warning: Failed to configure display: {}", e);
+                            log::info!("Continuing with off-screen rendering...");
                         }
                     }
                 } else {
@@ -1032,7 +1032,7 @@ impl GraphicsContext {
                 image::ColorType::Rgb8,
             ) {
                 Ok(()) => {
-                    print!("Framebuffer saved to: {}\r\n", filename);
+                    log::info!("Framebuffer saved to: {}", filename);
                     Ok(())
                 }
                 Err(e) => Err(format!("Failed to save framebuffer: {}", e)),
@@ -1454,7 +1454,7 @@ impl GraphicsContext {
         } else {
             let shader = self.create_rectangle_shader_program()?;
             self.rectangle_shader = Some(shader);
-            print!("Rectangle shader program cached for reuse\r\n");
+            log::info!("Rectangle shader program cached for reuse");
             Ok(shader)
         }
     }
@@ -1611,7 +1611,7 @@ void main() {
     unsafe fn cleanup_rectangle_shader(&mut self) {
         if let Some(shader) = self.rectangle_shader.take() {
             gl::DeleteProgram(shader);
-            print!("Rectangle shader program cleaned up\r\n");
+            log::info!("Rectangle shader program cleaned up");
         }
         if let Some(vbo) = self.geometry_vbo.take() {
             gl::DeleteBuffers(1, &vbo);
@@ -1639,7 +1639,7 @@ void main() {
             // Create new renderer
             let renderer = unsafe { OpenGLTextRenderer::new(font_path, font_size)? };
             self.text_renderers.insert(key.clone(), renderer);
-            print!("Created new text renderer for font: {} (size: {})\r\n", font_path, font_size);
+            log::info!("Created new text renderer for font: {} (size: {})", font_path, font_size);
         }
         
         Ok(self.text_renderers.get_mut(&key).unwrap())
@@ -1880,7 +1880,7 @@ void main() {
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
         }
         
-        print!("✓ Bloom effect initialized\r\n");
+        log::info!("✓ Bloom effect initialized");
         Ok(())
     }
     
@@ -2212,7 +2212,7 @@ void main() {
     /// Cleanup text renderer before destroying OpenGL context
     fn cleanup_text_renderer(&mut self) {
         if !self.text_renderers.is_empty() {
-            print!("Cleaning up {} text renderer(s)...\r\n", self.text_renderers.len());
+            log::info!("Cleaning up {} text renderer(s)...", self.text_renderers.len());
             self.text_renderers.clear(); // This will trigger Drop for all OpenGLTextRenderer instances
         }
     }
@@ -2230,7 +2230,7 @@ void main() {
                 gl::DeleteProgram(shader);
             }
         }
-        print!("Cleaned up bloom effect resources\r\n");
+        log::info!("Cleaned up bloom effect resources");
     }
 }
 
@@ -2275,7 +2275,7 @@ impl Drop for GraphicsContext {
                 }
             }
         }
-        print!("Graphics context cleaned up\r\n");
+        log::info!("Graphics context cleaned up");
     }
 }
 
@@ -2322,8 +2322,8 @@ impl OpenGLTextRenderer {
         gl::GenBuffers(1, &mut vao);
         gl::GenBuffers(1, &mut vbo);
         
-        print!("OpenGL text renderer initialized with FreeType + glyph caching\r\n");
-        print!("Font: {}, Size: {}px\r\n", font_path, font_size);
+        log::info!("OpenGL text renderer initialized with FreeType + glyph caching");
+        log::info!("Font: {}, Size: {}px", font_path, font_size);
         
         Ok(OpenGLTextRenderer {
             ft_library,
@@ -2415,7 +2415,7 @@ void main() {
             return Err("Text shader program linking failed".to_string());
         }
         
-        print!("Text rendering shader program created successfully!\r\n");
+        log::info!("Text rendering shader program created successfully!");
         Ok(program)
     }
     

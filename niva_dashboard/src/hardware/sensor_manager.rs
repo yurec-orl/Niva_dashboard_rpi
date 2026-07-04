@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn test_sensor_manager_digital_chain() {
-        println!("=== Testing Digital Sensor Chain ===");
+        log::info!("=== Testing Digital Sensor Chain ===");
         
         let mut manager = SensorManager::new();
         
@@ -246,18 +246,18 @@ mod tests {
         assert!(result.is_ok(), "Digital sensor read should succeed");
         
         let sensor_value = result.unwrap();
-        println!("Park brake active (during active period): {}", sensor_value.is_active());
+        log::info!("Park brake active (during active period): {}", sensor_value.is_active());
         
         // In TestDigitalDataProvider, the first 4 seconds return the active level (Low)
         // Since our sensor is active-low, it should read as true (active)
         assert!(sensor_value.is_active(), "Park brake should be active during test period");
         
-        println!("✓ Digital sensor chain test passed");
+        log::info!("✓ Digital sensor chain test passed");
     }
 
     #[test]
     fn test_sensor_manager_analog_chain() {
-        println!("=== Testing Analog Sensor Chain ===");
+        log::info!("=== Testing Analog Sensor Chain ===");
         
         let mut manager = SensorManager::new();
         
@@ -286,19 +286,19 @@ mod tests {
         assert!(result.is_ok(), "Analog sensor read should succeed");
         
         let sensor_value = result.unwrap();
-        println!("Fuel level: {:.1}%", sensor_value.as_f32());
+        log::info!("Fuel level: {:.1}%", sensor_value.as_f32());
         
         // Fuel percentage should be between 0 and 100
         let fuel_percentage = sensor_value.as_f32();
         assert!(fuel_percentage >= 0.0 && fuel_percentage <= 100.0, 
                "Fuel percentage should be between 0 and 100");
         
-        println!("✓ Analog sensor chain test passed");
+        log::info!("✓ Analog sensor chain test passed");
     }
 
     #[test]
     fn test_sensor_manager_multiple_chains() {
-        println!("=== Testing Multiple Sensor Chains ===");
+        log::info!("=== Testing Multiple Sensor Chains ===");
         
         let mut manager = SensorManager::new();
         
@@ -335,20 +335,20 @@ mod tests {
         let high_beam_sensor_value = high_beam_result.unwrap();
         let temp_sensor_value = temp_result.unwrap();
         
-        println!("High beam active: {}", high_beam_sensor_value.is_active());
-        println!("Temperature: {:.1}°C", temp_sensor_value.as_f32());
+        log::info!("High beam active: {}", high_beam_sensor_value.is_active());
+        log::info!("Temperature: {:.1}°C", temp_sensor_value.as_f32());
         
         // Validate ranges
         let temperature = temp_sensor_value.as_f32();
         assert!(temperature >= -40.0 && temperature <= 120.0, 
                "Temperature should be within sensor range");
         
-        println!("✓ Multiple sensor chains test passed");
+        log::info!("✓ Multiple sensor chains test passed");
     }
 
     #[test]
     fn test_sensor_manager_nonexistent_chain() {
-        println!("=== Testing Non-existent Sensor Chain ===");
+        log::info!("=== Testing Non-existent Sensor Chain ===");
         
         let mut manager = SensorManager::new();
         
@@ -359,16 +359,16 @@ mod tests {
         assert!(result.is_err(), "Reading non-existent sensor should fail");
         
         let error_msg = result.unwrap_err();
-        println!("Expected error: {}", error_msg);
+        log::error!("Expected error: {}", error_msg);
         assert!(error_msg.contains("Digital sensor chain not found"), 
                "Error should indicate missing chain");
         
-        println!("✓ Non-existent sensor chain test passed");
+        log::info!("✓ Non-existent sensor chain test passed");
     }
 
     #[test] 
     fn test_sensor_manager_signal_processing_pipeline() {
-        println!("=== Testing Signal Processing Pipeline ===");
+        log::info!("=== Testing Signal Processing Pipeline ===");
         
         let mut manager = SensorManager::new();
         
@@ -392,8 +392,8 @@ mod tests {
         assert!(result.is_ok(), "Signal processing pipeline should work");
         
         let sensor_value = result.unwrap();
-        println!("Turn signal active (after processing): {}", sensor_value.is_active());
+        log::info!("Turn signal active (after processing): {}", sensor_value.is_active());
         
-        println!("✓ Signal processing pipeline test passed");
+        log::info!("✓ Signal processing pipeline test passed");
     }
 }

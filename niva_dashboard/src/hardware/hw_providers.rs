@@ -429,7 +429,7 @@ mod tests {
         let input = HWInput::Hw12v;
         let cloned_input = input.clone();
         assert_eq!(input, cloned_input);
-        println!("{:?}", input);
+        log::info!("{:?}", input);
     }
 
     #[test]

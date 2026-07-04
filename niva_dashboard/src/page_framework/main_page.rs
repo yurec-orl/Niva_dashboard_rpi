@@ -338,7 +338,7 @@ impl MainPage {
     fn next_indicator_set(&mut self) {
         if self.indicator_sets.len() > 1 {
             self.current_indicator_set = (self.current_indicator_set + 1) % self.indicator_sets.len();
-            print!("MainPage: Switched to indicator set {}\r\n", self.current_indicator_set);
+            log::info!("MainPage: Switched to indicator set {}", self.current_indicator_set);
         }
     }
 
@@ -349,13 +349,13 @@ impl MainPage {
             } else {
                 self.current_indicator_set -= 1;
             }
-            print!("MainPage: Switched to indicator set {}\r\n", self.current_indicator_set);
+            log::info!("MainPage: Switched to indicator set {}", self.current_indicator_set);
         }
     }
 
     fn reset_to_first_indicator_set(&mut self) {
         self.current_indicator_set = 0;
-        print!("MainPage: Reset to first indicator set\r\n");
+        log::info!("MainPage: Reset to first indicator set");
     }
 }
 
@@ -406,11 +406,11 @@ impl Page for MainPage {
         while let Ok(event) = self.event_receiver.try_recv() {
             match event {
                 crate::page_framework::events::UIEvent::NextIndicatorSet => {
-                    print!("MainPage: NextIndicatorSet event received\r\n");
+                    log::info!("MainPage: NextIndicatorSet event received");
                     self.next_indicator_set();
                 }
                 crate::page_framework::events::UIEvent::PreviousIndicatorSet => {
-                    print!("MainPage: PreviousIndicatorSet event received\r\n");
+                    log::info!("MainPage: PreviousIndicatorSet event received");
                     self.previous_indicator_set();
                 }
                 crate::page_framework::events::UIEvent::ButtonPressed(action) => {
@@ -424,7 +424,7 @@ impl Page for MainPage {
                 // With dual-channel system, MainPage only receives page-specific events
                 // Global events go directly to PageManager via global channel
                 _ => {
-                    print!("MainPage: Ignoring unknown page event: {:?}\r\n", event);
+                    log::info!("MainPage: Ignoring unknown page event: {:?}", event);
                 }
             }
         }

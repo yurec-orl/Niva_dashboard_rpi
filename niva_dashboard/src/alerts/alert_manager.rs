@@ -94,7 +94,7 @@ impl AlertManager {
                         return;
                     }
                 }
-                print!("Watchdog: {:?} condition on {:?}\r\n", watchdog.severity(), watchdog.hw_input());
+                log::info!("Watchdog: {:?} condition on {:?}", watchdog.severity(), watchdog.hw_input());
                 self.alerts.push((*watchdog_id, Alert::new(
                     watchdog.message().clone(),
                     watchdog.severity(),
@@ -190,7 +190,7 @@ impl AlertManager {
             };
 
             if let Err(e) = alert.1.render(bounds, context, &self.alert_style) {
-                eprintln!("Error rendering alert \"{}\": {}", alert.1.message(), e);
+                log::error!("Error rendering alert \"{}\": {}", alert.1.message(), e);
             }
 
             y_offset += alert_height + self.alert_style.margin;

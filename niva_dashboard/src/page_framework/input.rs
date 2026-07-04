@@ -22,7 +22,7 @@ impl InputHandler {
         let mut sources: Vec<Box<dyn InputSource>> = vec![Box::new(PhysicalButtonInput {})];
         match KeyboardInput::try_new() {
             Ok(kb) => sources.push(Box::new(kb)),
-            Err(e) => print!("Keyboard input unavailable (no TTY?): {}\r\n", e),
+            Err(e) => log::info!("Keyboard input unavailable (no TTY?): {}", e),
         }
         InputHandler { input_sources: sources }
     }

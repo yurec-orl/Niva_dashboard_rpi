@@ -134,7 +134,7 @@ impl Indicator for DigitalSegmentedIndicator {
             ValueData::Analog(v) => *v,
             ValueData::Integer(i) => *i as f32,
             ValueData::Percentage(p) => *p,
-            _ => { print!("Skipping non-numeric value: {:?}\r\n", value); return Ok(()); }, // Skip non-numeric values
+            _ => { log::info!("Skipping non-numeric value: {:?}", value); return Ok(()); }, // Skip non-numeric values
         };
 
         // Use DSEG font for 7-segment look

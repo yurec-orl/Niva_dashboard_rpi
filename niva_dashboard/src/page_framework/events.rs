@@ -123,14 +123,14 @@ impl EventSender {
     /// Send an event (non-blocking)
     pub fn send(&self, event: UIEvent) {
         if let Err(e) = self.sender.send(event) {
-            print!("Failed to send UI event: {:?}\r\n", e);
+            log::error!("Failed to send UI event: {:?}", e);
         }
     }
     
     /// Send an event (blocking)
     pub fn send_blocking(&self, event: UIEvent) {
         if let Err(e) = self.sender.send(event) {
-            eprintln!("Failed to send UI event (blocking): {:?}", e);
+            log::error!("Failed to send UI event (blocking): {:?}", e);
         }
     }
 }
