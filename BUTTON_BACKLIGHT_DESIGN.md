@@ -19,6 +19,14 @@ Goal: control button backlight brightness from the RPi, while minimizing cross-w
 - Rationale for MOSFET instead of driving LEDs directly from PA10: PA10 can only source/sink ~20-25mA, not enough for 8-16 button LEDs in parallel. The MOSFET is a current-capable switch; PA10 just toggles its gate.
 - This removes the 12V dependency for LEDs (they move to the same low-voltage rail the STM32 already uses) and keeps all button wiring (signal, LED+, LED−) on the STM32 board.
 
+### LED current-limiting resistor — 180Ω, 1/4W (one per LED)
+- LEDs are amber/yellow, one resistor per LED (each LED in parallel to the MOSFET rail).
+- Measured V_f via multimeter diode-test mode (~1mA test current): **1.817V**. Estimated V_f at the ~15-17mA operating point: ~2.0-2.05V (typical +0.15-0.25V rise from diode-test current to operating current).
+- Supply: 5V, taken from the STM32 board's 5V pin (USB VBUS passthrough — see power budget note below; actual voltage under load is likely ~4.7-4.9V, not a clean 5.0V, and should be re-measured once the LED bank is wired in).
+- R = (V_supply − V_f) / I_target ≈ (5.0 − 2.0) / 0.016 ≈ 180Ω (nearest standard E24 value).
+- Resulting current at 180Ω: ~15.6-16.7mA across the expected V_f range — solidly daylight-visible while staying under the ~20mA continuous rating typical of standard 3mm/5mm indicator LEDs, with margin for static full-on (100% duty, pre-PWM) operation.
+- Power dissipated per resistor: ~50mW — trivial for a 1/4W part.
+
 ### Two-way communication (RPi ↔ STM32)
 Reuses the existing USB-CDC serial link — no new wiring needed. Also lays groundwork for future bidirectional OBD-II support over the same link (e.g. PID request/response).
 
@@ -47,10 +55,18 @@ Reuses the existing USB-CDC serial link — no new wiring needed. Also lays grou
 ## Effort assessment
 Small-to-medium change on both sides — no rearchitecting of the existing read pipeline or firmware structure. Main net-new work is the outbound protocol/framing (doesn't exist today) and the PWM init + command parsing on the firmware side.
 
+## Power budget
+Sourcing the LED bank from the STM32's 5V pin adds ~135mA (8 LEDs × ~17mA) on top of the STM32 board's own draw (~30-50mA) and shares headroom with the RPi's downstream USB power budget (~1.2-1.6A total depending on Pi model — verify against the actual target board, not just whichever doc is on hand). Total additional load (~400-420mA including the display) leaves ample margin either way and is not expected to be a constraint.
+
+## Noise suppression
+The STM32's 5V pin very likely also feeds its onboard 3.3V regulator, which serves as the ADC reference for the analog sensor channels (oil pressure, fuel, coolant, voltage). Once the backlight is PWMed (kHz-range switching of ~135mA), there's a real risk of switching noise coupling into ADC readings via the shared supply. Mitigations:
+- Add a bulk capacitor (100-220µF) at the LED/MOSFET supply node to buffer the switching transient.
+- Monitor sensor readings for jitter correlated with backlight brightness once PWM is live.
+- If coupling proves significant, move the LED supply to a separate 5V source (e.g. directly off the UPS HAT rail) instead of sharing the STM32's own supply pin.
+
 ## Open decisions
 - Exact command frame format and any ACK/response handling.
 - MOSFET part number, gate resistor value, and PWM frequency.
-- LED backlight supply rail (5V Pi/UPS rail vs. a dedicated regulated rail) and current budget.
 
 ---
 *Created: July 4, 2026*
