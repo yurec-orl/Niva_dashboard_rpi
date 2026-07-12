@@ -19,7 +19,10 @@ impl ADCSerialReader {
                 Ok(p) => p,
                 Err(e) => {
                     let msg = format!("Error opening serial port '{}': {}", port, e);
-                    log::error!("{}", msg);
+                    // Logged at debug: callers that retry (e.g. ADCDataProvider's reconnect
+                    // loop) own user-facing, throttled logging so a missing/unplugged port
+                    // doesn't spam the log every retry.
+                    log::debug!("{}", msg);
                     return Err(msg);
                 }
             };

@@ -69,7 +69,11 @@ impl PhysicalButtonInput {
 impl InputSource for PhysicalButtonInput {
     fn button_state(&mut self) -> Option<ButtonState> {
         if let Err(e) = self.sensor_manager.read_all_sensors() {
-            log::error!("Button sensor read error: {}", e);
+            // Suppress: while the ADC link is down, every button read chain fails with
+            // "channel not in frame" until AdcDataProvider's reconnect loop recovers it.
+            if !self.sensor_manager.adc_link_down() {
+                log::error!("Button sensor read error: {}", e);
+            }
             return None;
         }
 

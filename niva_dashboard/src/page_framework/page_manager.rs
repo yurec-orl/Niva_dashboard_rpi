@@ -455,7 +455,12 @@ impl PageManager {
             // Continuous sensor polling - poll sensors every loop iteration
             // This ensures sensor data is always up to date regardless of render timing
             if let Err(e) = self.sensor_manager.read_all_sensors() {
-                log::error!("Sensor read error: {}", e);
+                // Suppress: while the ADC link is down, the first ADC-backed chain fails
+                // with "channel not in frame" until AdcDataProvider's reconnect loop
+                // recovers it — expected and already surfaced via the ADC LINK alert.
+                if !self.sensor_manager.adc_link_down() {
+                    log::error!("Sensor read error: {}", e);
+                }
             }
             self.alert_manager.check_watchdogs(&self.sensor_manager);
             

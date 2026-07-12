@@ -109,12 +109,11 @@ impl HWDigitalProvider for ADCChannelProvider {
 /// instead of silently leaving sensors/buttons frozen on their last value.
 pub struct AdcLinkStatusProvider {
     frame: Option<ADCFrame>,
-    max_age: Duration,
 }
 
 impl AdcLinkStatusProvider {
-    pub fn new(frame: Option<ADCFrame>, max_age: Duration) -> Self {
-        AdcLinkStatusProvider { frame, max_age }
+    pub fn new(frame: Option<ADCFrame>) -> Self {
+        AdcLinkStatusProvider { frame }
     }
 }
 
@@ -123,7 +122,7 @@ impl HWDigitalProvider for AdcLinkStatusProvider {
 
     fn read_digital(&self, _input: HWInput) -> Result<Level, String> {
         let stale = match &self.frame {
-            Some(frame) => frame.last_update_age() > self.max_age,
+            Some(frame) => frame.is_stale(),
             None => true, // ADC never connected — link is down by definition
         };
         Ok(if stale { Level::High } else { Level::Low })

@@ -18,7 +18,6 @@ use crate::hardware::digital_signal_processing::DigitalSignalDebouncer;
 use crate::hardware::analog_signal_processing::AnalogSignalProcessorMovingAverage;
 use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor, SpeedSensor, EngineTemperatureSensor};
 use crate::hardware::sensor_value::ValueConstraints;
-use crate::util::adc_serial_reader::ADCSerialReader;
 use crate::util::adc_data_provider::{ADCDataProvider, ADCFrame};
 use crate::util::logging::init_logging;
 use rppal::gpio::Level;
@@ -210,12 +209,15 @@ fn setup_self_test_sensors() -> SensorManager {
 
 fn setup_sensors(adc: Option<ADCFrame>) -> SensorManager {
     let mut mgr = SensorManager::new();
+    // Lets adc_link_down() suppress "channel not in frame" log spam while the ADC
+    // reconnect loop is doing its thing (see AdcDataProvider).
+    mgr.set_adc_frame(adc.clone());
 
     // ADC link-health chain — added unconditionally (before the early return below) so
     // that both failure modes surface identically: the port never opening at startup
     // (adc is None) and a previously-live connection going stale (frame stops updating).
     let adc_link_chain = SensorDigitalInputChain::new(
-        Box::new(AdcLinkStatusProvider::new(adc.clone(), Duration::from_millis(500))),
+        Box::new(AdcLinkStatusProvider::new(adc.clone())),
         vec![],
         Box::new(GenericDigitalSensor::new("HwAdcLink".to_string(), "ADC LINK".to_string(),
                                            Level::High, ValueConstraints::digital_critical())),
@@ -380,6 +382,9 @@ fn setup_sensors(adc: Option<ADCFrame>) -> SensorManager {
 // setting B0..B7; can add one here later if that turns out to be insufficient.
 fn setup_button_sensors(adc: Option<ADCFrame>) -> SensorManager {
     let mut mgr = SensorManager::new();
+    // Lets adc_link_down() suppress "channel not in frame" log spam while the ADC
+    // reconnect loop is doing its thing (see AdcDataProvider).
+    mgr.set_adc_frame(adc.clone());
 
     let Some(frame) = adc else {
         log::info!("ADC unavailable — physical buttons will not respond");
@@ -432,10 +437,11 @@ fn setup_ui_style() -> graphics::ui_style::UIStyle {
 }
 
 fn setup_adc_data_provider() -> Result<ADCDataProvider, std::string::String> {
-    // "/dev/niva_adc" is the udev symlink for the STM32 ADC module.
-    // Returns Arc so ADCChannelProviders can share ownership; thread stops when last Arc drops.
-    let serial_reader = ADCSerialReader::try_new("/dev/niva_adc", 115200)?;
-    let mut provider = ADCDataProvider::new(serial_reader);
+    // "/dev/niva_adc" is the udev symlink for the STM32 ADC module. The provider's
+    // background thread owns connecting (and reconnecting) to this port, so this succeeds
+    // even if the device is not yet plugged in — the ADC link alert (AdcLinkStatusProvider)
+    // covers "not connected" until the thread's retry loop picks the device up.
+    let mut provider = ADCDataProvider::new("/dev/niva_adc", 115200);
     provider.run().map_err(|e| e.to_string())?;
     Ok(provider)
 }

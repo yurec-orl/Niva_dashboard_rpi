@@ -61,6 +61,7 @@ use crate::hardware::hw_providers::{HWInput, HWAnalogProvider, HWDigitalProvider
 use crate::hardware::analog_signal_processing::AnalogSignalProcessor;
 use crate::hardware::digital_signal_processing::DigitalSignalProcessor;
 use crate::hardware::sensor_value::SensorValue;
+use crate::util::adc_data_provider::ADCFrame;
 
 use std::collections::HashMap;
 
@@ -112,6 +113,11 @@ pub struct SensorManager {
     digital_sensors: Vec<SensorDigitalInputChain>,
     analog_sensors: Vec<SensorAnalogInputChain>,
     sensor_values: HashMap<HWInput, SensorValue>,
+    // Optional handle to the shared ADC frame, set by callers whose chains include
+    // ADCChannelProviders. Lets adc_link_down() report link status directly from the
+    // transport layer rather than through a chain read, since a chain read is exactly
+    // what fails (with "channel not in frame") while the link is down.
+    adc_frame: Option<ADCFrame>,
 }
 
 impl SensorManager {
@@ -120,6 +126,7 @@ impl SensorManager {
             digital_sensors: Vec::new(),
             analog_sensors: Vec::new(),
             sensor_values: HashMap::new(),
+            adc_frame: None,
         }
     }
 
@@ -129,6 +136,20 @@ impl SensorManager {
 
     pub fn add_analog_sensor_chain(&mut self, chain: SensorAnalogInputChain) {
         self.analog_sensors.push(chain);
+    }
+
+    /// Registers the ADC frame this manager's chains read from, so adc_link_down() can
+    /// report connectivity. Only needed when chains include ADCChannelProviders.
+    pub fn set_adc_frame(&mut self, frame: Option<ADCFrame>) {
+        self.adc_frame = frame;
+    }
+
+    /// True if this manager depends on the ADC link and that link is currently down.
+    /// Used by callers to suppress read-error logging for the "channel not in frame"
+    /// errors that are the expected, transient result of the ADC being disconnected —
+    /// see AdcDataProvider's reconnect loop, which recovers automatically.
+    pub fn adc_link_down(&self) -> bool {
+        self.adc_frame.as_ref().is_some_and(|frame| frame.is_stale())
     }
 
     fn read_digital_sensor(&mut self, input: HWInput) -> Result<SensorValue, String> {
