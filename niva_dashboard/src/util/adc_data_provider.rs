@@ -17,6 +17,27 @@ const RECONNECT_INTERVAL: Duration = Duration::from_secs(2);
 /// so the two stay in agreement about what counts as "down".
 pub const ADC_LINK_MAX_AGE: Duration = Duration::from_millis(500);
 
+/// USB hub location for the STM32 ADC module, as reported by `uhubctl` (see
+/// PROJECT_CONTEXT.md "ADC module connectivity"). Hardware-specific — must be updated if
+/// the module is rewired to a different hub.
+///
+/// The whole hub is power-cycled rather than just the module's own port: per-port power
+/// switching on this hub (VIA Labs 2109:3431) is unreliable — the STM32 fails to
+/// re-enumerate more often than not when only its port is cycled, even with correct sysfs
+/// permissions. Cycling all ports on the hub together was confirmed reliable in testing and
+/// is the only mechanism found to actually work. This also briefly drops power to whatever
+/// else shares the hub (e.g. a wireless keyboard/mouse dongle used for dev/SSH access) —
+/// harmless, since the dashboard's real input path is the GPIO-connected physical buttons,
+/// not this hub.
+const ADC_USB_HUB_LOCATION: &str = "1-1";
+
+/// How long the ADC frame can go without a new sample, while a serial connection is open
+/// and being read, before we conclude the STM32 itself is hung (not just the OS-level
+/// serial link) and physically power-cycle its USB port. Deliberately much longer than
+/// ADC_LINK_MAX_AGE (the UI-alert threshold) and RECONNECT_INTERVAL, so a routine
+/// disconnect/reconnect never triggers a physical power cycle.
+const HARD_RESET_STALE_THRESHOLD: Duration = Duration::from_secs(5);
+
 /// Errors that can occur when starting the ADC data provider.
 #[derive(Debug)]
 pub enum AdcDataProviderError {
@@ -135,6 +156,11 @@ impl AdcConnection {
 /// module is not plugged in yet — AdcLinkStatusProvider's staleness check already treats
 /// "never connected" and "not connected right now" identically, so no separate state is
 /// needed here.
+///
+/// A dropped OS-level link (read error) is distinct from the STM32 firmware hanging while
+/// the serial connection stays open — the latter never surfaces as a read error, just an
+/// indefinitely stale frame. The thread also watches for this case and recovers it with a
+/// physical USB power cycle (see HARD_RESET_STALE_THRESHOLD).
 pub struct ADCDataProvider {
     port: String,
     baud: u32,
@@ -179,6 +205,10 @@ impl ADCDataProvider {
     /// Runs until `should_stop` is set.
     fn run_loop(port: &str, baud: u32, should_stop: &AtomicBool, frame: &ADCFrame) {
         let mut conn = AdcConnection::new();
+        // A hub-wide power cycle is far more intrusive than a routine reconnect (it also
+        // drops whatever else shares the hub), so it's attempted at most once per outage —
+        // not retried on a timer. It only re-arms once real data proves the link is back.
+        let mut reset_attempted = false;
 
         while !should_stop.load(Ordering::Relaxed) {
             if !conn.ensure_connected(port, baud) {
@@ -197,15 +227,46 @@ impl ADCDataProvider {
                     if !values.is_empty() {
                         *frame.data.lock().unwrap() = values;
                         *frame.last_update.lock().unwrap() = Instant::now();
+                        reset_attempted = false;
                     }
                 }
                 None => {
                     log::warn!("ADC serial link lost, attempting to reconnect");
                     conn.drop_connection();
                 }
-                _ => {} // Empty line (timeout) — keep polling
+                _ => {
+                    // Empty line (timeout) — keep polling, but watch for a connected-yet-dead
+                    // link, which means the STM32 firmware itself is hung rather than the OS
+                    // link being down (that case is already handled by the None arm above).
+                    if frame.last_update_age() > HARD_RESET_STALE_THRESHOLD && !reset_attempted {
+                        log::error!(
+                            "ADC link unresponsive for over {:?}, power-cycling USB hub {}",
+                            HARD_RESET_STALE_THRESHOLD, ADC_USB_HUB_LOCATION
+                        );
+                        conn.drop_connection();
+                        match Self::power_cycle_adc_usb_port() {
+                            Ok(()) => log::info!("ADC USB port power cycle succeeded"),
+                            Err(e) => log::error!("ADC USB port power cycle failed: {}", e),
+                        }
+                        reset_attempted = true;
+                    }
+                }
             }
         }
+    }
+
+    /// Power-cycles every port on the STM32 module's USB hub via `uhubctl`, forcing a
+    /// hardware power-on-reset. Requires root — a narrowly-scoped passwordless sudoers
+    /// entry (see PROJECT_CONTEXT.md "ADC module connectivity") permits exactly this one
+    /// command. Per-port cycling of just the module's own port was tested and found
+    /// unreliable on this hub even with correct permissions (see ADC_USB_HUB_LOCATION);
+    /// this exact invocation must match the sudoers entry verbatim or the sudo call fails.
+    fn power_cycle_adc_usb_port() -> Result<(), String> {
+        let status = std::process::Command::new("sudo")
+            .args(["/usr/sbin/uhubctl", "-l", ADC_USB_HUB_LOCATION, "-a", "2"])
+            .status()
+            .map_err(|e| format!("failed to spawn uhubctl: {}", e))?;
+        status.success().then_some(()).ok_or_else(|| format!("uhubctl exited with {}", status))
     }
 
     /// Sleeps for `duration`, checking `should_stop` in short increments so a stop
