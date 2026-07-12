@@ -52,6 +52,7 @@ impl Alert {
 
     pub fn suppress(&mut self) {
         self.display_timeout_ms = Some(0);
+        self.creation_time = std::time::Instant::now();     // Reset creation time for remove_timeout_ms
     }
 
     pub fn is_active(&self) -> bool {
@@ -61,11 +62,11 @@ impl Alert {
         self.creation_time.elapsed().as_millis() < self.display_timeout_ms.unwrap() as u128
     }
 
-    // Return true if the alert has expired based on remove_timeout_ms
+    // Return true if the alert has expired based on inactivity and remove_timeout_ms
     // and should be removed from queue.
     pub fn is_expired(&self) -> bool {
-        if self.remove_timeout_ms.is_none() {
-            return false; // Never expires if no timeout set
+        if self.remove_timeout_ms.is_none() || self.is_active() {
+            return false; // Never expires if no timeout set or still active.
         }
         self.creation_time.elapsed().as_millis() >= self.remove_timeout_ms.unwrap() as u128
     }
