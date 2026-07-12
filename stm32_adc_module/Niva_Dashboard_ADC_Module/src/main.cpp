@@ -56,12 +56,12 @@
 //
 // === Dashboard Buttons (active-low, internal pull-up) ===
 //
-//   PB12 — Button 0 (left column, top)
-//   PB13 — Button 1 (left column, 2nd)
-//   PB14 — Button 2 (left column, 3rd)
-//   PB15 — Button 3 (left column, bottom)
-//   PA4  — Button 4 (right column, top)
-//   PA5  — Button 5 (right column, 2nd)
+//   PB14 — Button 0 (left column, top)
+//   PB15 — Button 1 (left column, 2nd)
+//   PB13 — Button 2 (left column, 3rd)
+//   PB12 — Button 3 (left column, bottom)
+//   PA5  — Button 4 (right column, top)
+//   PA4  — Button 5 (right column, 2nd)
 //   PA6  — Button 6 (right column, 3rd)
 //   PA7  — Button 7 (right column, bottom)
 //
@@ -116,8 +116,8 @@
 //   PA1   | Fuel level (analog)     | ADC_IN1     | Voltage divider from sensor
 //   PA2   | Coolant temp (analog)   | ADC_IN2     | Voltage divider from sensor
 //   PA3   | 12V voltage (analog)    | ADC_IN3     | Resistive divider 20V→3.3V
-//   PA4   | Button 4                | GPIO IN PU  | Active-low, 3.3V direct
-//   PA5   | Button 5                | GPIO IN PU  | Active-low, 3.3V direct
+//   PA4   | Button 5                | GPIO IN PU  | Active-low, 3.3V direct
+//   PA5   | Button 4                | GPIO IN PU  | Active-low, 3.3V direct
 //   PA6   | Button 6                | GPIO IN PU  | Active-low, 3.3V direct
 //   PA7   | Button 7                | GPIO IN PU  | Active-low, 3.3V direct
 //   PA8   | Oil pressure warning    | GPIO IN PU  | Active-low, level shifted
@@ -137,10 +137,10 @@
 //   PB9   | Parking brake on        | GPIO IN PU  | Active-low, level shifted
 //   PB10  | K-Line TX (USART3_TX)   | UART TX     | Via L9637D + BSS138 shifter
 //   PB11  | K-Line RX (USART3_RX)   | UART RX     | Via L9637D + BSS138 shifter
-//   PB12  | Button 0                | GPIO IN PU  | Active-low, 3.3V direct
-//   PB13  | Button 1                | GPIO IN PU  | Active-low, 3.3V direct
-//   PB14  | Button 2                | GPIO IN PU  | Active-low, 3.3V direct
-//   PB15  | Button 3                | GPIO IN PU  | Active-low, 3.3V direct
+//   PB12  | Button 3                | GPIO IN PU  | Active-low, 3.3V direct
+//   PB13  | Button 2                | GPIO IN PU  | Active-low, 3.3V direct
+//   PB14  | Button 0                | GPIO IN PU  | Active-low, 3.3V direct
+//   PB15  | Button 1                | GPIO IN PU  | Active-low, 3.3V direct
 //
 //   Reserved/used by system:
 //   PA13  | SWDIO                   | Debug       | SWD programming
@@ -193,8 +193,8 @@
 
 // Buttons — active-low (INPUT_PULLUP), B0..B7
 static const uint32_t BTN_PINS[8] = {
-    PB12, PB13, PB14, PB15,   // B0..B3 (left column)
-    PA4,  PA5,  PA6,  PA7     // B4..B7 (right column)
+    PB14, PB15, PB13, PB12,   // B0..B3 (left column, top to bottom)
+    PA5,  PA4,  PA6,  PA7     // B4..B7 (right column, top to bottom)
 };
 
 // K-Line UART (USART3 via L9637D + BSS138)
