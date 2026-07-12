@@ -379,12 +379,12 @@ impl UIStyle {
             Some(value) => match value.as_color() {
                 Ok((r, g, b)) => (r, g, b),
                 Err(_) => {
-                    print!("Warning: Style key '{}' exists but cannot be converted to color, using default: ({}, {}, {})\r\n", key, default.0, default.1, default.2);
+                    log::warn!("Warning: Style key '{}' exists but cannot be converted to color, using default: ({}, {}, {})", key, default.0, default.1, default.2);
                     default
                 }
             },
             None => {
-                print!("Warning: Style key '{}' not found, using default color: ({}, {}, {})\r\n", key, default.0, default.1, default.2);
+                log::warn!("Warning: Style key '{}' not found, using default color: ({}, {}, {})", key, default.0, default.1, default.2);
                 default
             }
         }
@@ -412,12 +412,12 @@ impl UIStyle {
             Some(value) => match value.as_float() {
                 Ok(val) => val,
                 Err(_) => {
-                    print!("Warning: Style key '{}' exists but cannot be converted to float, using default: {}\r\n", key, default);
+                    log::warn!("Warning: Style key '{}' exists but cannot be converted to float, using default: {}", key, default);
                     default
                 }
             },
             None => {
-                print!("Warning: Style key '{}' not found, using default float: {}\r\n", key, default);
+                log::warn!("Warning: Style key '{}' not found, using default float: {}", key, default);
                 default
             }
         }
@@ -434,12 +434,12 @@ impl UIStyle {
             Some(value) => match value.as_integer() {
                 Ok(val) => val,
                 Err(_) => {
-                    print!("Warning: Style key '{}' exists but cannot be converted to integer, using default: {}\r\n", key, default);
+                    log::warn!("Warning: Style key '{}' exists but cannot be converted to integer, using default: {}", key, default);
                     default
                 }
             },
             None => {
-                print!("Warning: Style key '{}' not found, using default integer: {}\r\n", key, default);
+                log::warn!("Warning: Style key '{}' not found, using default integer: {}", key, default);
                 default
             }
         }
@@ -456,12 +456,12 @@ impl UIStyle {
             Some(value) => match value.as_bool() {
                 Ok(val) => val,
                 Err(_) => {
-                    print!("Warning: Style key '{}' exists but cannot be converted to boolean, using default: {}\r\n", key, default);
+                    log::warn!("Warning: Style key '{}' exists but cannot be converted to boolean, using default: {}", key, default);
                     default
                 }
             },
             None => {
-                print!("Warning: Style key '{}' not found, using default boolean: {}\r\n", key, default);
+                log::warn!("Warning: Style key '{}' not found, using default boolean: {}", key, default);
                 default
             }
         }
@@ -478,12 +478,12 @@ impl UIStyle {
             Some(value) => match value.as_string() {
                 Ok(val) => val.to_string(),
                 Err(_) => {
-                    print!("Warning: Style key '{}' exists but cannot be converted to string, using default: '{}'\r\n", key, default);
+                    log::warn!("Warning: Style key '{}' exists but cannot be converted to string, using default: '{}'", key, default);
                     default.to_string()
                 }
             },
             None => {
-                print!("Warning: Style key '{}' not found, using default string: '{}'\r\n", key, default);
+                log::warn!("Warning: Style key '{}' not found, using default string: '{}'", key, default);
                 default.to_string()
             }
         }

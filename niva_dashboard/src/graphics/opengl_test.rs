@@ -16,8 +16,8 @@ struct CachedGlyph {
 
 /// Run basic geometry rendering test with triangle, rectangle, hexagon, and circle
 pub fn run_basic_geometry_test(context: &mut GraphicsContext) -> Result<(), String> {
-    println!("Starting Basic Geometry Test with gl crate...");
-    println!("Rendering: Triangle, Rectangle, Hexagon, and Circle");
+    log::info!("Starting Basic Geometry Test with gl crate...");
+    log::info!("Rendering: Triangle, Rectangle, Hexagon, and Circle");
     
     unsafe {
         // Set viewport
@@ -44,7 +44,7 @@ pub fn run_basic_geometry_test(context: &mut GraphicsContext) -> Result<(), Stri
             return Err("Failed to get shader attribute locations".to_string());
         }
         
-        println!("Running geometry rendering animation...");
+        log::info!("Running geometry rendering animation...");
         
         let mut frame_count = 0;
         let total_frames = 300; // 5 seconds at 60fps
@@ -78,7 +78,7 @@ pub fn run_basic_geometry_test(context: &mut GraphicsContext) -> Result<(), Stri
         gl::DeleteBuffers(1, &circle_vbo);
         gl::DeleteProgram(shader_program);
         
-        println!("Basic geometry test completed successfully!");
+        log::info!("Basic geometry test completed successfully!");
     }
     
     Ok(())
@@ -160,7 +160,7 @@ void main() {
     gl::DeleteShader(vertex_shader);
     gl::DeleteShader(fragment_shader);
     
-    println!("Basic shader program created successfully!");
+    log::info!("Basic shader program created successfully!");
     Ok(program)
 }
 
@@ -320,7 +320,7 @@ unsafe fn render_geometry_frame(
             render_shape(triangle_vbo, 3, gl::TRIANGLES, pos_attr, color_attr);
             
             if frame % 30 == 0 {
-                println!("Frame {} - Rendering Triangle", frame);
+                log::info!("Frame {} - Rendering Triangle", frame);
             }
         }
         1 => {
@@ -329,7 +329,7 @@ unsafe fn render_geometry_frame(
             render_shape(rectangle_vbo, 6, gl::TRIANGLES, pos_attr, color_attr);
             
             if frame % 30 == 0 {
-                println!("Frame {} - Rendering Rectangle", frame);
+                log::info!("Frame {} - Rendering Rectangle", frame);
             }
         }
         2 => {
@@ -338,7 +338,7 @@ unsafe fn render_geometry_frame(
             render_shape(hexagon_vbo, 8, gl::TRIANGLE_FAN, pos_attr, color_attr);
             
             if frame % 30 == 0 {
-                println!("Frame {} - Rendering Hexagon", frame);
+                log::info!("Frame {} - Rendering Hexagon", frame);
             }
         }
         3 => {
@@ -347,7 +347,7 @@ unsafe fn render_geometry_frame(
             render_shape(circle_vbo, 34, gl::TRIANGLE_FAN, pos_attr, color_attr);
             
             if frame % 30 == 0 {
-                println!("Frame {} - Rendering Circle", frame);
+                log::info!("Frame {} - Rendering Circle", frame);
             }
         }
         _ => unreachable!(),
@@ -456,8 +456,8 @@ impl OpenGLTextRenderer {
         gl::GenBuffers(1, &mut vao);
         gl::GenBuffers(1, &mut vbo);
         
-        println!("OpenGL text renderer initialized with FreeType + glyph caching");
-        println!("Font: {}, Size: {}px", font_path, font_size);
+        log::info!("OpenGL text renderer initialized with FreeType + glyph caching");
+        log::info!("Font: {}, Size: {}px", font_path, font_size);
         
         Ok(OpenGLTextRenderer {
             ft_library,
@@ -549,7 +549,7 @@ void main() {
             return Err("Text shader program linking failed".to_string());
         }
         
-        println!("Text rendering shader program created successfully!");
+        log::info!("Text rendering shader program created successfully!");
         Ok(program)
     }
     
@@ -766,8 +766,8 @@ impl Drop for OpenGLTextRenderer {
 
 /// OpenGL text rendering test using FreeType
 pub fn run_opengl_text_rendering_test(context: &mut GraphicsContext) -> Result<(), String> {
-    println!("Starting OpenGL Text Rendering Test with FreeType...");
-    println!("Rendering high-quality text directly in OpenGL context");
+    log::info!("Starting OpenGL Text Rendering Test with FreeType...");
+    log::info!("Rendering high-quality text directly in OpenGL context");
     
     unsafe {
         gl::Viewport(0, 0, context.width, context.height);
@@ -797,7 +797,7 @@ pub fn run_opengl_text_rendering_test(context: &mut GraphicsContext) -> Result<(
         // Create text renderer
         let mut text_renderer = OpenGLTextRenderer::new(font_path, 24)?;
         
-        println!("Running OpenGL text rendering demonstration...");
+        log::info!("Running OpenGL text rendering demonstration...");
         
         // Dashboard text samples
         let dashboard_texts = vec![
@@ -848,13 +848,13 @@ pub fn run_opengl_text_rendering_test(context: &mut GraphicsContext) -> Result<(
             
             // Print status every 60 frames
             if frame_count % 60 == 0 {
-                println!("Frame {} - OpenGL text rendering with FreeType", frame_count);
+                log::info!("Frame {} - OpenGL text rendering with FreeType", frame_count);
             }
             
             std::thread::sleep(std::time::Duration::from_millis(16)); // ~60fps
         }
         
-        println!("OpenGL text rendering test completed successfully!");
+        log::info!("OpenGL text rendering test completed successfully!");
     }
     
     Ok(())
@@ -878,8 +878,8 @@ struct Gauge {
 
 /// Complex dashboard performance test with 9 animated gauges
 pub fn run_dashboard_performance_test(context: &mut GraphicsContext) -> Result<(), String> {
-    println!("=== Dashboard Performance Test ===");
-    println!("9 animated gauges with scale marks and numeric labels");
+    log::info!("=== Dashboard Performance Test ===");
+    log::info!("9 animated gauges with scale marks and numeric labels");
     
     unsafe {
         // Set viewport
@@ -981,7 +981,7 @@ pub fn run_dashboard_performance_test(context: &mut GraphicsContext) -> Result<(
     let start_time = std::time::Instant::now();
     
     unsafe {
-        println!("Starting dashboard performance test...");
+        log::info!("Starting dashboard performance test...");
         
         loop {
             frame_count += 1;
@@ -1029,7 +1029,7 @@ pub fn run_dashboard_performance_test(context: &mut GraphicsContext) -> Result<(
             
             // Print progress every 60 frames with detailed stats
             if frame_count % 60 == 0 {
-                println!("Frame {} - FPS: {:.1} - Glyph cache size: {} - {} gauges", frame_count, fps, cache_size, gauges.len());
+                log::info!("Frame {} - FPS: {:.1} - Glyph cache size: {} - {} gauges", frame_count, fps, cache_size, gauges.len());
             }
             
             // 60fps timing
@@ -1037,12 +1037,12 @@ pub fn run_dashboard_performance_test(context: &mut GraphicsContext) -> Result<(
         }
         
         let final_fps = frame_count as f32 / start_time.elapsed().as_secs_f32();
-        println!("Dashboard performance test completed!");
-        println!("Final statistics:");
-        println!("  Frames rendered: {}", frame_count);
-        println!("  Average FPS: {:.1}", final_fps);
-        println!("  Gauges: {}", gauges.len());
-        println!("  Performance: {} gauge renders/second", (gauges.len() as f32 * final_fps) as i32);
+        log::info!("Dashboard performance test completed!");
+        log::info!("Final statistics:");
+        log::info!("  Frames rendered: {}", frame_count);
+        log::info!("  Average FPS: {:.1}", final_fps);
+        log::info!("  Gauges: {}", gauges.len());
+        log::info!("  Performance: {} gauge renders/second", (gauges.len() as f32 * final_fps) as i32);
     }
     
     Ok(())
@@ -1251,8 +1251,8 @@ void main() {
 
 /// Run rotating needle gauge test with circular border, numbered marks, and triangular needle
 pub fn run_rotating_needle_gauge_test(context: &mut GraphicsContext) -> Result<(), String> {
-    println!("=== Rotating Needle Gauge Test ===");
-    println!("Circular gauge with numbered marks and animated triangular needle");
+    log::info!("=== Rotating Needle Gauge Test ===");
+    log::info!("Circular gauge with numbered marks and animated triangular needle");
     
     unsafe {
         // Set viewport
@@ -1289,7 +1289,7 @@ pub fn run_rotating_needle_gauge_test(context: &mut GraphicsContext) -> Result<(
         // Create shader program for shapes
         let shader_program = create_simple_color_shader();
         
-        println!("Starting rotating needle gauge animation...");
+        log::info!("Starting rotating needle gauge animation...");
         context.swap_buffers();
         
         loop {
@@ -1321,8 +1321,8 @@ pub fn run_rotating_needle_gauge_test(context: &mut GraphicsContext) -> Result<(
             
             // Print text dimensions on first frame for demonstration
             if frame_count == 1 {
-                println!("Text '{}' dimensions: {:.1}x{:.1} pixels at scale {:.1}", value_text, text_width, text_height, scale);
-                println!("Line height: {:.1} pixels", text_renderer.get_line_height(scale));
+                log::info!("Text '{}' dimensions: {:.1}x{:.1} pixels at scale {:.1}", value_text, text_width, text_height, scale);
+                log::info!("Line height: {:.1} pixels", text_renderer.get_line_height(scale));
             }
             
             context.swap_buffers();
@@ -1331,7 +1331,7 @@ pub fn run_rotating_needle_gauge_test(context: &mut GraphicsContext) -> Result<(
             // Print FPS every 60 frames
             if frame_count % 60 == 0 {
                 let fps = frame_count as f32 / elapsed;
-                println!("Frame {} - FPS: {:.1} - Needle value: {:.1}", frame_count, fps, current_value);
+                log::info!("Frame {} - FPS: {:.1} - Needle value: {:.1}", frame_count, fps, current_value);
             }
             
             // Exit after 10 seconds
@@ -1343,7 +1343,7 @@ pub fn run_rotating_needle_gauge_test(context: &mut GraphicsContext) -> Result<(
         }
     }
     
-    println!("Rotating needle gauge test completed!");
+    log::info!("Rotating needle gauge test completed!");
     Ok(())
 }
 
@@ -1655,8 +1655,8 @@ pub fn run_indicator_zero_position_test(context: &mut GraphicsContext) -> Result
     use crate::graphics::ui_style::UIStyle;
     use crate::hardware::sensor_value::SensorValue;
     
-    println!("=== Indicator Zero Position Test ===");
-    println!("Testing needle and vertical bar indicators at zero position for 5 seconds");
+    log::info!("=== Indicator Zero Position Test ===");
+    log::info!("Testing needle and vertical bar indicators at zero position for 5 seconds");
     
     unsafe {
         // Set viewport
@@ -1783,7 +1783,7 @@ pub fn run_indicator_zero_position_test(context: &mut GraphicsContext) -> Result
     
     let start_time = std::time::Instant::now();
     
-    println!("Rendering indicators at zero position...");
+    log::info!("Rendering indicators at zero position...");
     
     // Render loop for 5 seconds
     loop {
@@ -1795,19 +1795,19 @@ pub fn run_indicator_zero_position_test(context: &mut GraphicsContext) -> Result
         
         // Render all indicators at zero position
         if let Err(e) = fuel_needle.render(&fuel_value, fuel_bounds, &ui_style, context) {
-            eprintln!("Error rendering fuel needle: {}", e);
+            log::error!("Error rendering fuel needle: {}", e);
         }
         
         if let Err(e) = oil_needle.render(&oil_value, oil_bounds, &ui_style, context) {
-            eprintln!("Error rendering oil needle: {}", e);
+            log::error!("Error rendering oil needle: {}", e);
         }
         
         if let Err(e) = voltage_bar.render(&voltage_value, voltage_bounds, &ui_style, context) {
-            eprintln!("Error rendering voltage bar: {}", e);
+            log::error!("Error rendering voltage bar: {}", e);
         }
         
         if let Err(e) = temp_bar.render(&temp_value, temp_bounds, &ui_style, context) {
-            eprintln!("Error rendering temperature bar: {}", e);
+            log::error!("Error rendering temperature bar: {}", e);
         }
         
         context.swap_buffers();
@@ -1820,12 +1820,12 @@ pub fn run_indicator_zero_position_test(context: &mut GraphicsContext) -> Result
         std::thread::sleep(std::time::Duration::from_millis(16)); // ~60 FPS
     }
     
-    println!("Zero position indicator test completed!");
-    println!("All indicators were displayed at their minimum/zero positions:");
-    println!("- Fuel Level: {} ({})", fuel_value.as_f32(), fuel_value.metadata.unit);
-    println!("- Oil Pressure: {} ({})", oil_value.as_f32(), oil_value.metadata.unit);
-    println!("- Voltage: {} ({})", voltage_value.as_f32(), voltage_value.metadata.unit);
-    println!("- Temperature: {} ({})", temp_value.as_f32(), temp_value.metadata.unit);
+    log::info!("Zero position indicator test completed!");
+    log::info!("All indicators were displayed at their minimum/zero positions:");
+    log::info!("- Fuel Level: {} ({})", fuel_value.as_f32(), fuel_value.metadata.unit);
+    log::info!("- Oil Pressure: {} ({})", oil_value.as_f32(), oil_value.metadata.unit);
+    log::info!("- Voltage: {} ({})", voltage_value.as_f32(), voltage_value.metadata.unit);
+    log::info!("- Temperature: {} ({})", temp_value.as_f32(), temp_value.metadata.unit);
     
     Ok(())
 }
@@ -1840,8 +1840,8 @@ pub fn run_indicator_middle_position_test(context: &mut GraphicsContext) -> Resu
     use crate::graphics::ui_style::UIStyle;
     use crate::hardware::sensor_value::SensorValue;
     
-    println!("=== Indicator Middle Position Test ===");
-    println!("Testing needle and vertical bar indicators at middle position for 5 seconds");
+    log::info!("=== Indicator Middle Position Test ===");
+    log::info!("Testing needle and vertical bar indicators at middle position for 5 seconds");
     
     unsafe {
         // Set viewport
@@ -1937,7 +1937,7 @@ pub fn run_indicator_middle_position_test(context: &mut GraphicsContext) -> Resu
     let temp_bar = VerticalBarIndicator::new(10) // 10 segments
         .with_segment_gap(2.0);
     
-    println!("Rendering indicators at middle position...");
+    log::info!("Rendering indicators at middle position...");
 
     // Define bounds for indicators
     let fuel_bounds = IndicatorBounds {
@@ -1991,12 +1991,12 @@ pub fn run_indicator_middle_position_test(context: &mut GraphicsContext) -> Resu
         std::thread::sleep(std::time::Duration::from_millis(16)); // ~60 FPS
     }
     
-    println!("Middle position indicator test completed!");
-    println!("All indicators were displayed at their middle positions:");
-    println!("- Fuel Level: {} ({})", fuel_value.as_f32(), fuel_value.metadata.unit);
-    println!("- Oil Pressure: {} ({})", oil_value.as_f32(), oil_value.metadata.unit);
-    println!("- Voltage: {} ({})", voltage_value.as_f32(), voltage_value.metadata.unit);
-    println!("- Temperature: {} ({})", temp_value.as_f32(), temp_value.metadata.unit);
+    log::info!("Middle position indicator test completed!");
+    log::info!("All indicators were displayed at their middle positions:");
+    log::info!("- Fuel Level: {} ({})", fuel_value.as_f32(), fuel_value.metadata.unit);
+    log::info!("- Oil Pressure: {} ({})", oil_value.as_f32(), oil_value.metadata.unit);
+    log::info!("- Voltage: {} ({})", voltage_value.as_f32(), voltage_value.metadata.unit);
+    log::info!("- Temperature: {} ({})", temp_value.as_f32(), temp_value.metadata.unit);
     
     Ok(())
 }
@@ -2011,8 +2011,8 @@ pub fn run_indicator_max_position_test(context: &mut GraphicsContext) -> Result<
     use crate::graphics::ui_style::UIStyle;
     use crate::hardware::sensor_value::SensorValue;
     
-    println!("=== Indicator Maximum Position Test ===");
-    println!("Testing needle and vertical bar indicators at maximum position for 5 seconds");
+    log::info!("=== Indicator Maximum Position Test ===");
+    log::info!("Testing needle and vertical bar indicators at maximum position for 5 seconds");
     
     unsafe {
         // Set viewport
@@ -2108,7 +2108,7 @@ pub fn run_indicator_max_position_test(context: &mut GraphicsContext) -> Result<
     let temp_bar = VerticalBarIndicator::new(10) // 10 segments
         .with_segment_gap(2.0);
     
-    println!("Rendering indicators at maximum position...");
+    log::info!("Rendering indicators at maximum position...");
     
     // Define bounds for indicators
     let fuel_bounds = IndicatorBounds {
@@ -2162,12 +2162,12 @@ pub fn run_indicator_max_position_test(context: &mut GraphicsContext) -> Result<
         std::thread::sleep(std::time::Duration::from_millis(16)); // ~60 FPS
     }
     
-    println!("Maximum position indicator test completed!");
-    println!("All indicators were displayed at their maximum positions:");
-    println!("- Fuel Level: {} ({})", fuel_value.as_f32(), fuel_value.metadata.unit);
-    println!("- Oil Pressure: {} ({})", oil_value.as_f32(), oil_value.metadata.unit);
-    println!("- Voltage: {} ({})", voltage_value.as_f32(), voltage_value.metadata.unit);
-    println!("- Temperature: {} ({})", temp_value.as_f32(), temp_value.metadata.unit);
+    log::info!("Maximum position indicator test completed!");
+    log::info!("All indicators were displayed at their maximum positions:");
+    log::info!("- Fuel Level: {} ({})", fuel_value.as_f32(), fuel_value.metadata.unit);
+    log::info!("- Oil Pressure: {} ({})", oil_value.as_f32(), oil_value.metadata.unit);
+    log::info!("- Voltage: {} ({})", voltage_value.as_f32(), voltage_value.metadata.unit);
+    log::info!("- Temperature: {} ({})", temp_value.as_f32(), temp_value.metadata.unit);
     
     Ok(())
 }
@@ -2186,11 +2186,11 @@ pub fn run_fuel_level_grid_test(context: &mut GraphicsContext) -> Result<(), Str
     use crate::graphics::ui_style::UIStyle;
     use std::time::Instant;
 
-    println!("=== Fuel Level Grid Stress Test ===");
-    println!("50 fuel level gauges (10×5 grid) with all decorators enabled");
-    println!("Watching per-frame render time for CPU/memory leak detection");
-    println!("{:>9} | {:>8} | {:>6} | {:>10} {:>10} | {}", "elapsed", "frames", "fps", "avg µs", "max µs", "VmRSS");
-    println!("{}", "-".repeat(72));
+    log::info!("=== Fuel Level Grid Stress Test ===");
+    log::info!("50 fuel level gauges (10×5 grid) with all decorators enabled");
+    log::info!("Watching per-frame render time for CPU/memory leak detection");
+    log::info!("{:>9} | {:>8} | {:>6} | {:>10} {:>10} | {}", "elapsed", "frames", "fps", "avg µs", "max µs", "VmRSS");
+    log::info!("{}", "-".repeat(72));
 
     let ui_style = UIStyle::new();
 
@@ -2270,7 +2270,7 @@ pub fn run_fuel_level_grid_test(context: &mut GraphicsContext) -> Result<(), Str
                 })
                 .unwrap_or(0);
 
-            println!(
+            log::info!(
                 "{:>8.1}s | {:>8} | {:>5.1} | {:>9}µs {:>9}µs | {}KB",
                 elapsed, total_frames, fps, avg_us, max_us, vmrss_kb
             );

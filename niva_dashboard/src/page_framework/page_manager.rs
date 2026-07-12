@@ -332,7 +332,7 @@ impl PageManager {
         // Check if page with same id already exists - abort if so,
         // because page switching would be ambiguous.
         if self.get_page(page_id).is_some() {
-            print!("Warning: Page with id {} already exists, exiting\r\n", page_id);
+            log::warn!("Warning: Page with id {} already exists, exiting", page_id);
             std::process::exit(1);
         }
         self.pages.add_page(page);
@@ -414,26 +414,37 @@ impl PageManager {
     pub fn start(&mut self) -> Result<(), String> {
         // Hide mouse cursor for dashboard
         if let Err(e) = self.context.hide_cursor() {
-            print!("Warning: Failed to hide cursor: {}\r\n", e);
+            log::warn!("Warning: Failed to hide cursor: {}", e);
         }
         
         // Fonts are now created on-demand when needed
         
-        print!("Dashboard initialized successfully!\r\n");
+        log::info!("Dashboard initialized successfully!");
         self.running = true;
         self.start_time = Instant::now();
         self.event_loop()
     }
 
     fn event_loop(&mut self) -> Result<(), String> {
-        print!("Starting event loop\r\n");
+        log::info!("Starting event loop");
         self.toggle_bloom();    // Turn off for now
         
         while self.running {
+            if crate::util::shutdown::shutdown_requested() {
+                log::info!("Shutdown signal received (SIGTERM/SIGINT)");
+                self.running = false;
+                continue;
+            }
+            if crate::util::shutdown::binary_updated() {
+                log::info!("New binary detected on disk");
+                self.running = false;
+                continue;
+            }
+
             // Continuous sensor polling - poll sensors every loop iteration
             // This ensures sensor data is always up to date regardless of render timing
             if let Err(e) = self.sensor_manager.read_all_sensors() {
-                print!("Sensor read error: {}\r\n", e);
+                log::error!("Sensor read error: {}", e);
             }
             self.alert_manager.check_watchdogs(&self.sensor_manager);
             
@@ -444,7 +455,7 @@ impl PageManager {
             let bloom_enabled = self.context.is_bloom_enabled();
             if bloom_enabled {
                 if let Err(e) = self.context.begin_bloom_render() {
-                    print!("Bloom render error: {}\r\n", e);
+                    log::error!("Bloom render error: {}", e);
                 }
             } else {
                 // Clear screen with black for normal rendering
@@ -468,7 +479,7 @@ impl PageManager {
             // Apply bloom effect and swap buffers
             if bloom_enabled {
                 if let Err(e) = self.context.end_bloom_render() {
-                    print!("Bloom end render error: {}\r\n", e);
+                    log::error!("Bloom end render error: {}", e);
                 }
             }
             
@@ -479,15 +490,15 @@ impl PageManager {
             if let Some(state) = self.input_handler.button_state() {
                 match state {
                     ButtonState::Pressed(key) => {
-                        print!("Button pressed: {}\r\n", key);
+                        log::info!("Button pressed: {}", key);
                     }
                     ButtonState::Released(key) => {
-                        print!("Button released: {}\r\n", key);
+                        log::info!("Button released: {}", key);
                         if let Some(button) = self.button_by_key(&key) {
                             button.trigger();
                         } else if key == 'q' {
                             // For debugging, allow 'q' key to quit the loop
-                            print!("'q' pressed - exiting event loop\r\n");
+                            log::info!("'q' pressed - exiting event loop");
                             self.running = false;
                         }
                     }
@@ -506,14 +517,14 @@ impl PageManager {
             }
         }
         
-        print!("Event loop finished\r\n");
+        log::info!("Event loop finished");
         
         Ok(())
     }
 
     /// Handle UI events sent by buttons and other components
     fn handle_ui_event(&mut self, event: UIEvent) {
-        print!("Processing UI event: {:?}\r\n", event);
+        log::info!("Processing UI event: {:?}", event);
         
         match event {
             UIEvent::BrightnessUp => {
@@ -527,28 +538,28 @@ impl PageManager {
             }
             UIEvent::SwitchToPage(page_id) => {
                 if let Err(e) = self.switch_page(page_id) {
-                    print!("Failed to switch to page {}: {}\r\n", page_id, e);
+                    log::error!("Failed to switch to page {}: {}", page_id, e);
                 }
             }
             UIEvent::Shutdown => {
-                print!("Shutdown event received\r\n");
+                log::info!("Shutdown event received");
                 self.running = false;
             }
             UIEvent::Restart => {
-                print!("Restart event received (not implemented)\r\n");
+                log::info!("Restart event received (not implemented)");
             }
             UIEvent::SuppressAlerts => {
                 self.alert_manager.suppress_alerts();
             }
             UIEvent::ButtonPressed(action) => {
-                print!("Custom button action: {}\r\n", action);
+                log::info!("Custom button action: {}", action);
                 // Handle custom button actions here
                 match action.as_str() {
-                    "view_up" => print!("View up action\r\n"),
-                    "view_down" => print!("View down action\r\n"),
-                    "engine_data" => print!("Engine data diagnostic action\r\n"),
-                    "clear_codes" => print!("Clear diagnostic codes action\r\n"),
-                    _ => print!("Unknown action: {}\r\n", action),
+                    "view_up" => log::info!("View up action"),
+                    "view_down" => log::info!("View down action"),
+                    "engine_data" => log::info!("Engine data diagnostic action"),
+                    "clear_codes" => log::info!("Clear diagnostic codes action"),
+                    _ => log::info!("Unknown action: {}", action),
                 }
             }
             UIEvent::SwitchSensorSet => {
@@ -751,19 +762,19 @@ impl PageManager {
     pub fn toggle_bloom(&mut self) {
         let enabled = !self.context.is_bloom_enabled();
         self.context.set_bloom_enabled(enabled);
-        print!("Bloom effect {}\r\n", if enabled { "enabled" } else { "disabled" });
+        log::info!("Bloom effect {}", if enabled { "enabled" } else { "disabled" });
     }
     
     /// Set bloom intensity (0.0 to 2.0)
     pub fn set_bloom_intensity(&mut self, intensity: f32) {
         self.context.set_bloom_intensity(intensity);
-        print!("Bloom intensity set to {:.1}\r\n", intensity);
+        log::info!("Bloom intensity set to {:.1}", intensity);
     }
     
     /// Set bloom threshold (0.0 to 1.0)
     pub fn set_bloom_threshold(&mut self, threshold: f32) {
         self.context.set_bloom_threshold(threshold);
-        print!("Bloom threshold set to {:.1}\r\n", threshold);
+        log::info!("Bloom threshold set to {:.1}", threshold);
     }
 
     // =============================================================================
@@ -773,7 +784,7 @@ impl PageManager {
     /// Set display brightness (0.0 to 1.0)
     pub fn set_brightness(&mut self, brightness: f32) {
         self.context.set_brightness(brightness);
-        print!("Display brightness set to: {:.1}%\r\n", brightness * 100.0);
+        log::info!("Display brightness set to: {:.1}%", brightness * 100.0);
     }
 
     /// Get current brightness level
@@ -785,14 +796,14 @@ impl PageManager {
     pub fn brightness_up(&mut self) {
         self.context.increase_brightness(0.1);
         let current = self.get_brightness();
-        print!("Brightness increased to: {:.1}%\r\n", current * 100.0);
+        log::info!("Brightness increased to: {:.1}%", current * 100.0);
     }
 
     /// Decrease brightness by 10%
     pub fn brightness_down(&mut self) {
         self.context.decrease_brightness(0.1);
         let current = self.get_brightness();
-        print!("Brightness decreased to: {:.1}%\r\n", current * 100.0);
+        log::info!("Brightness decreased to: {:.1}%", current * 100.0);
     }
 
     // =============================================================================

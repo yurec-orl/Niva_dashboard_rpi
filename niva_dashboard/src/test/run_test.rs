@@ -16,59 +16,59 @@ extern crate gl;
 pub fn run_test(name: &str) {
     match name {
         "basic" => {
-            println!("\n=== Basic OpenGL Triangle Test ===");
+            log::info!("\n=== Basic OpenGL Triangle Test ===");
             run_graphics_test("Niva Dashboard - Basic Test", run_basic_geometry_test);
         }
         "gltext" => {
-            println!("\n=== OpenGL Text Rendering Test ===");
+            log::info!("\n=== OpenGL Text Rendering Test ===");
             run_graphics_test("Niva Dashboard - Text Test", run_opengl_text_rendering_test);
         }
         "dashboard" => {
-            println!("\n=== Dashboard Performance Test ===");
+            log::info!("\n=== Dashboard Performance Test ===");
             run_graphics_test("Niva Dashboard - Performance Test", run_dashboard_performance_test);
         }
         "needle" => {
-            println!("\n=== Rotating Needle Gauge Test ===");
+            log::info!("\n=== Rotating Needle Gauge Test ===");
             run_graphics_test("Niva Dashboard - Needle Gauge Test", run_rotating_needle_gauge_test);
         }
         "gpio" => {
-            println!("\n=== GPIO Input Test ===");
+            log::info!("\n=== GPIO Input Test ===");
             match test_single_gpio_input() {
-                Ok(()) => println!("GPIO test completed successfully!"),
-                Err(e) => eprintln!("GPIO test failed: {}", e),
+                Ok(()) => log::info!("GPIO test completed successfully!"),
+                Err(e) => log::error!("GPIO test failed: {}", e),
             }
         }
         "sensors" => {
-            println!("\n=== Sensor Manager Test ===");
+            log::info!("\n=== Sensor Manager Test ===");
             match test_sensor_manager() {
-                Ok(()) => println!("Sensor manager test completed successfully!"),
-                Err(e) => eprintln!("Sensor manager test failed: {}", e),
+                Ok(()) => log::info!("Sensor manager test completed successfully!"),
+                Err(e) => log::error!("Sensor manager test failed: {}", e),
             }
         }
         "digital" => {
-            println!("\n=== Digital Segmented Display Test ===");
+            log::info!("\n=== Digital Segmented Display Test ===");
             run_graphics_test("Niva Dashboard - Digital Display Test", run_digital_display_test);
         }
         "ind_zero_pos" => {
-            println!("\n=== Indicator Zero Position Test ===");
+            log::info!("\n=== Indicator Zero Position Test ===");
             run_graphics_test("Niva Dashboard - Zero Position Test", run_indicator_zero_position_test);
         }
         "ind_middle_pos" => {
-            println!("\n=== Indicator Middle Position Test ===");
+            log::info!("\n=== Indicator Middle Position Test ===");
             run_graphics_test("Niva Dashboard - Middle Position Test", run_indicator_middle_position_test);
         }
         "ind_max_pos" => {
-            println!("\n=== Indicator Maximum Position Test ===");
+            log::info!("\n=== Indicator Maximum Position Test ===");
             run_graphics_test("Niva Dashboard - Maximum Position Test", run_indicator_max_position_test);
         }
         "fuel_grid" => {
-            println!("\n=== Fuel Level Grid Stress Test ===");
+            log::info!("\n=== Fuel Level Grid Stress Test ===");
             run_graphics_test("Niva Dashboard - Fuel Grid Stress Test", run_fuel_level_grid_test);
         }
         _ => {
-            eprintln!("Unknown test: {}", name);
-            eprintln!("Valid options: basic, gltext, dashboard, needle, gpio, sensors, digital, ind_zero_pos, ind_middle_pos, ind_max_pos, fuel_grid");
-            eprintln!("Note: SDL2-based tests (sdl2, advanced, etc.) are disabled after KMS/DRM migration");
+            log::error!("Unknown test: {}", name);
+            log::error!("Valid options: basic, gltext, dashboard, needle, gpio, sensors, digital, ind_zero_pos, ind_middle_pos, ind_max_pos, fuel_grid");
+            log::error!("Note: SDL2-based tests (sdl2, advanced, etc.) are disabled after KMS/DRM migration");
             std::process::exit(1);
         }
     }
@@ -82,11 +82,11 @@ where
     match GraphicsContext::new_dashboard(title) {
         Ok(mut context) => {
             match test_func(&mut context) {
-                Ok(()) => println!("Graphics test completed successfully!"),
-                Err(e) => eprintln!("Graphics test failed: {}", e),
+                Ok(()) => log::info!("Graphics test completed successfully!"),
+                Err(e) => log::error!("Graphics test failed: {}", e),
             }
         }
-        Err(e) => eprintln!("Failed to create graphics context: {}", e),
+        Err(e) => log::error!("Failed to create graphics context: {}", e),
     }
 }
 
@@ -94,14 +94,14 @@ fn test_single_gpio_input() -> Result<(), Box<dyn std::error::Error>> {
     // Create a GPIO input on pin 2 with default configuration (pull-up, active low)
     let gpio_input = GpioInput::new_with_pin(2)?;
     
-    println!("Reading GPIO pin {} for 5 seconds...", gpio_input.pin_number());
-    println!("Configuration: Active Low = {}", gpio_input.is_active_low());
+    log::info!("Reading GPIO pin {} for 5 seconds...", gpio_input.pin_number());
+    log::info!("Configuration: Active Low = {}", gpio_input.is_active_low());
     
     for i in 0..50 {
         let raw_state = gpio_input.read_raw();
         let logical_state = gpio_input.read_logical();
         
-        println!("Sample {}: Raw = {}, Logical = {}", 
+        log::info!("Sample {}: Raw = {}, Logical = {}", 
                 i + 1, raw_state, if logical_state { "ACTIVE" } else { "INACTIVE" });
         
         thread::sleep(Duration::from_millis(100));
@@ -120,11 +120,11 @@ fn test_sensor_manager() -> Result<(), Box<dyn std::error::Error>> {
     use rppal::gpio::Level;
     use std::time::Duration;
     
-    println!("Creating sensor manager for testing...");
+    log::info!("Creating sensor manager for testing...");
     let mut manager = SensorManager::new();
     
     // Create digital sensor chain for park brake
-    println!("Setting up digital sensor chain (park brake)...");
+    log::info!("Setting up digital sensor chain (park brake)...");
     let digital_chain = SensorDigitalInputChain::new(
         Box::new(TestDigitalDataProvider::new(HWInput::HwParkBrake)),
         vec![Box::new(DigitalSignalDebouncer::new(2, Duration::from_millis(50)))],
@@ -134,7 +134,7 @@ fn test_sensor_manager() -> Result<(), Box<dyn std::error::Error>> {
     manager.add_digital_sensor_chain(digital_chain);
     
     // Create analog sensor chain for fuel level
-    println!("Setting up analog sensor chain (fuel level)...");
+    log::info!("Setting up analog sensor chain (fuel level)...");
     let analog_chain = SensorAnalogInputChain::new(
         Box::new(TestAnalogDataProvider::new(HWInput::HwFuelLvl)),
         vec![Box::new(AnalogSignalProcessorMovingAverage::new(3))],
@@ -145,7 +145,7 @@ fn test_sensor_manager() -> Result<(), Box<dyn std::error::Error>> {
     
     // Test reading sensors multiple times
     for i in 1..=5 {
-        println!("\n--- Reading cycle {} ---", i);
+        log::info!("\n--- Reading cycle {} ---", i);
         
         // Read all sensors first
         match manager.read_all_sensors() {
@@ -156,7 +156,7 @@ fn test_sensor_manager() -> Result<(), Box<dyn std::error::Error>> {
                 // Display digital sensor values
                 for (input, sensor_value) in values {
                     if *input == HWInput::HwParkBrake {
-                        println!("Park brake: {} ({})", 
+                        log::info!("Park brake: {} ({})", 
                                 if sensor_value.is_active() { "ENGAGED" } else { "RELEASED" },
                                 if sensor_value.is_warning() { "WARNING" } else if sensor_value.is_critical() { "CRITICAL" } else { "NORMAL" });
                         break;
@@ -169,18 +169,18 @@ fn test_sensor_manager() -> Result<(), Box<dyn std::error::Error>> {
                         let status = if sensor_value.is_critical() { " [CRITICAL]" } 
                                    else if sensor_value.is_warning() { " [WARNING]" } 
                                    else { "" };
-                        println!("Fuel level: {:.1}%{}", sensor_value.as_f32(), status);
+                        log::info!("Fuel level: {:.1}%{}", sensor_value.as_f32(), status);
                         break;
                     }
                 }
             },
-            Err(e) => println!("Error reading sensors: {}", e),
+            Err(e) => log::error!("Error reading sensors: {}", e),
         }
         
         thread::sleep(Duration::from_millis(500));
     }
     
-    println!("\n✓ Sensor manager integration test completed");
+    log::info!("\n✓ Sensor manager integration test completed");
     Ok(())
 }
 
@@ -188,7 +188,7 @@ fn test_sensor_manager() -> Result<(), Box<dyn std::error::Error>> {
 fn run_digital_display_test(context: &mut GraphicsContext) -> Result<(), String> {
     let ui_style = UIStyle::new();
     
-    println!("\n=== Testing Digital Display Rendering ===");
+    log::info!("\n=== Testing Digital Display Rendering ===");
     
     unsafe {
         // Set viewport
@@ -207,37 +207,37 @@ fn run_digital_display_test(context: &mut GraphicsContext) -> Result<(), String>
 
     // Time display "10:43"
     if let Err(e) = render_time_example(context, &ui_style, 10, 43) {
-        eprintln!("Error rendering time display: {}", e);
+        log::error!("Error rendering time display: {}", e);
     } else {
-        println!("✓ Time display rendered successfully");
+        log::info!("✓ Time display rendered successfully");
     }
     
     // Speed display "088"
     if let Err(e) = render_speed_example(context, &ui_style, 88.0) {
-        eprintln!("Error rendering speed display: {}", e);
+        log::error!("Error rendering speed display: {}", e);
     } else {
-        println!("✓ Speed display rendered successfully");
+        log::info!("✓ Speed display rendered successfully");
     }
     
     // RPM display "2500"
     if let Err(e) = render_rpm_example(context, &ui_style, 2500.0) {
-        eprintln!("Error rendering RPM display: {}", e);
+        log::error!("Error rendering RPM display: {}", e);
     } else {
-        println!("✓ RPM display rendered successfully");
+        log::info!("✓ RPM display rendered successfully");
     }
     
     // Temperature display "85.2"
     if let Err(e) = render_temperature_example(context, &ui_style, 85.2) {
-        eprintln!("Error rendering temperature display: {}", e);
+        log::error!("Error rendering temperature display: {}", e);
     } else {
-        println!("✓ Temperature display rendered successfully");
+        log::info!("✓ Temperature display rendered successfully");
     }
     
     // Voltage display "V12.34"
     if let Err(e) = render_voltage_example(context, &ui_style, 12.34) {
-        eprintln!("Error rendering voltage display: {}", e);
+        log::error!("Error rendering voltage display: {}", e);
     } else {
-        println!("✓ Voltage display rendered successfully");
+        log::info!("✓ Voltage display rendered successfully");
     }
     
     unsafe {
@@ -249,15 +249,15 @@ fn run_digital_display_test(context: &mut GraphicsContext) -> Result<(), String>
     
     context.swap_buffers();
     
-    println!("\n--- Display Test Results ---");
-    println!("All digital displays have been rendered to the screen.");
-    println!("Check the display for:");
-    println!("- Time: 10:43");
-    println!("- Speed: 0088 km/h");
-    println!("- RPM: 2500");
-    println!("- Temperature: 85.2°C");
-    println!("- Voltage: V12.34");
-    println!("- Amber LCD theme with inactive segments visible");
+    log::info!("\n--- Display Test Results ---");
+    log::info!("All digital displays have been rendered to the screen.");
+    log::info!("Check the display for:");
+    log::info!("- Time: 10:43");
+    log::info!("- Speed: 0088 km/h");
+    log::info!("- RPM: 2500");
+    log::info!("- Temperature: 85.2°C");
+    log::info!("- Voltage: V12.34");
+    log::info!("- Amber LCD theme with inactive segments visible");
     
     // Keep display visible
     thread::sleep(Duration::from_secs(15));

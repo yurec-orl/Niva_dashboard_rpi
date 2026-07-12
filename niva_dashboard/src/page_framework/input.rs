@@ -19,12 +19,12 @@ pub enum ButtonState {
 
 impl InputHandler {
     pub fn new() -> Self {
-        InputHandler {
-            input_sources: vec![
-                Box::new(PhysicalButtonInput {}),
-                Box::new(KeyboardInput::new()),
-            ],
+        let mut sources: Vec<Box<dyn InputSource>> = vec![Box::new(PhysicalButtonInput {})];
+        match KeyboardInput::try_new() {
+            Ok(kb) => sources.push(Box::new(kb)),
+            Err(e) => log::info!("Keyboard input unavailable (no TTY?): {}", e),
         }
+        InputHandler { input_sources: sources }
     }
 
     // Add a new input source dynamically
@@ -62,10 +62,31 @@ struct KeyboardInput {
 }
 
 impl KeyboardInput {
-    pub fn new() -> Self {
-        enable_raw_mode().unwrap();
-        KeyboardInput {_private: ()}
+    fn try_new() -> std::io::Result<Self> {
+        enable_raw_mode()?;
+        restore_output_newline_translation()?;
+        Ok(KeyboardInput { _private: () })
     }
+}
+
+// crossterm's raw mode clears OPOST (termios `cfmakeraw` behavior), which disables the
+// tty driver's \n -> \r\n translation on output. Left alone, every bare \n written after
+// this point (println!, log macros, ...) moves the cursor down a row without returning
+// it to column 0, producing a staircase effect in the terminal. ICANON/ECHO/ISIG must
+// stay off for the per-keystroke reads in `button_state`, so only the output-processing
+// flags are restored here rather than undoing raw mode as a whole.
+fn restore_output_newline_translation() -> std::io::Result<()> {
+    unsafe {
+        let mut termios: libc::termios = std::mem::zeroed();
+        if libc::tcgetattr(libc::STDOUT_FILENO, &mut termios) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        termios.c_oflag |= libc::OPOST | libc::ONLCR;
+        if libc::tcsetattr(libc::STDOUT_FILENO, libc::TCSANOW, &termios) != 0 {
+          return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok(())
 }
 
 impl Drop for KeyboardInput {

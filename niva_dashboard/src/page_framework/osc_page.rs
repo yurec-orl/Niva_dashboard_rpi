@@ -40,32 +40,32 @@ impl OscPage {
             match event {
                 UIEvent::OscStart => {
                     self.is_running = true;
-                    print!("Oscilloscope started\n");
+                    log::info!("Oscilloscope started");
                 }
                 UIEvent::OscStop => {
                     self.is_running = false;
-                    print!("Oscilloscope stopped\n");
+                    log::info!("Oscilloscope stopped");
                 }
                 UIEvent::OscSetSampleRate(rate) => {
                     self.sample_rate = rate;
-                    print!("Sample rate set to: {} Hz\n", rate);
+                    log::info!("Sample rate set to: {} Hz", rate);
                 }
                 UIEvent::OscSetTimeScale(scale) => {
                     self.time_scale = scale;
-                    print!("Time scale set to: {}\n", scale);
+                    log::info!("Time scale set to: {}", scale);
                 }
                 UIEvent::OscSetVoltageScale(scale) => {
                     self.voltage_scale = scale;
-                    print!("Voltage scale set to: {}\n", scale);
+                    log::info!("Voltage scale set to: {}", scale);
                 }
                 UIEvent::OscSetTriggerLevel(level) => {
                     self.trigger_level = level;
-                    print!("Trigger level set to: {}\n", level);
+                    log::info!("Trigger level set to: {}", level);
                 }
                 UIEvent::OscToggleChannel(channel) => {
                     if (channel as usize) < self.channel_enabled.len() {
                         self.channel_enabled[channel as usize] = !self.channel_enabled[channel as usize];
-                        print!("Channel {} toggled: {}\n", channel, self.channel_enabled[channel as usize]);
+                        log::info!("Channel {} toggled: {}", channel, self.channel_enabled[channel as usize]);
                     }
                 }
                 _ => {} // Ignore other events
@@ -112,12 +112,12 @@ impl Page for OscPage {
     }
 
     fn on_enter(&mut self) -> Result<(), String> {
-        print!("Entering Oscilloscope page\n");
+        log::info!("Entering Oscilloscope page");
         Ok(())
     }
 
     fn on_exit(&mut self) -> Result<(), String> {
-        print!("Exiting Oscilloscope page\n");
+        log::info!("Exiting Oscilloscope page");
         Ok(())
     }
 
