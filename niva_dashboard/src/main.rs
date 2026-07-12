@@ -20,6 +20,7 @@ use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor, SpeedS
 use crate::hardware::sensor_value::ValueConstraints;
 use crate::util::adc_data_provider::{ADCDataProvider, ADCFrame};
 use crate::util::logging::init_logging;
+use crate::util::ups_monitor::UpsMonitor;
 use rppal::gpio::Level;
 use std::env;
 use std::thread;
@@ -446,6 +447,12 @@ fn setup_adc_data_provider() -> Result<ADCDataProvider, std::string::String> {
     Ok(provider)
 }
 
+fn setup_ups_monitor() -> Result<UpsMonitor, String> {
+    let mut monitor = UpsMonitor::new();
+    monitor.run()?;
+    Ok(monitor)
+}
+
 fn show_help() {
     log::info!("Available test modes:");
     log::info!("1. Basic OpenGL triangle test");
@@ -496,6 +503,20 @@ fn main() -> std::process::ExitCode {
             }
         }
     }
+
+    // Kept alive for the process lifetime — its Drop impl stops the background thread
+    // cleanly on shutdown. Started unconditionally and independently of graphics/sensors
+    // so it keeps monitoring even if later setup steps fail.
+    let _ups_monitor = match setup_ups_monitor() {
+        Ok(monitor) => {
+            log::info!("✓ UPS monitor started");
+            Some(monitor)
+        }
+        Err(e) => {
+            log::warn!("UPS monitor unavailable: {}", e);
+            None
+        }
+    };
 
     let adc = match setup_adc_data_provider() {
         Ok(provider) => {
