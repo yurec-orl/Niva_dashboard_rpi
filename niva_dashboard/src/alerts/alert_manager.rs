@@ -88,11 +88,11 @@ impl AlertManager {
         }
         for (watchdog_id, watchdog) in &mut self.watchdogs {
             if watchdog.check(sensor_manager) {
-                for (alert_id, _alert) in &self.alerts {
-                    if alert_id == watchdog_id {
-                        // Alert already active, skip adding a new one
-                        return;
-                    }
+                let already_active = self.alerts.iter().any(|(alert_id, _)| alert_id == watchdog_id);
+                if already_active {
+                    // Alert already active for this watchdog, skip adding a new one —
+                    // but keep checking the remaining watchdogs.
+                    continue;
                 }
                 log::info!("Watchdog: {:?} condition on {:?}", watchdog.severity(), watchdog.hw_input());
                 self.alerts.push((*watchdog_id, Alert::new(

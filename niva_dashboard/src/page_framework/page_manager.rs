@@ -388,21 +388,31 @@ impl PageManager {
             HWInput::HwEngineCoolantTemp,
             "ТЕМПЕРАТУРА ДВИГАТЕЛЯ".to_string(),
             Severity::Critical,
-            Some(5000),           // Stays on screen for 5 seconds
-            Some(1 * 60 * 1000),  // Remove after 1 minute - prevents flooding
-            Some(100),    // Trigger if condition persists for 100ms
+            None,   // No display timeout
+            None,   // No remove timeout
+            None,   // Trigger immediately
         );
         let oil_press_low_watchdog = Watchdog::new(
             HWInput::HwOilPressLow,
             "НИЗКОЕ ДАВЛЕНИЕ МАСЛА".to_string(),
             Severity::Critical,
-            Some(5000),           // Stays on screen for 5 seconds
-            Some(1 * 60 * 1000),  // Remove after 1 minute - prevents flooding
-            Some(100),    // Trigger if condition persists for 100ms
+            None,   // No display timeout
+            None,   // No remove timeout
+            None,   // Trigger immediately
+        );
+
+        let adc_link_watchdog = Watchdog::new(
+            HWInput::HwAdcLink,
+            "ОШИБКА СВЯЗИ АЦП".to_string(),
+            Severity::Critical,
+            None,   // No display timeout - stays visible for as long as the link is down
+            None,   // No remove timeout - never dropped from the queue
+            None,   // Trigger immediately, no persistence delay
         );
 
         self.alert_manager.add_watchdog(engine_temp_watchdog);
         self.alert_manager.add_watchdog(oil_press_low_watchdog);
+        self.alert_manager.add_watchdog(adc_link_watchdog);
 
         // Enable watchdogs and alerts
         self.alert_manager.set_enabled(true);

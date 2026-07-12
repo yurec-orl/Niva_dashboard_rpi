@@ -5,6 +5,7 @@ use std::thread;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 /// Errors that can occur when starting the ADC data provider.
 #[derive(Debug)]
@@ -28,18 +29,34 @@ impl std::error::Error for AdcDataProviderError {}
 /// Hardware providers hold this instead of the full ADCDataProvider so that
 /// Arc<ADCFrame> does not drag in the non-Sync serial port fields.
 #[derive(Clone)]
-pub struct ADCFrame(Arc<Mutex<Vec<u16>>>);
+pub struct ADCFrame {
+    data: Arc<Mutex<Vec<u16>>>,
+    last_update: Arc<Mutex<Instant>>,
+}
 
 impl ADCFrame {
+    fn new() -> Self {
+        ADCFrame {
+            data: Arc::new(Mutex::new(Vec::new())),
+            last_update: Arc::new(Mutex::new(Instant::now())),
+        }
+    }
+
     pub fn get_channel(&self, index: usize) -> Result<u16, String> {
-        self.0.lock().unwrap()
+        self.data.lock().unwrap()
             .get(index)
             .copied()
             .ok_or_else(|| format!("ADC channel {} not in frame", index))
     }
 
     pub fn get_data(&self) -> Vec<u16> {
-        self.0.lock().unwrap().clone()
+        self.data.lock().unwrap().clone()
+    }
+
+    /// Time elapsed since the last successfully parsed frame from the STM32 module.
+    /// Used to detect a stalled/disconnected ADC link (see AdcLinkStatusProvider).
+    pub fn last_update_age(&self) -> Duration {
+        self.last_update.lock().unwrap().elapsed()
     }
 }
 
@@ -60,7 +77,7 @@ impl ADCDataProvider {
         ADCDataProvider {
             adc_reader: Some(adc_reader),
             should_stop: Arc::new(AtomicBool::new(false)),
-            frame: ADCFrame(Arc::new(Mutex::new(Vec::new()))),
+            frame: ADCFrame::new(),
             thread: None,
         }
     }
@@ -87,7 +104,8 @@ impl ADCDataProvider {
                                 .filter_map(|s| s.trim().parse().ok())
                                 .collect();
                             if !values.is_empty() {
-                                *frame.0.lock().unwrap() = values;
+                                *frame.data.lock().unwrap() = values;
+                                *frame.last_update.lock().unwrap() = Instant::now();
                             }
                         }
                         None => break,  // Serial read error — shut down thread

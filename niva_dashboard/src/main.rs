@@ -211,6 +211,17 @@ fn setup_self_test_sensors() -> SensorManager {
 fn setup_sensors(adc: Option<ADCFrame>) -> SensorManager {
     let mut mgr = SensorManager::new();
 
+    // ADC link-health chain — added unconditionally (before the early return below) so
+    // that both failure modes surface identically: the port never opening at startup
+    // (adc is None) and a previously-live connection going stale (frame stops updating).
+    let adc_link_chain = SensorDigitalInputChain::new(
+        Box::new(AdcLinkStatusProvider::new(adc.clone(), Duration::from_millis(500))),
+        vec![],
+        Box::new(GenericDigitalSensor::new("HwAdcLink".to_string(), "ADC LINK".to_string(),
+                                           Level::High, ValueConstraints::digital_critical())),
+    );
+    mgr.add_digital_sensor_chain(adc_link_chain);
+
     let Some(frame) = adc else {
         log::info!("ADC unavailable — real sensor set will be empty");
         return mgr;

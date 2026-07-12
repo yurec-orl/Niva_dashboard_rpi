@@ -56,6 +56,8 @@ pub enum HWInput {
     HwButton5,
     HwButton6,
     HwButton7,
+    // ADC link health (see AdcLinkStatusProvider) — not a physical sensor
+    HwAdcLink,
 }
 
 // Generic interface for reading input data.
@@ -98,6 +100,33 @@ impl HWDigitalProvider for ADCChannelProvider {
     fn read_digital(&self, _input: HWInput) -> Result<Level, String> {
         self.frame.get_channel(self.channel_index)
             .map(|value| if value > 0 { Level::High } else { Level::Low })
+    }
+}
+
+/// Reports Level::High ("problem") when no ADC frame has been received recently — either
+/// because the STM32 module was never connected (frame is None) or because a previously
+/// live connection has gone stale. Feeds a Watchdog so this surfaces as a visible alert
+/// instead of silently leaving sensors/buttons frozen on their last value.
+pub struct AdcLinkStatusProvider {
+    frame: Option<ADCFrame>,
+    max_age: Duration,
+}
+
+impl AdcLinkStatusProvider {
+    pub fn new(frame: Option<ADCFrame>, max_age: Duration) -> Self {
+        AdcLinkStatusProvider { frame, max_age }
+    }
+}
+
+impl HWDigitalProvider for AdcLinkStatusProvider {
+    fn input(&self) -> HWInput { HWInput::HwAdcLink }
+
+    fn read_digital(&self, _input: HWInput) -> Result<Level, String> {
+        let stale = match &self.frame {
+            Some(frame) => frame.last_update_age() > self.max_age,
+            None => true, // ADC never connected — link is down by definition
+        };
+        Ok(if stale { Level::High } else { Level::Low })
     }
 }
 
