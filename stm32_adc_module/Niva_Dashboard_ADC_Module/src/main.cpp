@@ -159,6 +159,21 @@
 // and D+ (PA12) has wrong value (10kΩ instead of 1.5kΩ)
 // Hardware fix applied on this board: 2kΩ resistor soldered in parallel
 // with R10 (10kΩ), giving ~1.67kΩ effective — within USB Full Speed spec.
+//
+// ============================================================
+// Build & Upload
+// ============================================================
+//
+//   Toolchain: PlatformIO (platform=ststm32, framework=arduino/STM32duino,
+//   board=genericSTM32F103C8). See platformio.ini.
+//
+//   Upload: upload_protocol = stlink — flashed via an ST-Link programmer
+//   wired to SWDIO/SWCLK (PA13/PA14), not USB DFU or serial bootloader.
+//
+//   IMPORTANT: open this project from the PlatformIO Home UI (not by
+//   plain "Open Folder" in VS Code) — otherwise the PlatformIO extension
+//   may not pick up the project environment correctly and build/upload
+//   will fail.
 
 #include <Arduino.h>
 #include <HardwareTimer.h>
