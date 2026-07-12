@@ -3,7 +3,7 @@ use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
 use crate::page_framework::diag_page::DiagPage;
 use crate::page_framework::events::{UIEvent, EventReceiver, EventBus, SmartEventSender, create_event_bus};
-use crate::page_framework::input::{InputHandler, ButtonState};
+use crate::page_framework::input::{InputHandler, InputSource, ButtonState};
 use crate::page_framework::main_page::MainPage;
 use crate::hardware::sensor_manager::SensorManager;
 use crate::hardware::hw_providers::HWInput;
@@ -221,7 +221,8 @@ pub struct PageManager {
 }
 
 impl PageManager {
-    pub fn new(context: GraphicsContext, sensor_manager: SensorManager, ui_style: UIStyle) -> Self {
+    pub fn new(context: GraphicsContext, sensor_manager: SensorManager, ui_style: UIStyle,
+               input_sources: Vec<Box<dyn InputSource>>) -> Self {
         let mut buttons_map = HashMap::new();
         buttons_map.insert('1', ButtonPosition::Left1);
         buttons_map.insert('2', ButtonPosition::Left2);
@@ -249,7 +250,7 @@ impl PageManager {
             pg_id: 0,
             current_page: None,
             pages: Pages::new(),
-            input_handler: InputHandler::new(),
+            input_handler: InputHandler::new(input_sources),
             buttons_map,
             event_bus,
             global_event_receiver,

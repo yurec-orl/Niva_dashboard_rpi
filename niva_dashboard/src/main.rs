@@ -11,6 +11,7 @@ use crate::test::run_test::run_test;
 use crate::graphics::context::GraphicsContext;
 use crate::page_framework::page_manager::PageManager;
 use crate::page_framework::events::UIEvent;
+use crate::page_framework::input::{InputSource, PhysicalButtonInput, KeyboardInput};
 use crate::hardware::sensor_manager::{SensorManager, SensorDigitalInputChain, SensorAnalogInputChain};
 use crate::hardware::hw_providers::*;
 use crate::hardware::digital_signal_processing::DigitalSignalDebouncer;
@@ -361,6 +362,56 @@ fn setup_sensors(adc: Option<ADCFrame>) -> SensorManager {
     mgr
 }
 
+// Physical MFD buttons (B0..B7), read from the same STM32 ADC frame as the sensors
+// (indices 16-23, after A0-A3/TACHO/SPEED/D0-D9). Kept in its own SensorManager, separate
+// from setup_sensors' self-test/functional swap, so buttons work from the very first frame.
+// No debouncer — the STM32 already debounces buttons over 8 samples at 50Hz before
+// setting B0..B7; can add one here later if that turns out to be insufficient.
+fn setup_button_sensors(adc: Option<ADCFrame>) -> SensorManager {
+    let mut mgr = SensorManager::new();
+
+    let Some(frame) = adc else {
+        log::info!("ADC unavailable — physical buttons will not respond");
+        return mgr;
+    };
+
+    let button_inputs = [
+        (HWInput::HwButton0, 16),
+        (HWInput::HwButton1, 17),
+        (HWInput::HwButton2, 18),
+        (HWInput::HwButton3, 19),
+        (HWInput::HwButton4, 20),
+        (HWInput::HwButton5, 21),
+        (HWInput::HwButton6, 22),
+        (HWInput::HwButton7, 23),
+    ];
+
+    for (input, channel) in button_inputs {
+        let chain = SensorDigitalInputChain::new(
+            Box::new(ADCChannelProvider::new(input, channel, frame.clone())),
+            vec![],
+            Box::new(GenericDigitalSensor::new(format!("{:?}", input), format!("{:?}", input),
+                                               Level::High, ValueConstraints::digital_default())),
+        );
+        mgr.add_digital_sensor_chain(chain);
+    }
+
+    log::info!("✓ Button sensor manager initialized");
+
+    mgr
+}
+
+// Builds the input sources for page navigation: physical buttons (backed by the button
+// sensor manager above) plus keyboard input for development/debugging on a TTY.
+fn setup_input_sources(button_sensors: SensorManager) -> Vec<Box<dyn InputSource>> {
+    let mut sources: Vec<Box<dyn InputSource>> = vec![Box::new(PhysicalButtonInput::new(button_sensors))];
+    match KeyboardInput::try_new() {
+        Ok(kb) => sources.push(Box::new(kb)),
+        Err(e) => log::info!("Keyboard input unavailable (no TTY?): {}", e),
+    }
+    sources
+}
+
 fn setup_ui_style() -> graphics::ui_style::UIStyle {
     let ui_style = graphics::ui_style::UIStyle::new();
     // ui_style.read_from_file("/etc/niva_dashboard/ui_style.json").unwrap_or_else(|e| {
@@ -453,10 +504,12 @@ fn main() -> std::process::ExitCode {
 
     let context = setup_context();
     let self_test_sensors = setup_self_test_sensors();
+    let button_sensors = setup_button_sensors(adc_frame.clone());
+    let input_sources = setup_input_sources(button_sensors);
     let sensors = setup_sensors(adc_frame);
     let ui_style = setup_ui_style();
 
-    let mut mgr = PageManager::new(context, self_test_sensors, ui_style);
+    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources);
 
     mgr.setup().expect("Failed to setup page manager");
 

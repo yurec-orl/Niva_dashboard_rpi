@@ -47,6 +47,15 @@ pub enum HWInput {
     HwSpeed,
     HwTacho,
     HwTurnSignal,
+    // Physical MFD buttons (B0..B7 in the STM32 ADC frame)
+    HwButton0,
+    HwButton1,
+    HwButton2,
+    HwButton3,
+    HwButton4,
+    HwButton5,
+    HwButton6,
+    HwButton7,
 }
 
 // Generic interface for reading input data.
