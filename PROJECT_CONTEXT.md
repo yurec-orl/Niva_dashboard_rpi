@@ -244,6 +244,22 @@ root - standard password (1 numeric char)
 
 **General rule:** Never call `glGenBuffers` / `glDeleteBuffers` inside a per-frame render function on the RPi V3D driver. Always pre-allocate VBOs at init time and stream new data with `GL_DYNAMIC_DRAW`.
 
+### STM32 ADC module lockup when reading `/dev/niva_adc` with `cat` (July 2026)
+
+**Symptom:** `cat /dev/niva_adc` outputs a handful of lines (~6-8) then stops; the STM32's heartbeat LED freezes solid instead of blinking. The Rust dashboard app reading the same port never exhibits this.
+
+**Root cause:** A freshly-created `ttyACM0` node comes up in the Linux default "cooked" tty mode (`icanon`, `echo`, `ixon` all on) until some program puts it in raw mode. `cat` never touches termios — it just reads whatever mode the port is already in. With echo on, every byte the kernel receives from the STM32 gets echoed straight back out over the same full-duplex USB CDC link. The firmware (`stm32_adc_module/Niva_Dashboard_ADC_Module/src/main.cpp`) never calls `Serial.read()`/`available()` anywhere in `loop()` — it only transmits — so the echoed bytes pile up unread in the USB CDC RX buffer. Once that buffer fills, the USB stack's RX handling stalls, wedging the interrupt path and freezing the TX side too (`loop()` hangs, LED stays wherever it was).
+
+The Rust app never hits this because `ADCSerialReader::try_new` (`niva_dashboard/src/util/adc_serial_reader.rs`) opens the port via the `serialport` crate, which explicitly configures raw/no-echo/no-flow-control mode on open. Once that has run at least once, the tty stays in raw mode for subsequent opens (including `cat`) until the device is unplugged/replugged and a fresh `ttyACM0` node is created.
+
+**Fix / workaround:** Before using `cat` (or any raw read) on a freshly (re)connected `/dev/niva_adc`, force raw mode first:
+```bash
+stty -F /dev/niva_adc raw -echo -ixon -ixoff 115200
+cat /dev/niva_adc
+```
+
+**General rule:** Never read a freshly-created serial/USB-CDC device node with `cat` before setting raw mode — default cooked-mode echo will reflect received bytes back down a full-duplex link, and any firmware that doesn't drain its RX buffer can lock up as a result.
+
 ---
 *Created: August 26, 2025*
-*Last Updated: June 13, 2026*
+*Last Updated: July 12, 2026*
