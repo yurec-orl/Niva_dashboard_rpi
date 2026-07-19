@@ -389,7 +389,7 @@ impl PageManager {
             "ТЕМПЕРАТУРА ДВИГАТЕЛЯ".to_string(),
             Severity::Critical,
             None,           // No display timeout
-            Some(10*1000),     // Block next alert for 5s
+            Some(std::time::Duration::from_secs(60)),
             None,           // Trigger immediately
         );
         let oil_press_low_watchdog = Watchdog::new(
@@ -397,7 +397,7 @@ impl PageManager {
             "НИЗКОЕ ДАВЛЕНИЕ МАСЛА".to_string(),
             Severity::Critical,
             None,           // No display timeout
-            Some(30*1000),     // Block next alert for 5s
+            Some(std::time::Duration::from_secs(30)),
             None,           // Trigger immediately
         );
 

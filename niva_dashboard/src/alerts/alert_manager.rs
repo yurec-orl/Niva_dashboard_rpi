@@ -98,8 +98,8 @@ impl AlertManager {
                 self.alerts.push((*watchdog_id, Alert::new(
                     watchdog.message().clone(),
                     watchdog.severity(),
-                    watchdog.alert_display_timeout_ms(),
-                    watchdog.alert_remove_timeout_ms(),
+                    watchdog.alert_display_timeout(),
+                    watchdog.alert_remove_timeout(),
                 )));
             }
         }
