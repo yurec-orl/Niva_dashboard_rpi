@@ -207,6 +207,21 @@ udev rule for ADC module:
 SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", ATTRS{serial}=="8D8E416F4957", SYMLINK+="niva_adc", MODE="0666"
 ```
 
+### USB hard-reset (power cycle)
+The STM32 ADC module sits on USB hub `2109:3431` (VIA Labs), hub location `1-1` (confirmed via `uhubctl`). If the STM32 firmware itself hangs (distinct from the OS-level serial link dropping — see `ADCDataProvider` in `src/util/adc_data_provider.rs`), the dashboard recovers by power-cycling this USB hub with `uhubctl`, forcing a hardware power-on-reset.
+
+**Whole hub, not just the module's port:** `uhubctl` reports per-port power switching support (`ppps`) for this hub, but cycling only the STM32's individual port was tested extensively and found unreliable — the device failed to re-enumerate (`Device not responding to setup address` / `unable to enumerate USB device` in `dmesg`) far more often than it succeeded, even after fixing sysfs permissions (below). Power-cycling every port on the hub together (`uhubctl -l 1-1 -a 2`, action `2` = cycle) was confirmed reliable across repeated trials and is the only mechanism found to actually work. This briefly drops power to anything else sharing the hub (e.g. a wireless keyboard/mouse dongle used for dev/SSH access) — harmless, since the dashboard's real input path is the GPIO-connected physical buttons, not this hub.
+
+**Requires root.** Cycling the whole hub needs the sysfs `.../disable` interface, whose kernel write handler gates on `capable(CAP_SYS_ADMIN)` regardless of file permissions — so, unlike the ADC tty rule above, a udev permission grant is not sufficient here and does not help. Instead, a narrowly-scoped passwordless sudoers entry permits only this exact command:
+
+`/etc/sudoers.d/niva-uhubctl`:
+```
+user ALL=(root) NOPASSWD: /usr/sbin/uhubctl -l 1-1 -a 2
+```
+The Rust code invokes `sudo /usr/sbin/uhubctl -l 1-1 -a 2` verbatim — any change to the args must be mirrored in this sudoers entry or the call will fail (sudoers NOPASSWD entries match the exact command line).
+
+Manual invocation for testing: `sudo uhubctl -l 1-1 -a 2`.
+
 ## Logging
 `src/util/logging.rs` sets up logging via `flexi_logger`, writing to `~/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/Logs` and duplicating everything to stdout. Rotation is size-based (5 MB, keep last 10 files).
 
@@ -244,6 +259,22 @@ root - standard password (1 numeric char)
 
 **General rule:** Never call `glGenBuffers` / `glDeleteBuffers` inside a per-frame render function on the RPi V3D driver. Always pre-allocate VBOs at init time and stream new data with `GL_DYNAMIC_DRAW`.
 
+### STM32 ADC module lockup when reading `/dev/niva_adc` with `cat` (July 2026)
+
+**Symptom:** `cat /dev/niva_adc` outputs a handful of lines (~6-8) then stops; the STM32's heartbeat LED freezes solid instead of blinking. The Rust dashboard app reading the same port never exhibits this.
+
+**Root cause:** A freshly-created `ttyACM0` node comes up in the Linux default "cooked" tty mode (`icanon`, `echo`, `ixon` all on) until some program puts it in raw mode. `cat` never touches termios — it just reads whatever mode the port is already in. With echo on, every byte the kernel receives from the STM32 gets echoed straight back out over the same full-duplex USB CDC link. The firmware (`stm32_adc_module/Niva_Dashboard_ADC_Module/src/main.cpp`) never calls `Serial.read()`/`available()` anywhere in `loop()` — it only transmits — so the echoed bytes pile up unread in the USB CDC RX buffer. Once that buffer fills, the USB stack's RX handling stalls, wedging the interrupt path and freezing the TX side too (`loop()` hangs, LED stays wherever it was).
+
+The Rust app never hits this because `ADCSerialReader::try_new` (`niva_dashboard/src/util/adc_serial_reader.rs`) opens the port via the `serialport` crate, which explicitly configures raw/no-echo/no-flow-control mode on open. Once that has run at least once, the tty stays in raw mode for subsequent opens (including `cat`) until the device is unplugged/replugged and a fresh `ttyACM0` node is created.
+
+**Fix / workaround:** Before using `cat` (or any raw read) on a freshly (re)connected `/dev/niva_adc`, force raw mode first:
+```bash
+stty -F /dev/niva_adc raw -echo -ixon -ixoff 115200
+cat /dev/niva_adc
+```
+
+**General rule:** Never read a freshly-created serial/USB-CDC device node with `cat` before setting raw mode — default cooked-mode echo will reflect received bytes back down a full-duplex link, and any firmware that doesn't drain its RX buffer can lock up as a result.
+
 ---
 *Created: August 26, 2025*
-*Last Updated: June 13, 2026*
+*Last Updated: July 12, 2026*

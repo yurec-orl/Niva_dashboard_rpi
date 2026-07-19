@@ -11,15 +11,16 @@ use crate::test::run_test::run_test;
 use crate::graphics::context::GraphicsContext;
 use crate::page_framework::page_manager::PageManager;
 use crate::page_framework::events::UIEvent;
+use crate::page_framework::input::{InputSource, PhysicalButtonInput, KeyboardInput};
 use crate::hardware::sensor_manager::{SensorManager, SensorDigitalInputChain, SensorAnalogInputChain};
 use crate::hardware::hw_providers::*;
 use crate::hardware::digital_signal_processing::DigitalSignalDebouncer;
 use crate::hardware::analog_signal_processing::AnalogSignalProcessorMovingAverage;
 use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor, SpeedSensor, EngineTemperatureSensor};
 use crate::hardware::sensor_value::ValueConstraints;
-use crate::util::adc_serial_reader::ADCSerialReader;
 use crate::util::adc_data_provider::{ADCDataProvider, ADCFrame};
 use crate::util::logging::init_logging;
+use crate::util::ups_monitor::UpsMonitor;
 use rppal::gpio::Level;
 use std::env;
 use std::thread;
@@ -209,6 +210,20 @@ fn setup_self_test_sensors() -> SensorManager {
 
 fn setup_sensors(adc: Option<ADCFrame>) -> SensorManager {
     let mut mgr = SensorManager::new();
+    // Lets adc_link_down() suppress "channel not in frame" log spam while the ADC
+    // reconnect loop is doing its thing (see AdcDataProvider).
+    mgr.set_adc_frame(adc.clone());
+
+    // ADC link-health chain — added unconditionally (before the early return below) so
+    // that both failure modes surface identically: the port never opening at startup
+    // (adc is None) and a previously-live connection going stale (frame stops updating).
+    let adc_link_chain = SensorDigitalInputChain::new(
+        Box::new(AdcLinkStatusProvider::new(adc.clone())),
+        vec![],
+        Box::new(GenericDigitalSensor::new("HwAdcLink".to_string(), "ADC LINK".to_string(),
+                                           Level::High, ValueConstraints::digital_critical())),
+    );
+    mgr.add_digital_sensor_chain(adc_link_chain);
 
     let Some(frame) = adc else {
         log::info!("ADC unavailable — real sensor set will be empty");
@@ -361,6 +376,59 @@ fn setup_sensors(adc: Option<ADCFrame>) -> SensorManager {
     mgr
 }
 
+// Physical MFD buttons (B0..B7), read from the same STM32 ADC frame as the sensors
+// (indices 16-23, after A0-A3/TACHO/SPEED/D0-D9). Kept in its own SensorManager, separate
+// from setup_sensors' self-test/functional swap, so buttons work from the very first frame.
+// No debouncer — the STM32 already debounces buttons over 8 samples at 50Hz before
+// setting B0..B7; can add one here later if that turns out to be insufficient.
+fn setup_button_sensors(adc: Option<ADCFrame>) -> SensorManager {
+    let mut mgr = SensorManager::new();
+    // Lets adc_link_down() suppress "channel not in frame" log spam while the ADC
+    // reconnect loop is doing its thing (see AdcDataProvider).
+    mgr.set_adc_frame(adc.clone());
+
+    let Some(frame) = adc else {
+        log::info!("ADC unavailable — physical buttons will not respond");
+        return mgr;
+    };
+
+    let button_inputs = [
+        (HWInput::HwButton0, 16),
+        (HWInput::HwButton1, 17),
+        (HWInput::HwButton2, 18),
+        (HWInput::HwButton3, 19),
+        (HWInput::HwButton4, 20),
+        (HWInput::HwButton5, 21),
+        (HWInput::HwButton6, 22),
+        (HWInput::HwButton7, 23),
+    ];
+
+    for (input, channel) in button_inputs {
+        let chain = SensorDigitalInputChain::new(
+            Box::new(ADCChannelProvider::new(input, channel, frame.clone())),
+            vec![],
+            Box::new(GenericDigitalSensor::new(format!("{:?}", input), format!("{:?}", input),
+                                               Level::High, ValueConstraints::digital_default())),
+        );
+        mgr.add_digital_sensor_chain(chain);
+    }
+
+    log::info!("✓ Button sensor manager initialized");
+
+    mgr
+}
+
+// Builds the input sources for page navigation: physical buttons (backed by the button
+// sensor manager above) plus keyboard input for development/debugging on a TTY.
+fn setup_input_sources(button_sensors: SensorManager) -> Vec<Box<dyn InputSource>> {
+    let mut sources: Vec<Box<dyn InputSource>> = vec![Box::new(PhysicalButtonInput::new(button_sensors))];
+    match KeyboardInput::try_new() {
+        Ok(kb) => sources.push(Box::new(kb)),
+        Err(e) => log::info!("Keyboard input unavailable (no TTY?): {}", e),
+    }
+    sources
+}
+
 fn setup_ui_style() -> graphics::ui_style::UIStyle {
     let ui_style = graphics::ui_style::UIStyle::new();
     // ui_style.read_from_file("/etc/niva_dashboard/ui_style.json").unwrap_or_else(|e| {
@@ -370,12 +438,19 @@ fn setup_ui_style() -> graphics::ui_style::UIStyle {
 }
 
 fn setup_adc_data_provider() -> Result<ADCDataProvider, std::string::String> {
-    // "/dev/niva_adc" is the udev symlink for the STM32 ADC module.
-    // Returns Arc so ADCChannelProviders can share ownership; thread stops when last Arc drops.
-    let serial_reader = ADCSerialReader::try_new("/dev/niva_adc", 115200)?;
-    let mut provider = ADCDataProvider::new(serial_reader);
+    // "/dev/niva_adc" is the udev symlink for the STM32 ADC module. The provider's
+    // background thread owns connecting (and reconnecting) to this port, so this succeeds
+    // even if the device is not yet plugged in — the ADC link alert (AdcLinkStatusProvider)
+    // covers "not connected" until the thread's retry loop picks the device up.
+    let mut provider = ADCDataProvider::new("/dev/niva_adc", 115200);
     provider.run().map_err(|e| e.to_string())?;
     Ok(provider)
+}
+
+fn setup_ups_monitor() -> Result<UpsMonitor, String> {
+    let mut monitor = UpsMonitor::new();
+    monitor.run()?;
+    Ok(monitor)
 }
 
 fn show_help() {
@@ -429,6 +504,20 @@ fn main() -> std::process::ExitCode {
         }
     }
 
+    // Kept alive for the process lifetime — its Drop impl stops the background thread
+    // cleanly on shutdown. Started unconditionally and independently of graphics/sensors
+    // so it keeps monitoring even if later setup steps fail.
+    let _ups_monitor = match setup_ups_monitor() {
+        Ok(monitor) => {
+            log::info!("✓ UPS monitor started");
+            Some(monitor)
+        }
+        Err(e) => {
+            log::warn!("UPS monitor unavailable: {}", e);
+            None
+        }
+    };
+
     let adc = match setup_adc_data_provider() {
         Ok(provider) => {
             log::info!("✓ ADC data provider started");
@@ -442,12 +531,23 @@ fn main() -> std::process::ExitCode {
     // Obtain a frame handle before moving adc into setup_sensors
     let adc_frame = adc.as_ref().map(|p| p.frame());
 
+    // Temporary diagnostic: log raw ADC frame contents once a second to verify
+    // the serial reader thread is actually receiving data from the STM32 module.
+    // if let Some(frame) = adc_frame.clone() {
+    //     thread::spawn(move || loop {
+    //         log::info!("ADC frame: {:?}", frame.get_data());
+    //         thread::sleep(Duration::from_secs(1));
+    //     });
+    // }
+
     let context = setup_context();
     let self_test_sensors = setup_self_test_sensors();
+    let button_sensors = setup_button_sensors(adc_frame.clone());
+    let input_sources = setup_input_sources(button_sensors);
     let sensors = setup_sensors(adc_frame);
     let ui_style = setup_ui_style();
 
-    let mut mgr = PageManager::new(context, self_test_sensors, ui_style);
+    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources);
 
     mgr.setup().expect("Failed to setup page manager");
 

@@ -3,7 +3,7 @@ use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
 use crate::page_framework::diag_page::DiagPage;
 use crate::page_framework::events::{UIEvent, EventReceiver, EventBus, SmartEventSender, create_event_bus};
-use crate::page_framework::input::{InputHandler, ButtonState};
+use crate::page_framework::input::{InputHandler, InputSource, ButtonState};
 use crate::page_framework::main_page::MainPage;
 use crate::hardware::sensor_manager::SensorManager;
 use crate::hardware::hw_providers::HWInput;
@@ -221,7 +221,8 @@ pub struct PageManager {
 }
 
 impl PageManager {
-    pub fn new(context: GraphicsContext, sensor_manager: SensorManager, ui_style: UIStyle) -> Self {
+    pub fn new(context: GraphicsContext, sensor_manager: SensorManager, ui_style: UIStyle,
+               input_sources: Vec<Box<dyn InputSource>>) -> Self {
         let mut buttons_map = HashMap::new();
         buttons_map.insert('1', ButtonPosition::Left1);
         buttons_map.insert('2', ButtonPosition::Left2);
@@ -249,7 +250,7 @@ impl PageManager {
             pg_id: 0,
             current_page: None,
             pages: Pages::new(),
-            input_handler: InputHandler::new(),
+            input_handler: InputHandler::new(input_sources),
             buttons_map,
             event_bus,
             global_event_receiver,
@@ -387,21 +388,31 @@ impl PageManager {
             HWInput::HwEngineCoolantTemp,
             "ТЕМПЕРАТУРА ДВИГАТЕЛЯ".to_string(),
             Severity::Critical,
-            Some(5000),           // Stays on screen for 5 seconds
-            Some(1 * 60 * 1000),  // Remove after 1 minute - prevents flooding
-            Some(100),    // Trigger if condition persists for 100ms
+            None,           // No display timeout
+            Some(std::time::Duration::from_secs(60)),
+            None,           // Trigger immediately
         );
         let oil_press_low_watchdog = Watchdog::new(
             HWInput::HwOilPressLow,
             "НИЗКОЕ ДАВЛЕНИЕ МАСЛА".to_string(),
             Severity::Critical,
-            Some(5000),           // Stays on screen for 5 seconds
-            Some(1 * 60 * 1000),  // Remove after 1 minute - prevents flooding
-            Some(100),    // Trigger if condition persists for 100ms
+            None,           // No display timeout
+            Some(std::time::Duration::from_secs(30)),
+            None,           // Trigger immediately
+        );
+
+        let adc_link_watchdog = Watchdog::new(
+            HWInput::HwAdcLink,
+            "ОШИБКА СВЯЗИ АЦП".to_string(),
+            Severity::Critical,
+            None,           // No display timeout - stays visible for as long as the link is down
+            None,           // No remove timeout - never dropped from the queue
+            None,           // Trigger immediately, no persistence delay
         );
 
         self.alert_manager.add_watchdog(engine_temp_watchdog);
         self.alert_manager.add_watchdog(oil_press_low_watchdog);
+        self.alert_manager.add_watchdog(adc_link_watchdog);
 
         // Enable watchdogs and alerts
         self.alert_manager.set_enabled(true);
@@ -444,7 +455,12 @@ impl PageManager {
             // Continuous sensor polling - poll sensors every loop iteration
             // This ensures sensor data is always up to date regardless of render timing
             if let Err(e) = self.sensor_manager.read_all_sensors() {
-                log::error!("Sensor read error: {}", e);
+                // Suppress: while the ADC link is down, the first ADC-backed chain fails
+                // with "channel not in frame" until AdcDataProvider's reconnect loop
+                // recovers it — expected and already surfaced via the ADC LINK alert.
+                if !self.sensor_manager.adc_link_down() {
+                    log::error!("Sensor read error: {}", e);
+                }
             }
             self.alert_manager.check_watchdogs(&self.sensor_manager);
             

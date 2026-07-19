@@ -6,18 +6,18 @@ use crate::indicators::indicator::IndicatorBounds;
 pub struct Alert {
     message: String,
     severity: Severity,
-    display_timeout_ms: Option<u32>,
-    remove_timeout_ms: Option<u32>,
+    display_timeout: Option<std::time::Duration>,
+    remove_timeout: Option<std::time::Duration>,
     creation_time: std::time::Instant,
 }
 
 impl Alert {
-    pub fn new(message: String, severity: Severity, display_timeout_ms: Option<u32>, remove_timeout_ms: Option<u32>) -> Self {
+    pub fn new(message: String, severity: Severity, display_timeout: Option<std::time::Duration>, remove_timeout: Option<std::time::Duration>) -> Self {
         Self {
             message,
             severity,
-            display_timeout_ms,
-            remove_timeout_ms,
+            display_timeout,
+            remove_timeout,
             creation_time: std::time::Instant::now(),
         }
     }
@@ -51,22 +51,24 @@ impl Alert {
     }
 
     pub fn suppress(&mut self) {
-        self.display_timeout_ms = Some(0);
+        self.display_timeout = Some(std::time::Duration::ZERO);
+        self.creation_time = std::time::Instant::now();     // Reset creation time for remove_timeout
     }
 
     pub fn is_active(&self) -> bool {
-        if self.display_timeout_ms.is_none() {
-            return true; // Always active if no timeout set
+        match self.display_timeout {
+            None => true, // Always active if no timeout set
+            Some(timeout) => self.creation_time.elapsed() < timeout,
         }
-        self.creation_time.elapsed().as_millis() < self.display_timeout_ms.unwrap() as u128
     }
 
-    // Return true if the alert has expired based on remove_timeout_ms
+    // Return true if the alert has expired based on inactivity and remove_timeout
     // and should be removed from queue.
     pub fn is_expired(&self) -> bool {
-        if self.remove_timeout_ms.is_none() {
-            return false; // Never expires if no timeout set
+        match self.remove_timeout {
+            None => false, // Never expires if no timeout set.
+            Some(_) if self.is_active() => false,
+            Some(timeout) => self.creation_time.elapsed() >= timeout,
         }
-        self.creation_time.elapsed().as_millis() >= self.remove_timeout_ms.unwrap() as u128
     }
 }

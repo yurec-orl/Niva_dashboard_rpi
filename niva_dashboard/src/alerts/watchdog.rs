@@ -11,18 +11,19 @@ pub struct Watchdog {
     hw_input: HWInput,
     alert_message: String,
     severity: Severity,
-    alert_display_timeout_ms: Option<u32>,      // For how long to display the alert
-    alert_remove_timeout_ms: Option<u32>,       // Inactive alert stays in queue for this long before removal
+    alert_display_timeout: Option<std::time::Duration>,      // For how long to display the alert
+    alert_remove_timeout: Option<std::time::Duration>,       // Inactive alert stays in queue for this long before removal
                                                 // to prevent alert flooding.
     trigger_start_time: Option<std::time::Instant>,
-    trigger_duration_ms: Option<u32>, // Duration the condition must persist to trigger an alert
+    trigger_duration: Option<std::time::Duration>, // Duration the condition must persist to trigger an alert
 }
 
 impl Watchdog {
     pub fn new(hw_input: HWInput, alert_message: String, severity: Severity,
-               alert_display_timeout_ms: Option<u32>, alert_remove_timeout_ms: Option<u32>, trigger_duration_ms: Option<u32>) -> Self {
-        Self { hw_input, alert_message, severity, alert_display_timeout_ms,
-               alert_remove_timeout_ms, trigger_start_time: None, trigger_duration_ms }
+               alert_display_timeout: Option<std::time::Duration>, alert_remove_timeout: Option<std::time::Duration>,
+               trigger_duration: Option<std::time::Duration>) -> Self {
+        Self { hw_input, alert_message, severity, alert_display_timeout,
+               alert_remove_timeout, trigger_start_time: None, trigger_duration }
     }
 
     // Return true when the watchdog detects a condition that should trigger an alert
@@ -37,15 +38,17 @@ impl Watchdog {
                 false
             };
         if trigger {
-            if self.trigger_duration_ms.is_none() {
-                return true; // Immediate trigger if no duration specified
-            } else if let Some(start_time) = self.trigger_start_time {
-                if start_time.elapsed().as_millis() >= self.trigger_duration_ms.unwrap_or(0) as u128 {
-                    return true; // Condition has persisted long enough to trigger
+            if let Some(trigger_duration) = self.trigger_duration {
+                if let Some(start_time) = self.trigger_start_time {
+                    if start_time.elapsed() >= trigger_duration {
+                        return true; // Condition has persisted long enough to trigger
+                    }
+                } else {
+                    // Start timing the trigger condition
+                    self.trigger_start_time = Some(std::time::Instant::now());
                 }
             } else {
-                // Start timing the trigger condition
-                self.trigger_start_time = Some(std::time::Instant::now());
+                return true; // Immediate trigger if no duration specified
             }
         } else {
             // Reset if condition is not met
@@ -66,11 +69,11 @@ impl Watchdog {
         self.severity
     }
 
-    pub fn alert_display_timeout_ms(&self) -> Option<u32> {
-        self.alert_display_timeout_ms
+    pub fn alert_display_timeout(&self) -> Option<std::time::Duration> {
+        self.alert_display_timeout
     }
 
-    pub fn alert_remove_timeout_ms(&self) -> Option<u32> {
-        self.alert_remove_timeout_ms
+    pub fn alert_remove_timeout(&self) -> Option<std::time::Duration> {
+        self.alert_remove_timeout
     }
 }

@@ -13,14 +13,22 @@ pub struct ADCSerialReader {
 
 impl ADCSerialReader {
     pub fn try_new(port: &str, baud: u32) -> Result<Self, String> {
-        let port = match serialport::new(port, baud)
+        let opened = match serialport::new(port, baud)
             .timeout(Duration::from_millis(100))
             .open() {
                 Ok(p) => p,
-                Err(e) => return Err(format!("Error opening serial port '{}': {}", port, e)),
+                Err(e) => {
+                    let msg = format!("Error opening serial port '{}': {}", port, e);
+                    // Logged at debug: callers that retry (e.g. ADCDataProvider's reconnect
+                    // loop) own user-facing, throttled logging so a missing/unplugged port
+                    // doesn't spam the log every retry.
+                    log::debug!("{}", msg);
+                    return Err(msg);
+                }
             };
 
-        Ok(ADCSerialReader { reader: BufReader::new(port) })
+        log::info!("Opened ADC serial port '{}' at {} baud", port, baud);
+        Ok(ADCSerialReader { reader: BufReader::new(opened) })
     }
 }
 
@@ -28,12 +36,15 @@ impl SerialReader for ADCSerialReader {
     fn read_line(&mut self) -> Option<String> {
         let mut line = String::new();
         match self.reader.read_line(&mut line) {
-            Ok(0) => Some(String::new()),          // timeout — no data yet
+            Ok(0) => Some(String::new()),          // true EOF (rare for a serial port)
             Ok(_) => {
                 return Some(line.trim().to_string());
             }
+            // A read timeout is routine (no data within the port's configured timeout) —
+            // it is NOT an error condition and must not be treated as a fatal read failure.
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => Some(String::new()),
             Err(e) => {
-                log::error!("Read error: {}", e);
+                log::error!("ADC serial read error: {} (kind: {:?})", e, e.kind());
                 return None;
             }
         }
