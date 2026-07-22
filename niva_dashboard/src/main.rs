@@ -507,7 +507,7 @@ fn main() -> std::process::ExitCode {
     // Kept alive for the process lifetime — its Drop impl stops the background thread
     // cleanly on shutdown. Started unconditionally and independently of graphics/sensors
     // so it keeps monitoring even if later setup steps fail.
-    let _ups_monitor = match setup_ups_monitor() {
+    let ups_monitor = match setup_ups_monitor() {
         Ok(monitor) => {
             log::info!("✓ UPS monitor started");
             Some(monitor)
@@ -517,6 +517,8 @@ fn main() -> std::process::ExitCode {
             None
         }
     };
+    // Obtain a reading handle before moving ups_monitor into the binding that keeps it alive.
+    let ups_reading = ups_monitor.as_ref().map(|m| m.reading());
 
     let adc = match setup_adc_data_provider() {
         Ok(provider) => {
@@ -547,7 +549,7 @@ fn main() -> std::process::ExitCode {
     let sensors = setup_sensors(adc_frame);
     let ui_style = setup_ui_style();
 
-    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources);
+    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, ups_reading);
 
     mgr.setup().expect("Failed to setup page manager");
 

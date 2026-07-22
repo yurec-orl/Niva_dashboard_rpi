@@ -1,8 +1,29 @@
-use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, LoggerHandle, Naming};
+use flexi_logger::{
+    Cleanup, Criterion, DeferredNow, Duplicate, FileSpec, Logger, LoggerHandle, Naming, Record,
+    TS_DASHES_BLANK_COLONS_DOT_BLANK,
+};
 use std::env;
 
 const MAX_LOG_FILE_SIZE_BYTES: u64 = 5 * 1024 * 1024; // Rotate once a log file reaches 5 MB
 const MAX_LOG_FILES: usize = 10; // Keep the 10 most recent log files, delete older ones
+
+/// Same fields as flexi_logger's `default_format` (level, module path, message), with a
+/// timestamp prepended — needed to correlate log lines against events happening elsewhere
+/// (e.g. matching a UPS shutdown against how long a build had been running).
+fn timestamped_format(
+    w: &mut dyn std::io::Write,
+    now: &mut DeferredNow,
+    record: &Record,
+) -> Result<(), std::io::Error> {
+    write!(
+        w,
+        "[{}] {} [{}] {}",
+        now.format(TS_DASHES_BLANK_COLONS_DOT_BLANK),
+        record.level(),
+        record.module_path().unwrap_or("<unnamed>"),
+        record.args(),
+    )
+}
 
 /// Sets up file + terminal logging. Log lines go to both stdout (like the previous
 /// `print!` calls) and to a rotating file under `~/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/Logs`.
@@ -14,6 +35,7 @@ pub fn init_logging() -> LoggerHandle {
 
     let handle = Logger::try_with_env_or_str("info")
         .expect("Invalid log level filter")
+        .format(timestamped_format)
         .log_to_file(FileSpec::default().directory(log_dir).basename("niva_dashboard"))
         .append()
         .duplicate_to_stdout(Duplicate::All)

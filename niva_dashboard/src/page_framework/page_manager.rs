@@ -9,6 +9,7 @@ use crate::hardware::sensor_manager::SensorManager;
 use crate::hardware::hw_providers::HWInput;
 use crate::alerts::alert_manager::{AlertManager, Severity};
 use crate::alerts::watchdog::Watchdog;
+use crate::util::ups_monitor::UpsReading;
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -201,6 +202,10 @@ pub struct PageManager {
     // Alert system
     alert_manager: AlertManager,
 
+    // Handle to the UPS monitor's latest INA219 current reading, shown in the status line.
+    // None when the UPS monitor failed to start (e.g. I2C unavailable).
+    ups_reading: Option<UpsReading>,
+
     fps_counter: FpsCounter,
     start_time: Instant,
 
@@ -222,7 +227,7 @@ pub struct PageManager {
 
 impl PageManager {
     pub fn new(context: GraphicsContext, sensor_manager: SensorManager, ui_style: UIStyle,
-               input_sources: Vec<Box<dyn InputSource>>) -> Self {
+               input_sources: Vec<Box<dyn InputSource>>, ups_reading: Option<UpsReading>) -> Self {
         let mut buttons_map = HashMap::new();
         buttons_map.insert('1', ButtonPosition::Left1);
         buttons_map.insert('2', ButtonPosition::Left2);
@@ -258,6 +263,7 @@ impl PageManager {
             sensor_config_rx,
             sensor_config_tx,
             alert_manager,
+            ups_reading,
             fps_counter: FpsCounter::new(),
             start_time: Instant::now(),
             last_cpu_stat: None,
@@ -744,9 +750,17 @@ impl PageManager {
             None    => "–".to_string(),
         };
 
+        // UPS current: positive = charging/mains present, negative = discharging/on
+        // battery (see UpsReading::current_ma). "–" when the UPS monitor isn't running or
+        // hasn't produced a fresh reading recently.
+        let ups_current_str = match self.ups_reading.as_ref().and_then(UpsReading::current_ma) {
+            Some(ma) => format!("{:+.0}мА", ma),
+            None => "–".to_string(),
+        };
+
         let status_text = format!(
-            "Работа: {} | К/С: {:.1} | ЦП: {:>3.0}% {} | Память: {}/{}МБ",
-            uptime_str, fps, cpu_load, cpu_temp_str, mem_available, mem_total
+            "Работа: {} | К/С: {:.1} | ЦП: {:>3.0}% {} | Память: {}/{}МБ | ИБП: {}",
+            uptime_str, fps, cpu_load, cpu_temp_str, mem_available, mem_total, ups_current_str
         );
 
         // Render status line at bottom of screen

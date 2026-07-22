@@ -2,7 +2,7 @@ use rppal::i2c::I2c;
 
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -44,9 +44,47 @@ const ON_BATTERY_CURRENT_THRESHOLD_MA: f64 = -50.0;
 
 /// How long the battery-discharge condition must hold continuously before a shutdown is
 /// triggered.
-const ON_BATTERY_SHUTDOWN_DELAY: Duration = Duration::from_secs(10);
+const ON_BATTERY_SHUTDOWN_DELAY: Duration = Duration::from_secs(60);
 
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
+
+/// A reading is shown as unavailable ("–") once it's older than this — i.e. the background
+/// thread has stopped producing fresh values (I2C errors, or the thread died) — rather than
+/// silently displaying a frozen last-known number.
+const READING_MAX_AGE: Duration = Duration::from_secs(5);
+
+/// Cloneable, thread-safe handle to the UPS monitor's most recent current reading, for
+/// display elsewhere (e.g. the dashboard's status line). Cheap to clone (Arc clone).
+/// Mirrors the ADCFrame handle pattern used by ADCDataProvider.
+#[derive(Clone)]
+pub struct UpsReading {
+    current_ma: Arc<Mutex<f64>>,
+    last_update: Arc<Mutex<Instant>>,
+}
+
+impl UpsReading {
+    fn new() -> Self {
+        UpsReading {
+            current_ma: Arc::new(Mutex::new(0.0)),
+            last_update: Arc::new(Mutex::new(Instant::now() - READING_MAX_AGE)),
+        }
+    }
+
+    fn set(&self, current_ma: f64) {
+        *self.current_ma.lock().unwrap() = current_ma;
+        *self.last_update.lock().unwrap() = Instant::now();
+    }
+
+    /// Most recent INA219 current reading in mA — positive means charging/mains present,
+    /// negative means discharging/on battery (see UpsMonitor doc comment) — or `None` if no
+    /// reading has succeeded within READING_MAX_AGE.
+    pub fn current_ma(&self) -> Option<f64> {
+        if self.last_update.lock().unwrap().elapsed() > READING_MAX_AGE {
+            return None;
+        }
+        Some(*self.current_ma.lock().unwrap())
+    }
+}
 
 /// Monitors the Waveshare UPS HAT (D) over I2C and shuts the system down after it has run
 /// on battery power continuously for ON_BATTERY_SHUTDOWN_DELAY, arming the HAT's own "boot
@@ -65,6 +103,7 @@ pub struct UpsMonitor {
     should_stop: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
     dry_run: bool,
+    reading: UpsReading,
 }
 
 impl UpsMonitor {
@@ -73,7 +112,12 @@ impl UpsMonitor {
         if dry_run {
             log::warn!("UPS monitor: NIVA_UPS_DRY_RUN set — shutdown will be logged, not executed");
         }
-        UpsMonitor { should_stop: Arc::new(AtomicBool::new(false)), thread: None, dry_run }
+        UpsMonitor {
+            should_stop: Arc::new(AtomicBool::new(false)),
+            thread: None,
+            dry_run,
+            reading: UpsReading::new(),
+        }
     }
 
     pub fn run(&mut self) -> Result<(), String> {
@@ -83,18 +127,25 @@ impl UpsMonitor {
 
         let should_stop = Arc::clone(&self.should_stop);
         let dry_run = self.dry_run;
+        let reading = self.reading.clone();
         let handle = thread::Builder::new()
             .name("ups-monitor".into())
-            .spawn(move || Self::run_loop(&should_stop, dry_run))
+            .spawn(move || Self::run_loop(&should_stop, dry_run, &reading))
             .map_err(|e| format!("failed to spawn UPS monitor thread: {}", e))?;
         self.thread = Some(handle);
         Ok(())
     }
 
+    /// Returns a cloneable handle to the most recent current reading, for display elsewhere
+    /// (e.g. PageManager's status line). Safe to call before or after `run()`.
+    pub fn reading(&self) -> UpsReading {
+        self.reading.clone()
+    }
+
     /// Background thread body: calibrates the INA219 once, then polls its current reading
     /// until should_stop is set, triggering a shutdown after ON_BATTERY_SHUTDOWN_DELAY of
     /// continuous discharge.
-    fn run_loop(should_stop: &AtomicBool, dry_run: bool) {
+    fn run_loop(should_stop: &AtomicBool, dry_run: bool, reading: &UpsReading) {
         let mut i2c = match I2c::with_bus(I2C_BUS) {
             Ok(i2c) => i2c,
             Err(e) => {
@@ -114,6 +165,7 @@ impl UpsMonitor {
         while !should_stop.load(Ordering::Relaxed) {
             match Self::read_current_ma(&mut i2c) {
                 Ok(current_ma) => {
+                    reading.set(current_ma);
                     if current_ma < ON_BATTERY_CURRENT_THRESHOLD_MA {
                         let since = *on_battery_since.get_or_insert_with(Instant::now);
                         let elapsed = since.elapsed();
