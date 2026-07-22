@@ -103,8 +103,9 @@ Boot reduced from ~16.8s to ~5.1s by disabling unused systemd services (`Network
 
 ## TODO
 - Data-driven sensor creation: JSON describing hardware inputs, sensor chains, logical sensor parameters
-- UPS HAT integration (automatic startup/shutdown)
-- Display power control (USB port shutdown during boot, re-enable when dashboard ready)
+- [Done] UPS HAT integration (automatic startup/shutdown)
+- [Rejected] Display power control (USB port shutdown during boot, re-enable when dashboard ready) - Pi 4 does
+  not have individual USB port control, would require shutting down all USB devices.
 
 ## PiOS login
 `user` / `@Niva21#`; `root` password is a single numeric character.

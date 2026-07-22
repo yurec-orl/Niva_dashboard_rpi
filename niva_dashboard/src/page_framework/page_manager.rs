@@ -5,10 +5,12 @@ use crate::page_framework::diag_page::DiagPage;
 use crate::page_framework::events::{UIEvent, EventReceiver, EventBus, SmartEventSender, create_event_bus};
 use crate::page_framework::input::{InputHandler, InputSource, ButtonState};
 use crate::page_framework::main_page::MainPage;
+use crate::page_framework::terminal_page::TerminalPage;
 use crate::hardware::sensor_manager::SensorManager;
 use crate::hardware::hw_providers::HWInput;
 use crate::alerts::alert_manager::{AlertManager, Severity};
 use crate::alerts::watchdog::Watchdog;
+use crate::util::adc_data_provider::ADCFrame;
 use crate::util::ups_monitor::UpsReading;
 
 use std::collections::HashMap;
@@ -23,6 +25,8 @@ const PAGE_BUTTON_X_MARGIN: f32 = 4.0;      // Move a little from screen edge fo
 
 pub const MAIN_PAGE_ID: u32 = 0;
 pub const DIAG_PAGE_ID: u32 = 1;
+pub const ADC_TERM_PAGE_ID: u32 = 2;
+pub const LOG_PAGE_ID: u32 = 3;
 
 // ButtonPosition correspond to physical 2x4 buttons layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -206,6 +210,10 @@ pub struct PageManager {
     // None when the UPS monitor failed to start (e.g. I2C unavailable).
     ups_reading: Option<UpsReading>,
 
+    // Handle to the shared ADC frame, used to build the ADC diagnostic terminal page.
+    // None when the ADC data provider failed to start.
+    adc_frame: Option<ADCFrame>,
+
     fps_counter: FpsCounter,
     start_time: Instant,
 
@@ -227,7 +235,8 @@ pub struct PageManager {
 
 impl PageManager {
     pub fn new(context: GraphicsContext, sensor_manager: SensorManager, ui_style: UIStyle,
-               input_sources: Vec<Box<dyn InputSource>>, ups_reading: Option<UpsReading>) -> Self {
+               input_sources: Vec<Box<dyn InputSource>>, ups_reading: Option<UpsReading>,
+               adc_frame: Option<ADCFrame>) -> Self {
         let mut buttons_map = HashMap::new();
         buttons_map.insert('1', ButtonPosition::Left1);
         buttons_map.insert('2', ButtonPosition::Left2);
@@ -264,6 +273,7 @@ impl PageManager {
             sensor_config_tx,
             alert_manager,
             ups_reading,
+            adc_frame,
             fps_counter: FpsCounter::new(),
             start_time: Instant::now(),
             last_cpu_stat: None,
@@ -348,6 +358,11 @@ impl PageManager {
 
     // Switch to a page by index
     pub fn switch_page(&mut self, page_id: u32) -> Result<(), String> {
+        if self.get_page(page_id).is_none() {
+            log::warn!("Cannot switch to page {}: not registered", page_id);
+            return Ok(());
+        }
+
         // Call on_exit for old page first.
         if let Some(current) = self.get_current_page_mut() {
             current.on_exit()?;
@@ -384,10 +399,25 @@ impl PageManager {
                                                smart_sender.clone(),
                                                self.get_event_receiver()));
 
+        let log_page = Box::new(TerminalPage::new_log(LOG_PAGE_ID, "Log",
+                                                       smart_sender.clone(),
+                                                       self.get_event_receiver()));
+
         self.add_page(main_page);
         self.switch_page(MAIN_PAGE_ID)?;
 
         self.add_page(diag_page);
+        self.add_page(log_page);
+
+        // ADC terminal page only exists when the ADC data provider actually started —
+        // without a frame handle there is nothing for it to display.
+        if let Some(frame) = self.adc_frame.clone() {
+            let adc_page = Box::new(TerminalPage::new_adc(ADC_TERM_PAGE_ID, "ADC",
+                                                           smart_sender.clone(),
+                                                           self.get_event_receiver(),
+                                                           frame));
+            self.add_page(adc_page);
+        }
 
         // Set up watchdogs for alert manager
         let engine_temp_watchdog = Watchdog::new(

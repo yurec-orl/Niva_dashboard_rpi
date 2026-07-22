@@ -37,6 +37,9 @@ pub const DIGITAL_DISPLAY_14SEG_FONT_PATH: &str = "/home/user/Work/Niva_Dashboar
 pub const DIGITAL_DISPLAY_14SEG_ITALIC_PATH: &str = "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/DSEG14ClassicMini-Italic.ttf";
 pub const DIGITAL_DISPLAY_MONO_FONT_PATH: &str = "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf";
 
+// Terminal-style monospace font, for scrolling text boxes (log/ADC diagnostic output)
+pub const TERMINAL_FONT_PATH: &str = "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/DejaVuSansMono.ttf";
+
 // Global Style Elements
 pub const GLOBAL_CONTRAST: &str = "global_contrast";
 pub const GLOBAL_BACKGROUND_COLOR: &str = "global_background_color";
@@ -162,6 +165,15 @@ pub const TEXT_SMALL_FONT_SIZE: &str = "text_small_font_size";
 
 pub const TEXT_LINE_SPACING: &str = "text_line_spacing";
 pub const TEXT_LETTER_SPACING: &str = "text_letter_spacing";
+
+// Terminal / scrolling text box style elements
+pub const TERMINAL_BACKGROUND_COLOR: &str = "terminal_background_color";
+pub const TERMINAL_BACKGROUND_ENABLED: &str = "terminal_background_enabled";
+pub const TERMINAL_BORDER_COLOR: &str = "terminal_border_color";
+pub const TERMINAL_BORDER_ENABLED: &str = "terminal_border_enabled";
+pub const TERMINAL_BORDER_WIDTH: &str = "terminal_border_width";
+pub const TERMINAL_TEXT_COLOR: &str = "terminal_text_color";
+pub const TERMINAL_PADDING: &str = "terminal_padding";
 
 // Digital Display Style Elements (7-segment style)
 pub const DIGITAL_DISPLAY_FONT: &str = "digital_display_font";
@@ -612,13 +624,22 @@ impl UIStyle {
         self.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(24));
         self.set(TEXT_SECONDARY_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
         self.set(TEXT_SECONDARY_FONT_SIZE, UIStyleValue::Integer(20));
-        self.set(TEXT_MONOSPACE_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
-        self.set(TEXT_MONOSPACE_FONT_SIZE, UIStyleValue::Integer(20));
+        self.set(TEXT_MONOSPACE_FONT, UIStyleValue::String(TERMINAL_FONT_PATH.to_string()));
+        self.set(TEXT_MONOSPACE_FONT_SIZE, UIStyleValue::Integer(16));
         self.set(TEXT_SMALL_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
         self.set(TEXT_SMALL_FONT_SIZE, UIStyleValue::Integer(14));
 
         self.set(TEXT_LINE_SPACING, UIStyleValue::Float(1.2));
         self.set(TEXT_LETTER_SPACING, UIStyleValue::Float(0.0));
+
+        // Terminal / scrolling text box defaults (amber theme, matches TEXT_PRIMARY_COLOR)
+        self.set(TERMINAL_BACKGROUND_COLOR, UIStyleValue::Color("#000000".to_string()));
+        self.set(TERMINAL_BACKGROUND_ENABLED, UIStyleValue::Boolean(true));
+        self.set(TERMINAL_BORDER_COLOR, UIStyleValue::Color("#FF7D00".to_string()));
+        self.set(TERMINAL_BORDER_ENABLED, UIStyleValue::Boolean(true));
+        self.set(TERMINAL_BORDER_WIDTH, UIStyleValue::Float(2.0));
+        self.set(TERMINAL_TEXT_COLOR, UIStyleValue::Color("#FF7D00".to_string()));
+        self.set(TERMINAL_PADDING, UIStyleValue::Float(8.0));
         
         // Indicator defaults
         self.set(INDICATOR_NORMAL_COLOR, UIStyleValue::Color("#00FF00".to_string()));

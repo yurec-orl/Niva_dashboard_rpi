@@ -2,7 +2,7 @@
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
 use crate::page_framework::events::{EventReceiver, SmartEventSender, UIEvent};
-use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition, MAIN_PAGE_ID};
+use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition, MAIN_PAGE_ID, ADC_TERM_PAGE_ID, LOG_PAGE_ID};
 use crate::hardware::sensor_manager::SensorManager;
 
 pub struct DiagPage {
@@ -28,11 +28,11 @@ impl DiagPage {
         let buttons = vec![
             PageButton::new(ButtonPosition::Left1, "ДАТЧ".into(), Box::new({
                 let sender = self.smart_event_sender.clone();
-                move || sender.send(UIEvent::ButtonPressed("diag_test_1".into()))
+                move || sender.send(UIEvent::SwitchToPage(ADC_TERM_PAGE_ID))
             }) as Box<dyn FnMut()>),
             PageButton::new(ButtonPosition::Left2, "ЖУРН".into(), Box::new({
                 let sender = self.smart_event_sender.clone();
-                move || sender.send(UIEvent::ButtonPressed("diag_test_2".into()))
+                move || sender.send(UIEvent::SwitchToPage(LOG_PAGE_ID))
             }) as Box<dyn FnMut()>),
             PageButton::new(ButtonPosition::Right4, "ВОЗВ".into(), Box::new({
                 let sender = self.smart_event_sender.clone();

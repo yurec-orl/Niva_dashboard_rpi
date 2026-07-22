@@ -546,10 +546,13 @@ fn main() -> std::process::ExitCode {
     let self_test_sensors = setup_self_test_sensors();
     let button_sensors = setup_button_sensors(adc_frame.clone());
     let input_sources = setup_input_sources(button_sensors);
+    // Keep a handle for the ADC diagnostic terminal page before the sensor-chain setup
+    // consumes the rest of adc_frame's clones.
+    let adc_frame_for_diag = adc_frame.clone();
     let sensors = setup_sensors(adc_frame);
     let ui_style = setup_ui_style();
 
-    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, ups_reading);
+    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, ups_reading, adc_frame_for_diag);
 
     mgr.setup().expect("Failed to setup page manager");
 
