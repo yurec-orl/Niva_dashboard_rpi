@@ -17,8 +17,15 @@ const MCU_ADDR: u16 = 0x2d;
 // INA219 registers (see INA219 datasheet / Waveshare's INA219.py demo at
 // /home/user/UPS_HAT_D/INA219.py).
 const REG_CONFIG: u8 = 0x00;
+const REG_BUSVOLTAGE: u8 = 0x02;
 const REG_CURRENT: u8 = 0x04;
 const REG_CALIBRATION: u8 = 0x05;
+
+/// Bus voltage (V) mapped to state of charge (0-100%), ported from Waveshare's INA219.py
+/// demo (`p = (bus_voltage - 3) / 1.2 * 100`) — a linear estimate between an empty single
+/// Li-ion cell (3.0V) and a full one (4.2V), clamped to the valid range.
+const SOC_EMPTY_V: f64 = 3.0;
+const SOC_FULL_V: f64 = 4.2;
 
 /// MCU register that arms the "boot when power applied" latch (see PROJECT_CONTEXT.md /
 /// Waveshare UPS HAT (D) wiki, "Boot When Power Applied"). Writing MCU_ARM_VALUE here makes
@@ -53,12 +60,13 @@ const POLL_INTERVAL: Duration = Duration::from_secs(1);
 /// silently displaying a frozen last-known number.
 const READING_MAX_AGE: Duration = Duration::from_secs(5);
 
-/// Cloneable, thread-safe handle to the UPS monitor's most recent current reading, for
-/// display elsewhere (e.g. the dashboard's status line). Cheap to clone (Arc clone).
+/// Cloneable, thread-safe handle to the UPS monitor's most recent current/voltage reading,
+/// for display elsewhere (e.g. the dashboard's status line). Cheap to clone (Arc clone).
 /// Mirrors the ADCFrame handle pattern used by ADCDataProvider.
 #[derive(Clone)]
 pub struct UpsReading {
     current_ma: Arc<Mutex<f64>>,
+    bus_voltage_v: Arc<Mutex<f64>>,
     last_update: Arc<Mutex<Instant>>,
 }
 
@@ -66,12 +74,14 @@ impl UpsReading {
     fn new() -> Self {
         UpsReading {
             current_ma: Arc::new(Mutex::new(0.0)),
+            bus_voltage_v: Arc::new(Mutex::new(0.0)),
             last_update: Arc::new(Mutex::new(Instant::now() - READING_MAX_AGE)),
         }
     }
 
-    fn set(&self, current_ma: f64) {
+    fn set(&self, current_ma: f64, bus_voltage_v: f64) {
         *self.current_ma.lock().unwrap() = current_ma;
+        *self.bus_voltage_v.lock().unwrap() = bus_voltage_v;
         *self.last_update.lock().unwrap() = Instant::now();
     }
 
@@ -83,6 +93,17 @@ impl UpsReading {
             return None;
         }
         Some(*self.current_ma.lock().unwrap())
+    }
+
+    /// Battery state of charge (0-100%), estimated from bus voltage (see SOC_EMPTY_V /
+    /// SOC_FULL_V) — or `None` if no reading has succeeded within READING_MAX_AGE.
+    pub fn soc_percent(&self) -> Option<f64> {
+        if self.last_update.lock().unwrap().elapsed() > READING_MAX_AGE {
+            return None;
+        }
+        let bus_voltage_v = *self.bus_voltage_v.lock().unwrap();
+        let percent = (bus_voltage_v - SOC_EMPTY_V) / (SOC_FULL_V - SOC_EMPTY_V) * 100.0;
+        Some(percent.clamp(0.0, 100.0))
     }
 }
 
@@ -163,9 +184,9 @@ impl UpsMonitor {
         let mut shutdown_triggered = false;
 
         while !should_stop.load(Ordering::Relaxed) {
-            match Self::read_current_ma(&mut i2c) {
-                Ok(current_ma) => {
-                    reading.set(current_ma);
+            match Self::read_current_ma_and_bus_voltage_v(&mut i2c) {
+                Ok((current_ma, bus_voltage_v)) => {
+                    reading.set(current_ma, bus_voltage_v);
                     if current_ma < ON_BATTERY_CURRENT_THRESHOLD_MA {
                         let since = *on_battery_since.get_or_insert_with(Instant::now);
                         let elapsed = since.elapsed();
@@ -188,7 +209,7 @@ impl UpsMonitor {
                     // A transient I2C read error shouldn't reset an in-progress on-battery
                     // timer (it isn't evidence power came back), nor should it be able to
                     // trigger a shutdown on its own — so just skip this iteration.
-                    log::warn!("UPS monitor: failed to read INA219 current: {}", e);
+                    log::warn!("UPS monitor: failed to read INA219 current/voltage: {}", e);
                 }
             }
 
@@ -203,6 +224,12 @@ impl UpsMonitor {
         Ok(())
     }
 
+    fn read_current_ma_and_bus_voltage_v(i2c: &mut I2c) -> rppal::i2c::Result<(f64, f64)> {
+        let current_ma = Self::read_current_ma(i2c)?;
+        let bus_voltage_v = Self::read_bus_voltage_v(i2c)?;
+        Ok((current_ma, bus_voltage_v))
+    }
+
     fn read_current_ma(i2c: &mut I2c) -> rppal::i2c::Result<f64> {
         i2c.set_slave_address(INA219_ADDR)?;
         let raw = i2c.smbus_read_word_swapped(REG_CURRENT)?;
@@ -215,6 +242,14 @@ impl UpsMonitor {
         // means charging/mains-present and negative means discharging/on-battery. Negate
         // here so ON_BATTERY_CURRENT_THRESHOLD_MA's sign convention matches that.
         Ok(-(signed as f64 * CURRENT_LSB_MA))
+    }
+
+    /// Matches Waveshare's INA219.py getBusVoltage_V: raw register's top 13 bits (>>3) are
+    /// the voltage reading, in 4mV steps.
+    fn read_bus_voltage_v(i2c: &mut I2c) -> rppal::i2c::Result<f64> {
+        i2c.set_slave_address(INA219_ADDR)?;
+        let raw = i2c.smbus_read_word_swapped(REG_BUSVOLTAGE)?;
+        Ok((raw >> 3) as f64 * 0.004)
     }
 
     /// Arms the MCU's boot-on-power latch, then powers the system off (or logs the intent,

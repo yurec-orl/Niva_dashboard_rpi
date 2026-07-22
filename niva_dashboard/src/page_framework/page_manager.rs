@@ -788,9 +788,16 @@ impl PageManager {
             None => "–".to_string(),
         };
 
+        // Battery state of charge, estimated from bus voltage (see UpsReading::soc_percent).
+        // Omitted when the UPS monitor isn't running or hasn't produced a fresh reading.
+        let ups_soc_str = match self.ups_reading.as_ref().and_then(UpsReading::soc_percent) {
+            Some(pct) => format!(" [{:.0}%]", pct),
+            None => String::new(),
+        };
+
         let status_text = format!(
-            "Работа: {} | К/С: {:.1} | ЦП: {:>3.0}% {} | Память: {}/{}МБ | ИБП: {}",
-            uptime_str, fps, cpu_load, cpu_temp_str, mem_available, mem_total, ups_current_str
+            "Работа: {} | К/С: {:.1} | ЦП: {:>3.0}% {} | Память: {}/{}МБ | ИБП: {}{}",
+            uptime_str, fps, cpu_load, cpu_temp_str, mem_available, mem_total, ups_current_str, ups_soc_str
         );
 
         // Render status line at bottom of screen

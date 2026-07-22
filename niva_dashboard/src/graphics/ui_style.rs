@@ -517,8 +517,9 @@ impl UIStyle {
         self.set(PAGE_BUTTON_LABEL_FONT_SIZE, UIStyleValue::Integer(24));
         self.set(PAGE_BUTTON_LABEL_ORIENTATION, UIStyleValue::String("vertical".to_string()));
         self.set(PAGE_BUTTON_LABEL_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
-        self.set(PAGE_STATUS_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
-        self.set(PAGE_STATUS_FONT_SIZE, UIStyleValue::Integer(20));
+        //self.set(PAGE_STATUS_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
+        self.set(PAGE_STATUS_FONT, UIStyleValue::String(TERMINAL_FONT_PATH.to_string()));
+        self.set(PAGE_STATUS_FONT_SIZE, UIStyleValue::Integer(14));
         self.set(PAGE_STATUS_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
 
         // Gauge defaults
@@ -567,7 +568,7 @@ impl UIStyle {
         self.set(GAUGE_TITLE_OFFSET_V, UIStyleValue::Float(-20.0));
         self.set(GAUGE_TITLE_ENABLED, UIStyleValue::Boolean(true));
         
-        self.set(GAUGE_UNIT_COLOR, UIStyleValue::Color("#727272".to_string()));
+        self.set(GAUGE_UNIT_COLOR, UIStyleValue::Color("#cccccc".to_string()));
         self.set(GAUGE_UNIT_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
         self.set(GAUGE_UNIT_FONT_SIZE, UIStyleValue::Integer(18));
         self.set(GAUGE_UNIT_OFFSET_H, UIStyleValue::Float(0.0));
