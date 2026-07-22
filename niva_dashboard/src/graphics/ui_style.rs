@@ -635,10 +635,10 @@ impl UIStyle {
         // Terminal / scrolling text box defaults (amber theme, matches TEXT_PRIMARY_COLOR)
         self.set(TERMINAL_BACKGROUND_COLOR, UIStyleValue::Color("#000000".to_string()));
         self.set(TERMINAL_BACKGROUND_ENABLED, UIStyleValue::Boolean(true));
-        self.set(TERMINAL_BORDER_COLOR, UIStyleValue::Color("#FF7D00".to_string()));
+        self.set(TERMINAL_BORDER_COLOR, UIStyleValue::Color("#ffffff".to_string()));
         self.set(TERMINAL_BORDER_ENABLED, UIStyleValue::Boolean(true));
         self.set(TERMINAL_BORDER_WIDTH, UIStyleValue::Float(2.0));
-        self.set(TERMINAL_TEXT_COLOR, UIStyleValue::Color("#FF7D00".to_string()));
+        self.set(TERMINAL_TEXT_COLOR, UIStyleValue::Color("#ffffff".to_string()));
         self.set(TERMINAL_PADDING, UIStyleValue::Float(8.0));
         
         // Indicator defaults
