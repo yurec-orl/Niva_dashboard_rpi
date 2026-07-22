@@ -31,27 +31,33 @@ Car 12V
   └── XWST XW-0945-5-40W-ISO (DC-DC, 9-45V in, 5V 8A out, isolated)
         └── UPS HAT (battery-backed 5V supply)
               └── Raspberry Pi 4
-                    ├── USB port → Display (power only, video via HDMI)
+                    ├── GPIO 5V header → Display (power only, video via HDMI)
+                    ├── GPIO 5V header → Cooling fan (optional, 0.82W)
                     ├── USB port → STM32 ADC module
                     └── USB port → UM982 GNSS Receiver
 ```
 - **XWST** is the primary power source, handles automotive voltage transients and spikes (up to 45V)
 - **UPS HAT** provides battery backup and clean 5V to the Pi
-- **Display** is powered via Pi USB port
+- **Display** is powered via Pi GPIO 5V header (pins 2/4, not USB) — keeps the display on the same power domain as the Pi so it stays powered on UPS battery backup when ignition (and thus XWST) is off; also avoids the Pi's fixed USB port current limit, since GPIO 5V is a direct, unlimited connection to the input rail on the Pi 4 (no polyfuse, unlike earlier Pi models)
+- **Cooling fan** (optional, 0.82W) is powered via Pi GPIO 5V header, same rationale as display
 - **STM32 ADC module** is powered via Pi USB port
 - **UM982 GNSS Receiver** is powered via Pi USB port
 
 ### Power budget (approximate, @5V)
-| Component                          | Current          | Power           |
-|------------------------------------|------------------|-----------------|
-| Display                            | ~1 A             | ~5 W            |
-| STM32 ADC module                   | ~0.1-0.15 A      | ~0.5-0.75 W     |
-| UM982 GNSS Receiver                | ~0.12 A          | 0.6 W           |
-| **Total (Pi USB-powered devices)** | **~1.22-1.27 A** | **~6.1-6.35 W** |
+| Component              | Current          | Power           | Rail           |
+|------------------------|------------------|-----------------|----------------|
+| Display                | ~1 A             | ~5 W            | GPIO 5V header |
+| Cooling fan (optional) | ~0.164 A         | 0.82 W          | GPIO 5V header |
+| **GPIO 5V subtotal**   | **~1.164 A**     | **~5.82 W**     |                |
+| STM32 ADC module       | ~0.1-0.15 A      | ~0.5-0.75 W     | USB port       |
+| UM982 GNSS Receiver    | ~0.12 A          | 0.6 W           | USB port       |
+| **USB subtotal**       | **~0.22-0.27 A** | **~1.1-1.35 W** |                |
 
-**⚠️ Exceeds Pi 4B USB budget:** the Pi 4 Model B has a fixed 1.2A total current limit shared across all 4 USB ports (not configurable via `config.txt` — `max_usb_current` is a no-op on Pi 4). The combined draw of display + STM32 + GNSS receiver (~1.22-1.27A) exceeds this even under conservative assumptions, risking brownout/undervoltage or the kernel throttling USB devices. Mitigation options: move one or more of these loads (most likely the display, as the largest single draw) off the Pi's USB rail onto a dedicated feed from the UPS HAT/XWST output, or add a powered USB hub between the Pi and these peripherals.
+**USB budget now clear:** with the display moved to the GPIO 5V header, USB-port draw is just STM32 + GNSS (~0.22-0.27A), well under the Pi 4B's fixed 1.2A total USB current limit (shared across all 4 ports, not configurable via `config.txt` — `max_usb_current` is a no-op on Pi 4).
 
-The whole assembly (Pi + display + STM32 + GNSS + 8 amber button LEDs) still sits comfortably within the XWST's 8A/40W supply capacity — the constraint is specifically the Pi's internal USB port current limit, not upstream supply capacity.
+**⚠️ GPIO 5V header has no polyfuse on Pi 4:** unlike earlier Pi models, the Pi 4's GPIO 5V pins are a direct, unprotected connection to the input rail. A wiring fault or short on the display/fan feed goes straight into the Pi's power section. Use an inline fuse on this tap, and spread the ~1.16A combined draw across both 5V pins (2/4) and both GND pins rather than a single pin pair.
+
+**Verify UPS HAT battery-mode output rating:** total draw through the Pi's power rail (Pi board itself + GPIO 5V loads + USB loads) is roughly 2.1-2.6A. This is comfortably under the XWST's 8A/40W capacity and the Pi's official 3A minimum supply spec, but the scenario motivating the GPIO 5V move (ignition off, running on UPS battery) means the UPS HAT's own battery-boost converter — not the XWST — must be able to supply this combined load. Confirm the HAT's rated max output current covers it, or the display could still brown out on battery power from a different bottleneck.
 
 ## Software Architecture
 
