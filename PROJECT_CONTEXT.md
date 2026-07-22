@@ -32,12 +32,26 @@ Car 12V
         └── UPS HAT (battery-backed 5V supply)
               └── Raspberry Pi 4
                     ├── USB port → Display (power only, video via HDMI)
-                    └── USB port → STM32 ADC module
+                    ├── USB port → STM32 ADC module
+                    └── USB port → UM982 GNSS Receiver
 ```
 - **XWST** is the primary power source, handles automotive voltage transients and spikes (up to 45V)
 - **UPS HAT** provides battery backup and clean 5V to the Pi
 - **Display** is powered via Pi USB port
 - **STM32 ADC module** is powered via Pi USB port
+- **UM982 GNSS Receiver** is powered via Pi USB port
+
+### Power budget (approximate, @5V)
+| Component                          | Current          | Power           |
+|------------------------------------|------------------|-----------------|
+| Display                            | ~1 A             | ~5 W            |
+| STM32 ADC module                   | ~0.1-0.15 A      | ~0.5-0.75 W     |
+| UM982 GNSS Receiver                | ~0.12 A          | 0.6 W           |
+| **Total (Pi USB-powered devices)** | **~1.22-1.27 A** | **~6.1-6.35 W** |
+
+**⚠️ Exceeds Pi 4B USB budget:** the Pi 4 Model B has a fixed 1.2A total current limit shared across all 4 USB ports (not configurable via `config.txt` — `max_usb_current` is a no-op on Pi 4). The combined draw of display + STM32 + GNSS receiver (~1.22-1.27A) exceeds this even under conservative assumptions, risking brownout/undervoltage or the kernel throttling USB devices. Mitigation options: move one or more of these loads (most likely the display, as the largest single draw) off the Pi's USB rail onto a dedicated feed from the UPS HAT/XWST output, or add a powered USB hub between the Pi and these peripherals.
+
+The whole assembly (Pi + display + STM32 + GNSS + 8 amber button LEDs) still sits comfortably within the XWST's 8A/40W supply capacity — the constraint is specifically the Pi's internal USB port current limit, not upstream supply capacity.
 
 ## Software Architecture
 
