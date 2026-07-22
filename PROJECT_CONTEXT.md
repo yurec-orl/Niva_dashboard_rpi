@@ -247,6 +247,14 @@ Manual invocation for testing: `sudo uhubctl -l 1-1 -a 2`.
 
 Each process start forces a rotation so every run gets its own fresh log file, instead of appending to whatever `_rCURRENT.log` was left by the previous run. This requires one throwaway log write before calling `trigger_rotation()`, because flexi_logger opens the file lazily on first write — calling it any earlier is a silent no-op. **Side effect:** that startup marker line ends up as the last line of the *previous* run's rotated file, not the new one.
 
+## Boot Time Optimization
+
+Boot time was reduced from ~16.8s to ~5.1s (kernel+userspace, per `systemd-analyze`) by disabling six unused systemd services: `NetworkManager-wait-online.service`, `e2scrub_reap.service`, `ModemManager.service`, `rpi-eeprom-update.service`, `bluetooth.service`, `hciuart.service`. `avahi-daemon.service` was deliberately kept enabled for `.local` SSH access. Full descriptions + re-enable commands: `/home/user/boot-optimizations.md`. **Note:** these are `systemctl disable` calls on the running OS install, not part of this repo — a fresh SD card flash would need them reapplied.
+
+Also tried: `camera_auto_detect=0` / `display_auto_detect=0` in `config.txt`, `initial_turbo=10`, and an EEPROM bootloader update (2023→2025 release) — combined, these bought only ~1s.
+
+The remaining ~18s gap is in the **pre-kernel firmware/bootloader stage** (SoC boot ROM → EEPROM bootloader → VideoCore firmware loading the kernel and negotiating the display) — confirmed via `dmesg`/`systemd-analyze` showing no gaps anywhere in the kernel-visible timeline, and via a monitor swap that ruled out the display panel's own self-test as the cause. This stage runs before Linux starts, so it's invisible to any OS-level tool; profiling it further would require a `BOOT_UART=1` serial console capture (3.3V TTL USB-serial adapter on GPIO14/15/GND) — not yet done. Forum research turned up no further known levers for this phase, so further gains here look unlikely without that capture.
+
 ## TODO list
 - Data-driven sensors creation: json describing hardware inputs, sensor chains and logical sensor parameters
 - UPS Hat integration (automatic startup/shutdown)
