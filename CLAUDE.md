@@ -116,4 +116,4 @@ Boot reduced from ~16.8s to ~5.1s by disabling unused systemd services (`Network
 - Doc/code mismatches to reconcile: `hardware/sensors.rs` is labeled "legacy... being refactored" in the Project Structure section above, but it's actually the live "Logical Sensor" stage the chains depend on — not a deprecated path. Also, the digital/analog signal processing "edge detection"/"low-pass filtering" terms in Core Components don't correspond to any processor by that name (debounce and the EMA `AnalogSignalProcessorDampener` fill those roles under different names). `hardware/gpio_input.rs` and `page_framework/terminal_page.rs` (a fourth page type, log/ADC) are also missing from the Project Structure listing above.
 
 ## PiOS login
-`user` / `@Niva21#`; `root` password is a single numeric character.
+`user` / `@Niva21#`; `root` password is standard password with a single numeric character.
