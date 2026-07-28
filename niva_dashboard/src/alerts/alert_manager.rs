@@ -1,15 +1,28 @@
+//! Owns the set of hardware watchdogs and the alerts they've raised, and renders the
+//! currently active ones to screen.
+//!
+//! ## Alert lifecycle
+//! 1. Each cycle, `AlertManager::check_watchdogs` polls every registered `Watchdog`.
+//!    The first time a watchdog's condition fires, a matching `Alert` is created and
+//!    added to the queue, tagged with the watchdog's id so at most one alert exists per
+//!    watchdog at a time.
+//! 2. `AlertManager::render_alerts` draws every alert that is currently active (see
+//!    `Alert`'s docs for what "active" means and how `display_timeout` governs it),
+//!    stacked and centered on screen.
+//! 3. Once an alert stops being active (its `display_timeout` elapsed, or it was
+//!    suppressed), it lingers in the queue — still blocking its watchdog from raising a
+//!    duplicate — until `Alert::is_expired` returns true, at which point
+//!    `render_alerts` drops it from the queue and the watchdog is free to raise a fresh
+//!    alert.
+//!
+//! `AlertManager::suppress_alerts` (the master-warning clear action) suppresses every
+//! currently queued alert at once, regardless of severity or source.
 #![allow(dead_code)]
 use crate::hardware::sensor_manager::SensorManager;
 use crate::alerts::watchdog::Watchdog;
 use crate::alerts::alert::Alert;
 use crate::graphics::ui_style::*;
 use crate::graphics::context::GraphicsContext;
-
-// AlertManager is responsible for managing alerts and watchdogs.
-// Watchdogs are used to monitor hardware inputs and trigger alerts when certain conditions are met.
-// Alerts are displayed on screen and can have different severities and timeouts.
-// Each watchdog can produce only one alert with a fixed message and severity.
-// For any watchdog, there can be only one active alert at a time.
 
 #[derive(Debug, Clone, Copy)]
 pub enum Severity {
@@ -40,6 +53,8 @@ pub struct AlertManager {
 }
 
 impl AlertManager {
+    /// Creates an empty alert manager (no watchdogs registered yet), loading alert
+    /// display styling (colors, font, sound) from `ui_style`.
     pub fn new(enabled: bool, ui_style: &UIStyle) -> Self {
         Self {
             watchdog_id_counter: 0,
@@ -67,21 +82,34 @@ impl AlertManager {
         id
     }
 
+    /// Enables or disables the alert manager as a whole. While disabled,
+    /// `check_watchdogs` skips polling (no new alerts are raised) and `render_alerts`
+    /// draws nothing and skips expiring alerts from the queue — timers keep running in
+    /// the background regardless, so alerts may already be expired by the time
+    /// rendering resumes.
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
     }
 
+    /// Immediately suppresses every alert currently in the queue (see
+    /// `Alert::suppress`), regardless of severity or which watchdog raised it. Used by
+    /// the master-warning clear action.
     pub fn suppress_alerts(&mut self) {
         for alert in &mut self.alerts {
             alert.1.suppress();
         }
     }
 
+    /// Registers a watchdog to be polled by `check_watchdogs`, assigning it a unique id
+    /// used to match it to the alert it raises.
     pub fn add_watchdog(&mut self, watchdog: Watchdog) {
         let id = self.get_next_watchdog_id();
         self.watchdogs.push((id, watchdog));
     }
 
+    /// Polls every registered watchdog once and raises a new `Alert` for each one whose
+    /// condition just fired, unless that watchdog already has an alert in the queue
+    /// (see the module-level lifecycle docs). No-op while the manager is disabled.
     pub fn check_watchdogs(&mut self, sensor_manager: &SensorManager) {
         if !self.enabled {
             return;
@@ -105,6 +133,8 @@ impl AlertManager {
         }
     }
 
+    /// Drops expired alerts from the queue, then draws every currently active alert,
+    /// stacked vertically and centered on screen. No-op while the manager is disabled.
     pub fn render_alerts(&mut self, context: &mut GraphicsContext) {
         if !self.enabled {
             return;
