@@ -421,6 +421,10 @@ impl PageManager {
         }
 
         // Set up watchdogs for alert manager.
+        // Display timeout: how long alert is displayed on screen before automatically hidden. None means displayed until manually suppressed.
+        // Remove timeout: how long alert stays in queue after is was suppressed and is no longer visible. Suppressed alerts, which are not removed from queue,
+        // prevent alerts of the same type from triggering. Used to prevent alerts flooding. None means no timeout -> removed immediately.
+        // Trigger duration: how long a condition has to persist to trigger an alert.
         let engine_temp_watchdog = Watchdog::new(
             HWInput::HwEngineCoolantTemp,
             "ТЕМПЕРАТУРА ДВИГАТЕЛЯ".to_string(),
@@ -466,7 +470,7 @@ impl PageManager {
             Some(std::time::Duration::from_secs(60*3)),     // Wait 3 min before displaying again
             None,                                           // Trigger immediately
         );
-        let ups_low_charge_watchdog = Watchdog::new(
+        let ups_crit_charge_watchdog = Watchdog::new(
             HWInput::HwUPSChargeState,
             "ЗАРЯД РЕЗЕРВ АКБ".to_string(),
             Severity::Critical,
@@ -480,6 +484,7 @@ impl PageManager {
         self.alert_manager.add_watchdog(adc_link_watchdog);
         self.alert_manager.add_watchdog(ups_on_battery_watchdog);
         self.alert_manager.add_watchdog(ups_low_charge_watchdog);
+        self.alert_manager.add_watchdog(ups_crit_charge_watchdog);
 
         // Enable watchdogs and alerts
         self.alert_manager.set_enabled(true);
