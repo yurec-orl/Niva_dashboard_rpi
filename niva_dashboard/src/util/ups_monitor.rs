@@ -198,7 +198,7 @@ impl UpsMonitor {
                             );
                             Self::trigger_shutdown(&mut i2c, dry_run);
                             shutdown_triggered = true;
-                        } else if (!battery_power_logged) {
+                        } else if !battery_power_logged {
                             log::warn!("UPS monitor: on battery power (current {:.1} mA)", current_ma);
                             battery_power_logged = true;
                         }

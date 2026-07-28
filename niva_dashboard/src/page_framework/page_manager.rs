@@ -598,7 +598,13 @@ impl PageManager {
                 self.running = false;
             }
             UIEvent::Restart => {
-                log::info!("Restart event received (not implemented)");
+                log::info!("Restart event received, issuing reboot");
+                match std::process::Command::new("sudo").arg("reboot").status() {
+                    Ok(status) if status.success() => log::info!("Reboot issued"),
+                    Ok(status) => log::error!("Reboot command exited with {}", status),
+                    Err(e) => log::error!("Failed to spawn reboot: {}", e),
+                }
+                self.running = false;
             }
             UIEvent::SuppressAlerts => {
                 self.alert_manager.suppress_alerts();
@@ -666,6 +672,10 @@ impl PageManager {
                 label_font,
                 label_font_size
             )? / 2.0);
+            // Adjust if out of bounds
+            if y < 0.0 {
+                y = 0.0;
+            }
         }
 
         let render_x = match pos {

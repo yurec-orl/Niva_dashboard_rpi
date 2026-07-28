@@ -67,6 +67,10 @@ impl DiagPage {
                 let sender = self.smart_event_sender.clone();
                 move || sender.send(UIEvent::SwitchToPage(LOG_PAGE_ID))
             }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Right1, "ПЕРЕЗАГР".into(), Box::new({
+                let sender = self.smart_event_sender.clone();
+                move || sender.send(UIEvent::Restart)
+            }) as Box<dyn FnMut()>),
             PageButton::new(ButtonPosition::Right4, "ВОЗВ".into(), Box::new({
                 let sender = self.smart_event_sender.clone();
                 move || sender.send(UIEvent::SwitchToPage(MAIN_PAGE_ID))
