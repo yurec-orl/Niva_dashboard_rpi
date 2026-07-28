@@ -147,7 +147,7 @@ impl TerminalPage {
         let data = frame.get_data();
         let formatted = data.iter()
             .enumerate()
-            .map(|(i, v)| format!("ch{i}={v}"))
+            .map(|(i, v)| format!("{i}={v}"))
             .collect::<Vec<_>>()
             .join(" ");
         text_box.push_line(formatted);

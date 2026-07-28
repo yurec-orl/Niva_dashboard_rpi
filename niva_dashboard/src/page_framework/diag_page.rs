@@ -128,7 +128,7 @@ impl Page for DiagPage {
         let disk = self.disk_usage_mb.map(|(total, avail)| format!("{} / {} МБ своб.", avail, total)).unwrap_or_else(Self::na);
         let lines: [(String, bool); 12] = [
             ("СБОРКА:".to_string(), true),
-            (format!("  commit {}  {}", GIT_HASH, BUILD_TIME), false),
+            (format!("  коммит {}  {}", GIT_HASH, BUILD_TIME), false),
             (String::new(), false),
             ("ПИТАНИЕ:".to_string(), true),
             (format!("  троттл:  {}", self.throttle_status.as_ref().map(ThrottleStatus::summary).unwrap_or_else(Self::na)), false),
@@ -137,7 +137,7 @@ impl Page for DiagPage {
             (String::new(), false),
             ("ОС:".to_string(), true),
             (format!("  ядро:    {}", self.kernel_version.clone().unwrap_or_else(Self::na)), false),
-            (format!("  дистр:   {}", self.os_pretty_name.clone().unwrap_or_else(Self::na)), false),
+            (format!("  сборка:  {}", self.os_pretty_name.clone().unwrap_or_else(Self::na)), false),
             (format!("  диск:    {}", disk), false),
         ];
 

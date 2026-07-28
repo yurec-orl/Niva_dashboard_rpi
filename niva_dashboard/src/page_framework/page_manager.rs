@@ -435,7 +435,7 @@ impl PageManager {
         );
         let oil_press_low_watchdog = Watchdog::new(
             HWInput::HwOilPressLow,
-            "НИЗКОЕ ДАВЛЕНИЕ МАСЛА".to_string(),
+            "ДАВЛЕНИЕ МАСЛА".to_string(),
             Severity::Critical,
             None,                                           // No display timeout
             Some(std::time::Duration::from_secs(30)),       // Wait 30 s before displaying again (engine should not run on low oil pressure long)
