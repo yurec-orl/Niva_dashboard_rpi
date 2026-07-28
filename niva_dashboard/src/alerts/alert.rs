@@ -98,14 +98,23 @@ impl Alert {
     }
 
     /// Returns whether the alert should be dropped from `AlertManager`'s queue.
-    /// An inactive alert is kept around until `remove_timeout` elapses so its watchdog
-    /// cannot immediately raise a duplicate (see the module-level lifecycle docs).
-    /// `remove_timeout: None` expires the alert immediately once inactive.
+    /// An inactive alert is kept around until `remove_timeout` elapses *since it went
+    /// inactive* so its watchdog cannot immediately raise a duplicate (see the
+    /// module-level lifecycle docs). `remove_timeout: None` expires the alert
+    /// immediately once inactive.
     pub fn is_expired(&self) -> bool {
         match self.remove_timeout {
             None => true,                                                   // Same as 0 timeout - expires immediately
             Some(_) if self.is_active() => false,                           // Never remove while active
-            Some(timeout) => self.creation_time.elapsed() >= timeout,       // If not active, remove after timeout
+            Some(timeout) => {
+                // Alert stays active for creation_time + display_timeout duration, then 
+                // becomes expired after creation_time + display_timeout + remove_timeout,
+                // so to compare remove_timeout properly, creation_time.elapsed() needs
+                // to have display_timeout subtracted.
+                let since_inactive = self.creation_time.elapsed()
+                    .saturating_sub(self.display_timeout.unwrap_or_default());
+                since_inactive >= timeout
+            }
         }
     }
 }
