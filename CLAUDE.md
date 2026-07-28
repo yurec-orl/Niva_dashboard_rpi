@@ -114,6 +114,8 @@ Boot reduced from ~16.8s to ~5.1s by disabling unused systemd services (`Network
 - Default font paths hardcoded in `ui_style.rs::load_defaults()` are absolute and dev-machine-specific (`/home/user/Work/Niva_Dashboard_Rpi/...`) — will silently fail (falling back to warning-logged defaults) on any other deployment path.
 - `GaugeIndicator::with_decorators` (`indicators/gauge_indicator.rs`) is a stub that ignores its argument ("decorators not yet integrated"), unlike `NeedleIndicator`/`VerticalBarIndicator`/`DigitalSegmentedIndicator` which all wire decorators through `IndicatorBase`.
 - Doc/code mismatches to reconcile: `hardware/sensors.rs` is labeled "legacy... being refactored" in the Project Structure section above, but it's actually the live "Logical Sensor" stage the chains depend on — not a deprecated path. Also, the digital/analog signal processing "edge detection"/"low-pass filtering" terms in Core Components don't correspond to any processor by that name (debounce and the EMA `AnalogSignalProcessorDampener` fill those roles under different names). `hardware/gpio_input.rs` and `page_framework/terminal_page.rs` (a fourth page type, log/ADC) are also missing from the Project Structure listing above.
+- Add 'master warning' button/indicator to the system: non-latching button with a warning light which lights up when an alert is active, and button press clears active alerts. Probably wire directly to Pi GPIO because STM32 ran out of pins (and to
+  have it still function if no link to ADC module). Open questions: can Pi GPIO drive warning LED directly?
 
 ## PiOS login
 `user` / `@Niva21#`; `root` password is standard password with a single numeric character.
