@@ -20,6 +20,7 @@
 //   -> AnalogSensor(convert raw data to logical values) -> UI Rendering
 
 use crate::util::adc_data_provider::ADCFrame;
+use crate::util::ups_i2c_provider::UpsRawFrame;
 
 use rppal::gpio::Level;
 use std::time::{Duration, Instant};
@@ -58,6 +59,9 @@ pub enum HWInput {
     HwButton7,
     // ADC link health (see AdcLinkStatusProvider) — not a physical sensor
     HwAdcLink,
+    // UPS I2C input
+    HwUPSCurrent,
+    HwUPSChargeState,
 }
 
 // Generic interface for reading input data.
@@ -71,9 +75,33 @@ pub trait HWDigitalProvider {
     fn read_digital(&self, input: HWInput) -> Result<Level, String>;
 }
 
+/// Reads raw INA219 registers (current, bus voltage) from the shared UpsRawFrame. Raw
+/// values only — sign interpretation and mA/V/SoC conversion happen in the logical sensor
+/// layer (UpsCurrentSensor/UpsChargeSensor in hardware::sensors), not here.
+pub struct UPSDataProvider {
+    input: HWInput,
+    frame: UpsRawFrame,
+}
+
+impl UPSDataProvider {
+    pub fn new(input: HWInput, frame: UpsRawFrame) -> Self {
+        UPSDataProvider { input, frame }
+    }
+}
+
+impl HWAnalogProvider for UPSDataProvider {
+    fn input(&self) -> HWInput { self.input }
+
+    fn read_analog(&self, _input: HWInput) -> Result<u16, String> {
+        match self.input {
+            HWInput::HwUPSCurrent => self.frame.raw_current(),
+            HWInput::HwUPSChargeState => self.frame.raw_bus_voltage(),
+            _ => Err("invalid input".to_string())
+        }
+    }
+}
+
 /// Reads a single ADC channel from the shared ADCFrame.
-/// Cloning ADCFrame is cheap (Arc clone) — each provider holds its own handle.
-/// The background thread in ADCDataProvider keeps the frame current.
 pub struct ADCChannelProvider {
     input: HWInput,
     channel_index: usize,

@@ -4,3 +4,4 @@ pub mod diagnostics;
 pub mod logging;
 pub mod shutdown;
 pub mod ups_monitor;
+pub mod ups_i2c_provider;

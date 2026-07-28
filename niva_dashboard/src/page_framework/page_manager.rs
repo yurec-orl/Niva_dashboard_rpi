@@ -11,7 +11,7 @@ use crate::hardware::hw_providers::HWInput;
 use crate::alerts::alert_manager::{AlertManager, Severity};
 use crate::alerts::watchdog::Watchdog;
 use crate::util::adc_data_provider::ADCFrame;
-use crate::util::ups_monitor::UpsReading;
+use crate::util::ups_monitor::UpsMonitor;
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -206,9 +206,10 @@ pub struct PageManager {
     // Alert system
     alert_manager: AlertManager,
 
-    // Handle to the UPS monitor's latest INA219 current reading, shown in the status line.
-    // None when the UPS monitor failed to start (e.g. I2C unavailable).
-    ups_reading: Option<UpsReading>,
+    // Tracks on-battery duration from the UPS sensor chain and triggers a shutdown once it
+    // has persisted too long. Its check() is a no-op when no UPS sensor value is available
+    // (e.g. I2C unavailable) — see UpsMonitor::check.
+    ups_monitor: UpsMonitor,
 
     // Handle to the shared ADC frame, used to build the ADC diagnostic terminal page.
     // None when the ADC data provider failed to start.
@@ -235,7 +236,7 @@ pub struct PageManager {
 
 impl PageManager {
     pub fn new(context: GraphicsContext, sensor_manager: SensorManager, ui_style: UIStyle,
-               input_sources: Vec<Box<dyn InputSource>>, ups_reading: Option<UpsReading>,
+               input_sources: Vec<Box<dyn InputSource>>, ups_monitor: UpsMonitor,
                adc_frame: Option<ADCFrame>) -> Self {
         let mut buttons_map = HashMap::new();
         buttons_map.insert('1', ButtonPosition::Left1);
@@ -272,7 +273,7 @@ impl PageManager {
             sensor_config_rx,
             sensor_config_tx,
             alert_manager,
-            ups_reading,
+            ups_monitor,
             adc_frame,
             fps_counter: FpsCounter::new(),
             start_time: Instant::now(),
@@ -419,36 +420,66 @@ impl PageManager {
             self.add_page(adc_page);
         }
 
-        // Set up watchdogs for alert manager
+        // Set up watchdogs for alert manager.
         let engine_temp_watchdog = Watchdog::new(
             HWInput::HwEngineCoolantTemp,
             "ТЕМПЕРАТУРА ДВИГАТЕЛЯ".to_string(),
             Severity::Critical,
-            None,           // No display timeout
-            Some(std::time::Duration::from_secs(60)),
-            None,           // Trigger immediately
+            None,                                           // No display timeout
+            Some(std::time::Duration::from_secs(60)),       // Wait 60 s before displaying again
+            None,                                           // Eng temp doesn't fluctuate, if reached critical, display alert immediately
         );
         let oil_press_low_watchdog = Watchdog::new(
             HWInput::HwOilPressLow,
             "НИЗКОЕ ДАВЛЕНИЕ МАСЛА".to_string(),
             Severity::Critical,
-            None,           // No display timeout
-            Some(std::time::Duration::from_secs(30)),
-            None,           // Trigger immediately
+            None,                                           // No display timeout
+            Some(std::time::Duration::from_secs(30)),       // Wait 30 s before displaying again (engine should not run on low oil pressure long)
+            None,                                           // Trigger immediately to catch even brief sensor triggers
         );
 
         let adc_link_watchdog = Watchdog::new(
             HWInput::HwAdcLink,
             "ОШИБКА СВЯЗИ АЦП".to_string(),
             Severity::Critical,
-            None,           // No display timeout - stays visible for as long as the link is down
-            None,           // No remove timeout - never dropped from the queue
-            None,           // Trigger immediately, no persistence delay
+            None,                                           // No display timeout - stays visible for as long as the link is down
+            Some(std::time::Duration::from_secs(10)),
+            None,                                           // Trigger immediately, no persistence delay
+        );
+
+        // "On battery" is a Warning here — the actual shutdown decision has its own,
+        // longer-delayed timer in UpsMonitor::check. This just surfaces it to the driver.
+        let ups_on_battery_watchdog = Watchdog::new(
+            HWInput::HwUPSCurrent,
+            "РЕЗЕРВНОЕ ПИТАНИЕ".to_string(),
+            Severity::Warning,
+            Some(std::time::Duration::from_secs(60)),       // Display for 60 s
+            Some(std::time::Duration::from_secs(60)),       // Wait 60 s before displaying again
+            Some(std::time::Duration::from_secs(10)),       // Ignore brief transients
+        );
+        // 2 stages: warning on 25% charge and critical on 15% charge (controlled by sensor value constraints).
+        let ups_low_charge_watchdog = Watchdog::new(
+            HWInput::HwUPSChargeState,
+            "ЗАРЯД РЕЗЕРВ АКБ".to_string(),
+            Severity::Warning,
+            Some(std::time::Duration::from_secs(60)),       // Display for 60 s
+            Some(std::time::Duration::from_secs(60*3)),     // Wait 3 min before displaying again
+            None,                                           // Trigger immediately
+        );
+        let ups_low_charge_watchdog = Watchdog::new(
+            HWInput::HwUPSChargeState,
+            "ЗАРЯД РЕЗЕРВ АКБ".to_string(),
+            Severity::Critical,
+            None,                                           // No display timeout - stays visible while charge is critically low
+            Some(std::time::Duration::from_secs(60*3)),     // Wait 3 min before displaying again
+            None,                                           // Trigger immediately
         );
 
         self.alert_manager.add_watchdog(engine_temp_watchdog);
         self.alert_manager.add_watchdog(oil_press_low_watchdog);
         self.alert_manager.add_watchdog(adc_link_watchdog);
+        self.alert_manager.add_watchdog(ups_on_battery_watchdog);
+        self.alert_manager.add_watchdog(ups_low_charge_watchdog);
 
         // Enable watchdogs and alerts
         self.alert_manager.set_enabled(true);
@@ -499,7 +530,8 @@ impl PageManager {
                 }
             }
             self.alert_manager.check_watchdogs(&self.sensor_manager);
-            
+            self.ups_monitor.check(&self.sensor_manager);
+
             // Update FPS counter
             self.fps_counter.update();
             
@@ -791,17 +823,17 @@ impl PageManager {
         };
 
         // UPS current: positive = charging/mains present, negative = discharging/on
-        // battery (see UpsReading::current_ma). "–" when the UPS monitor isn't running or
-        // hasn't produced a fresh reading recently.
-        let ups_current_str = match self.ups_reading.as_ref().and_then(UpsReading::current_ma) {
-            Some(ma) => format!("{:+.0}мА", ma),
+        // battery (see hardware::sensors::UpsCurrentSensor). "–" when the UPS I2C provider
+        // isn't running or hasn't produced a fresh reading recently.
+        let ups_current_str = match self.sensor_manager.get_sensor_value(&HWInput::HwUPSCurrent) {
+            Some(value) => format!("{:+.0}мА", value.as_f32()),
             None => "–".to_string(),
         };
 
-        // Battery state of charge, estimated from bus voltage (see UpsReading::soc_percent).
-        // Omitted when the UPS monitor isn't running or hasn't produced a fresh reading.
-        let ups_soc_str = match self.ups_reading.as_ref().and_then(UpsReading::soc_percent) {
-            Some(pct) => format!(" [{:.0}%]", pct),
+        // Battery state of charge, estimated from bus voltage (see
+        // hardware::sensors::UpsChargeSensor). Omitted when no fresh reading is available.
+        let ups_soc_str = match self.sensor_manager.get_sensor_value(&HWInput::HwUPSChargeState) {
+            Some(value) => format!(" [{:.0}%]", value.as_f32()),
             None => String::new(),
         };
 

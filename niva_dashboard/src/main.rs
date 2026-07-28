@@ -21,6 +21,8 @@ use crate::hardware::sensor_value::ValueConstraints;
 use crate::util::adc_data_provider::{ADCDataProvider, ADCFrame};
 use crate::util::logging::init_logging;
 use crate::util::ups_monitor::UpsMonitor;
+use crate::util::ups_i2c_provider::{UpsI2CDataProvider, UpsRawFrame};
+use crate::hardware::sensors::{UpsCurrentSensor, UpsChargeSensor};
 use rppal::gpio::Level;
 use std::env;
 use std::thread;
@@ -208,7 +210,7 @@ fn setup_self_test_sensors() -> SensorManager {
     mgr
 }
 
-fn setup_sensors(adc: Option<ADCFrame>) -> SensorManager {
+fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>) -> SensorManager {
     let mut mgr = SensorManager::new();
     // Lets adc_link_down() suppress "channel not in frame" log spam while the ADC
     // reconnect loop is doing its thing (see AdcDataProvider).
@@ -224,6 +226,28 @@ fn setup_sensors(adc: Option<ADCFrame>) -> SensorManager {
                                            Level::High, ValueConstraints::digital_critical())),
     );
     mgr.add_digital_sensor_chain(adc_link_chain);
+
+    // UPS sensor chains — added unconditionally alongside the ADC link chain, since the UPS
+    // HAT is separate I2C hardware and its availability doesn't depend on the STM32 ADC link.
+    if let Some(ups_frame) = ups {
+        let ups_current_chain = SensorAnalogInputChain::new(
+            Box::new(UPSDataProvider::new(HWInput::HwUPSCurrent, ups_frame.clone())),
+            vec![],
+            Box::new(UpsCurrentSensor::new()),
+        );
+        mgr.add_analog_sensor_chain(ups_current_chain);
+
+        let ups_charge_chain = SensorAnalogInputChain::new(
+            Box::new(UPSDataProvider::new(HWInput::HwUPSChargeState, ups_frame)),
+            vec![],
+            Box::new(UpsChargeSensor::new()),
+        );
+        mgr.add_analog_sensor_chain(ups_charge_chain);
+
+        log::info!("✓ UPS sensor chains added");
+    } else {
+        log::info!("UPS I2C provider unavailable — UPS sensor chains omitted");
+    }
 
     let Some(frame) = adc else {
         log::info!("ADC unavailable — real sensor set will be empty");
@@ -447,10 +471,10 @@ fn setup_adc_data_provider() -> Result<ADCDataProvider, std::string::String> {
     Ok(provider)
 }
 
-fn setup_ups_monitor() -> Result<UpsMonitor, String> {
-    let mut monitor = UpsMonitor::new();
-    monitor.run()?;
-    Ok(monitor)
+fn setup_ups_i2c_provider() -> Result<UpsI2CDataProvider, String> {
+    let mut provider = UpsI2CDataProvider::new();
+    provider.run().map_err(|e| e.to_string())?;
+    Ok(provider)
 }
 
 fn show_help() {
@@ -506,19 +530,19 @@ fn main() -> std::process::ExitCode {
 
     // Kept alive for the process lifetime — its Drop impl stops the background thread
     // cleanly on shutdown. Started unconditionally and independently of graphics/sensors
-    // so it keeps monitoring even if later setup steps fail.
-    let ups_monitor = match setup_ups_monitor() {
-        Ok(monitor) => {
-            log::info!("✓ UPS monitor started");
-            Some(monitor)
+    // so it keeps polling even if later setup steps fail.
+    let ups_i2c_provider = match setup_ups_i2c_provider() {
+        Ok(provider) => {
+            log::info!("✓ UPS I2C provider started");
+            Some(provider)
         }
         Err(e) => {
-            log::warn!("UPS monitor unavailable: {}", e);
+            log::warn!("UPS I2C provider unavailable: {}", e);
             None
         }
     };
-    // Obtain a reading handle before moving ups_monitor into the binding that keeps it alive.
-    let ups_reading = ups_monitor.as_ref().map(|m| m.reading());
+    // Obtain a frame handle before moving ups_i2c_provider into the binding that keeps it alive.
+    let ups_frame = ups_i2c_provider.as_ref().map(|p| p.frame());
 
     let adc = match setup_adc_data_provider() {
         Ok(provider) => {
@@ -549,10 +573,10 @@ fn main() -> std::process::ExitCode {
     // Keep a handle for the ADC diagnostic terminal page before the sensor-chain setup
     // consumes the rest of adc_frame's clones.
     let adc_frame_for_diag = adc_frame.clone();
-    let sensors = setup_sensors(adc_frame);
+    let sensors = setup_sensors(adc_frame, ups_frame);
     let ui_style = setup_ui_style();
 
-    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, ups_reading, adc_frame_for_diag);
+    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag);
 
     mgr.setup().expect("Failed to setup page manager");
 

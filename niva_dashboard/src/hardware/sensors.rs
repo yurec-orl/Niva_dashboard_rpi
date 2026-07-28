@@ -225,6 +225,118 @@ impl AnalogSensor for EngineTemperatureSensor {
     }
 }
 
+/// Current LSB scale for the INA219 as configured by UpsI2CDataProvider's calibration
+/// (set_calibration_16V_5A: 0.01 ohm shunt, 5A max) — mA per raw register count.
+const UPS_CURRENT_LSB_MA: f32 = 0.1524;
+
+/// Current draw below this (mA) counts as "discharging" (running on battery, mains absent
+/// or insufficient) — comfortably under a Pi 4's idle draw so routine float-charging near
+/// 0 mA is never misread as on-battery. Shared with UpsMonitor's shutdown-timer decision so
+/// the "on battery" alert and the eventual shutdown agree on what counts as on-battery.
+pub const UPS_ON_BATTERY_CURRENT_THRESHOLD_MA: f32 = -100.0;
+
+/// Bus voltage (V) mapped to state of charge (0-100%), ported from Waveshare's INA219.py
+/// demo (`p = (bus_voltage - 3) / 1.2 * 100`) — a linear estimate between an empty single
+/// Li-ion cell (3.0V) and a full one (4.2V), clamped to the valid range.
+const UPS_SOC_EMPTY_V: f32 = 3.0;
+const UPS_SOC_FULL_V: f32 = 4.2;
+
+/// Converts the INA219's raw current register to signed mA. Positive means charging/mains
+/// present, negative means discharging/on-battery (see UPS_ON_BATTERY_CURRENT_THRESHOLD_MA).
+pub struct UpsCurrentSensor {
+    value: SensorValue,
+    constraints: ValueConstraints,
+    metadata: ValueMetadata,
+}
+
+impl UpsCurrentSensor {
+    pub fn new() -> Self {
+        UpsCurrentSensor {
+            value: SensorValue::empty(),
+            constraints: ValueConstraints::analog_with_thresholds(
+                -5000.0, 5000.0,
+                None, Some(UPS_ON_BATTERY_CURRENT_THRESHOLD_MA),
+                None, None,
+            ),
+            metadata: ValueMetadata::new("мА", "ТОК ИБП", "ups_current"),
+        }
+    }
+}
+
+impl Sensor for UpsCurrentSensor {
+    fn id(&self) -> &String { &self.metadata.sensor_id }
+    fn name(&self) -> &String { &self.metadata.label }
+    fn value(&self) -> Result<&SensorValue, String> { Ok(&self.value) }
+    fn constraints(&self) -> &ValueConstraints { &self.constraints }
+    fn metadata(&self) -> &ValueMetadata { &self.metadata }
+    fn min_value(&self) -> f32 { self.constraints.min_value }
+    fn max_value(&self) -> f32 { self.constraints.max_value }
+}
+
+impl AnalogSensor for UpsCurrentSensor {
+    fn read(&mut self, input: u16) -> Result<&SensorValue, String> {
+        // The INA219 current register is two's complement 16-bit, so the raw u16 bit
+        // pattern reinterprets losslessly as i16 — no separate sign-extension needed.
+        // INA219.py negates the raw register before interpreting its sign
+        // (`current = -ina219.getCurrent_mA()`) — confirmed empirically: on mains power the
+        // raw register reads negative (~-1.2A) while the negated, user-facing value reads
+        // positive (~+1.2A), consistent with "positive = charging/mains present".
+        let current_ma = -((input as i16) as f32 * UPS_CURRENT_LSB_MA);
+        self.value = SensorValue::analog_with_constraints_and_metadata(
+            current_ma.clamp(self.constraints.min_value, self.constraints.max_value),
+            self.constraints.clone(),
+            self.metadata.clone(),
+        );
+        Ok(&self.value)
+    }
+}
+
+/// Converts the INA219's raw bus voltage register to estimated battery state of charge.
+pub struct UpsChargeSensor {
+    value: SensorValue,
+    constraints: ValueConstraints,
+    metadata: ValueMetadata,
+}
+
+impl UpsChargeSensor {
+    pub fn new() -> Self {
+        UpsChargeSensor {
+            value: SensorValue::empty(),
+            constraints: ValueConstraints::analog_with_thresholds(
+                0.0, 100.0,
+                Some(15.0), Some(25.0),
+                None, None,
+            ),
+            metadata: ValueMetadata::new("%", "ЗАРЯД АКБ", "ups_charge"),
+        }
+    }
+}
+
+impl Sensor for UpsChargeSensor {
+    fn id(&self) -> &String { &self.metadata.sensor_id }
+    fn name(&self) -> &String { &self.metadata.label }
+    fn value(&self) -> Result<&SensorValue, String> { Ok(&self.value) }
+    fn constraints(&self) -> &ValueConstraints { &self.constraints }
+    fn metadata(&self) -> &ValueMetadata { &self.metadata }
+    fn min_value(&self) -> f32 { self.constraints.min_value }
+    fn max_value(&self) -> f32 { self.constraints.max_value }
+}
+
+impl AnalogSensor for UpsChargeSensor {
+    fn read(&mut self, input: u16) -> Result<&SensorValue, String> {
+        // Matches Waveshare's INA219.py getBusVoltage_V: raw register's top 13 bits (>>3)
+        // are the voltage reading, in 4mV steps.
+        let bus_voltage_v = (input >> 3) as f32 * 0.004;
+        let percent = (bus_voltage_v - UPS_SOC_EMPTY_V) / (UPS_SOC_FULL_V - UPS_SOC_EMPTY_V) * 100.0;
+        self.value = SensorValue::analog_with_constraints_and_metadata(
+            percent.clamp(self.constraints.min_value, self.constraints.max_value),
+            self.constraints.clone(),
+            self.metadata.clone(),
+        );
+        Ok(&self.value)
+    }
+}
+
 pub struct SpeedSensor {
     speed: SensorValue,
     pulse_counter: DigitalSignalProcessorPulsePerSecond,
@@ -500,6 +612,54 @@ mod tests {
             assert_eq!(*temp, 120.0);
         } else {
             panic!("Expected analog temperature value");
+        }
+    }
+
+    #[test]
+    fn test_ups_current_sensor_mains_present() {
+        let mut sensor = UpsCurrentSensor::new();
+        // Raw register reads negative while on mains (INA219.py's sign convention before
+        // negation) — should come out positive after conversion.
+        let raw = (-8000i16) as u16; // -8000 * 0.1524 = -1219.2 mA raw, negated -> +1219.2
+        sensor.read(raw).unwrap();
+        if let ValueData::Analog(ma) = &Sensor::value(&sensor).unwrap().value {
+            assert!(*ma > 0.0, "expected positive current on mains, got {}", ma);
+        } else {
+            panic!("Expected analog value");
+        }
+    }
+
+    #[test]
+    fn test_ups_current_sensor_on_battery() {
+        let mut sensor = UpsCurrentSensor::new();
+        // Positive raw register (pre-negation) -> negative mA -> on-battery.
+        let raw = 2000u16;
+        sensor.read(raw).unwrap();
+        let value = Sensor::value(&sensor).unwrap();
+        assert!(value.as_f32() < 0.0);
+        assert!(value.is_warning(), "on-battery current should trip the warning threshold");
+    }
+
+    #[test]
+    fn test_ups_charge_sensor_full_and_empty() {
+        let mut sensor = UpsChargeSensor::new();
+
+        // 4.2V bus voltage -> raw register = (4.2 / 0.004) << 3
+        let full_raw = ((4.2 / 0.004) as u16) << 3;
+        sensor.read(full_raw).unwrap();
+        if let ValueData::Analog(pct) = &Sensor::value(&sensor).unwrap().value {
+            assert!((pct - 100.0).abs() < 1.0);
+        } else {
+            panic!("Expected analog value");
+        }
+
+        // 3.0V bus voltage -> 0%
+        let empty_raw = ((3.0 / 0.004) as u16) << 3;
+        sensor.read(empty_raw).unwrap();
+        if let ValueData::Analog(pct) = &Sensor::value(&sensor).unwrap().value {
+            assert!(pct.abs() < 1.0);
+        } else {
+            panic!("Expected analog value");
         }
     }
 
