@@ -2,7 +2,7 @@
 
 ## Response constraints
 - Ask before generating demos or examples.
-- Write meaningful, descriptive comments only where the WHY isn't obvious from the code. Never write comments that just restate the code (e.g. `// Add new page` above `self.add_new_page()`).
+- Write meaningful, descriptive comments only where the WHY isn't obvious from the code. Do not restate the code in comments.
 
 ## Project Overview
 A software dashboard for automotive use, written in Rust, running on Raspberry Pi 4. Mimics a multi-functional display (MFD) as found in aircraft: central screen with configurable button rows on the left and right sides. On-screen text is in Russian, using military-style abbreviations and shortened words where applicable.
@@ -11,12 +11,12 @@ A software dashboard for automotive use, written in Rust, running on Raspberry P
 - **Target Device**: Raspberry Pi 4
 - **ADC Module**: STM32F103C8T6 (via USB Serial, exposed as `/dev/niva_adc`)
 - **Graphics**: Raspberry Pi OpenGL ES/KMS/DRM
-- **Input**: GPIO-connected physical buttons (2 rows, left and right sides)
+- **Input**: Physical buttons (2 rows, left and right sides) connected to ADC module input pins, state transferred via USB serial; Master warning indicator/button connected to GPIO
 - **Display**: 800x480 central screen
 
 ### Power supply
 ```
-Car 12V → XWST XW-0945-5-40W-ISO (DC-DC, 9-45V in, 5V 8A out, isolated)
+Car 12V → TPS40057 (DC-DC, 9-35V in, 5V 5A out)
         → UPS HAT (battery-backed 5V supply)
         → Raspberry Pi 4
               ├── GPIO 5V header → Display (power only, video via HDMI)
@@ -24,9 +24,9 @@ Car 12V → XWST XW-0945-5-40W-ISO (DC-DC, 9-45V in, 5V 8A out, isolated)
               ├── USB port → STM32 ADC module
               └── USB port → UM982 GNSS Receiver
 ```
-- Display/fan are powered via Pi GPIO 5V header (not USB) so they stay on the same power domain as the Pi (powered on UPS battery when ignition/XWST is off) and to avoid the Pi's fixed USB current limit.
+- Display/fan are powered via Pi GPIO 5V header (not USB) so they stay on the same power domain as the Pi (powered on UPS battery when ignition/TPS40057 is off) and to avoid the Pi's fixed USB current limit.
 - **Pi 4's GPIO 5V header has no polyfuse** — direct unprotected connection to the input rail. Use an inline fuse on this tap; spread the combined draw across both 5V/GND pin pairs.
-- UPS HAT's battery-boost converter (not the XWST) must cover the combined Pi+GPIO+USB load when running on battery with ignition off — verify its rated output covers this before relying on it.
+- UPS HAT's battery-boost converter (not the TPS40057) must cover the combined Pi+GPIO+USB load when running on battery with ignition off — verify its rated output covers this before relying on it.
 
 ## Software Architecture
 
@@ -114,8 +114,8 @@ Boot reduced from ~16.8s to ~5.1s by disabling unused systemd services (`Network
 - Default font paths hardcoded in `ui_style.rs::load_defaults()` are absolute and dev-machine-specific (`/home/user/Work/Niva_Dashboard_Rpi/...`) — will silently fail (falling back to warning-logged defaults) on any other deployment path.
 - `GaugeIndicator::with_decorators` (`indicators/gauge_indicator.rs`) is a stub that ignores its argument ("decorators not yet integrated"), unlike `NeedleIndicator`/`VerticalBarIndicator`/`DigitalSegmentedIndicator` which all wire decorators through `IndicatorBase`.
 - Doc/code mismatches to reconcile: `hardware/sensors.rs` is labeled "legacy... being refactored" in the Project Structure section above, but it's actually the live "Logical Sensor" stage the chains depend on — not a deprecated path. Also, the digital/analog signal processing "edge detection"/"low-pass filtering" terms in Core Components don't correspond to any processor by that name (debounce and the EMA `AnalogSignalProcessorDampener` fill those roles under different names). `hardware/gpio_input.rs` and `page_framework/terminal_page.rs` (a fourth page type, log/ADC) are also missing from the Project Structure listing above.
-- Add 'master warning' button/indicator to the system: non-latching button with a warning light which lights up when an alert is active, and button press clears active alerts. Probably wire directly to Pi GPIO because STM32 ran out of pins (and to
-  have it still function if no link to ADC module). Open questions: can Pi GPIO drive warning LED directly?
+- 'Master warning' button/indicator to the system: non-latching button with a warning light which lights up when an alert is active, and button press clears active alerts. Probably wire directly to Pi GPIO because STM32 ran out of pins (and to
+  have it still function if no link to ADC module). Power considerations: 16 mA draw per pin and <= 50 mA total GPIO draw. 16 mA should be fine for one LED, possibly even less if brightness is enough for a warning light.
 
 ## PiOS login
 `user` / `@Niva21#`; `root` password is standard password with a single numeric character.
