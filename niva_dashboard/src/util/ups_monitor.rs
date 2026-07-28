@@ -182,6 +182,7 @@ impl UpsMonitor {
 
         let mut on_battery_since: Option<Instant> = None;
         let mut shutdown_triggered = false;
+        let mut battery_power_logged = false;
 
         while !should_stop.load(Ordering::Relaxed) {
             match Self::read_current_ma_and_bus_voltage_v(&mut i2c) {
@@ -197,12 +198,16 @@ impl UpsMonitor {
                             );
                             Self::trigger_shutdown(&mut i2c, dry_run);
                             shutdown_triggered = true;
+                        } else if (!battery_power_logged) {
+                            log::warn!("UPS monitor: on battery power (current {:.1} mA)", current_ma);
+                            battery_power_logged = true;
                         }
                     } else {
                         if on_battery_since.is_some() {
                             log::info!("UPS monitor: mains power restored ({:.1} mA)", current_ma);
                         }
                         on_battery_since = None;
+                        battery_power_logged = false;
                     }
                 }
                 Err(e) => {
