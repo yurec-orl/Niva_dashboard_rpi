@@ -1,4 +1,4 @@
-use crate::util::adc_serial_reader::{ADCSerialReader, SerialReader};
+use crate::util::serial_reader::{LineSerialReader, SerialReader};
 
 use std::fmt;
 use std::thread;
@@ -103,7 +103,7 @@ impl ADCFrame {
 /// RECONNECT_INTERVAL). Purely local to that thread — never shared with ADCDataProvider
 /// or the main thread, so no Arc/Mutex is needed here unlike ADCFrame/should_stop.
 struct AdcConnection {
-    reader: Option<ADCSerialReader>,
+    reader: Option<LineSerialReader>,
     disconnect_logged: bool,
 }
 
@@ -118,7 +118,7 @@ impl AdcConnection {
         if self.reader.is_some() {
             return true;
         }
-        match ADCSerialReader::try_new(port, baud) {
+        match LineSerialReader::try_new(port, baud) {
             Ok(opened) => {
                 log::info!("ADC serial port '{}' (re)connected", port);
                 self.disconnect_logged = false;

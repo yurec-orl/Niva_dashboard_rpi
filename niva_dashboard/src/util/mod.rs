@@ -1,4 +1,4 @@
-pub mod adc_serial_reader;
+pub mod serial_reader;
 pub mod adc_data_provider;
 pub mod diagnostics;
 pub mod logging;

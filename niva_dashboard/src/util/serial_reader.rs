@@ -7,11 +7,11 @@ pub trait SerialReader {
     fn read_line(&mut self) -> Option<String>;
 }
 
-pub struct ADCSerialReader {
+pub struct LineSerialReader {
     reader: BufReader<Box<dyn SerialPort>>,
 }
 
-impl ADCSerialReader {
+impl LineSerialReader {
     pub fn try_new(port: &str, baud: u32) -> Result<Self, String> {
         let opened = match serialport::new(port, baud)
             .timeout(Duration::from_millis(100))
@@ -27,12 +27,12 @@ impl ADCSerialReader {
                 }
             };
 
-        log::info!("Opened ADC serial port '{}' at {} baud", port, baud);
-        Ok(ADCSerialReader { reader: BufReader::new(opened) })
+        log::info!("Opened serial port '{}' at {} baud", port, baud);
+        Ok(LineSerialReader { reader: BufReader::new(opened) })
     }
 }
 
-impl SerialReader for ADCSerialReader {
+impl SerialReader for LineSerialReader {
     fn read_line(&mut self) -> Option<String> {
         let mut line = String::new();
         match self.reader.read_line(&mut line) {
@@ -44,7 +44,7 @@ impl SerialReader for ADCSerialReader {
             // it is NOT an error condition and must not be treated as a fatal read failure.
             Err(e) if e.kind() == std::io::ErrorKind::TimedOut => Some(String::new()),
             Err(e) => {
-                log::error!("ADC serial read error: {} (kind: {:?})", e, e.kind());
+                log::error!("Serial read error: {} (kind: {:?})", e, e.kind());
                 return None;
             }
         }
