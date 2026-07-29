@@ -176,7 +176,7 @@ impl MainPage {
         
         // Layout parameters
         let button_margin = 60.0; // Space for buttons on left/right
-        let top_margin = 40.0;
+        let top_margin = 8.0;
 
         // Central speedometer - large gauge (RPM/Speed)
         let center_gauge_radius = 150.0;
