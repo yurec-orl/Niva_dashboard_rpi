@@ -553,16 +553,13 @@ fn setup_ups_i2c_provider() -> Result<UpsI2CDataProvider, String> {
 
 fn show_help() {
     log::info!("Available test modes:");
-    log::info!("1. Basic OpenGL triangle test");
-    log::info!("2. OpenGL text rendering test with FreeType");
-    log::info!("3. Dashboard performance test (9 animated gauges)");
-    log::info!("4. Rotating needle gauge test (circular gauge with numbers)");
-    log::info!("5. GPIO input test");
-    log::info!("6. Sensor manager test");
-    log::info!("7. Digital segmented display test");
-    log::info!("8. Indicator zero position test (needle and bar gauges at minimum)");
-    log::info!("9. Indicator middle position test (needle and bar gauges at 50%)");
-    log::info!("10. Indicator maximum position test (needle and bar gauges at maximum)");
+    log::info!("1. Rotating needle gauge test (circular gauge with numbers)");
+    log::info!("2. GPIO input test");
+    log::info!("3. Digital segmented display test");
+    log::info!("4. Indicator zero position test (needle and bar gauges at minimum)");
+    log::info!("5. Indicator middle position test (needle and bar gauges at 50%)");
+    log::info!("6. Indicator maximum position test (needle and bar gauges at maximum)");
+    log::info!("7. Fuel level grid stress test");
 }
 
 fn main() -> std::process::ExitCode {
@@ -575,7 +572,7 @@ fn main() -> std::process::ExitCode {
     let args: Vec<String> = env::args().collect();
 
     log::info!("Niva Dashboard - Raspberry Pi Version (KMS/DRM Backend)");
-    log::info!("Usage: cargo run -- [help|test={{basic|gltext|dashboard|needle|gpio|sensors|digital|ind_zero_pos|ind_middle_pos|ind_max_pos}}]");
+    log::info!("Usage: cargo run -- [help|test={{needle|gpio|digital|ind_zero_pos|ind_middle_pos|ind_max_pos|fuel_grid}}]");
 
     for arg in args {
         let parm = arg.split("=").collect::<Vec<&str>>();
