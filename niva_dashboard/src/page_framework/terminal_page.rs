@@ -10,6 +10,7 @@ use crate::hardware::sensor_manager::SensorManager;
 use crate::page_framework::events::{EventReceiver, SmartEventSender, UIEvent};
 use crate::page_framework::page_manager::{ButtonPosition, Page, PageBase, PageButton, DIAG_PAGE_ID};
 use crate::util::adc_data_provider::ADCFrame;
+use crate::util::gnss_data_provider::GnssFrame;
 
 // Ring buffer capacity: only needs to comfortably outlast one screen's worth of wrapped
 // rows, since manual scroll-back isn't supported — the box always shows the newest content.
@@ -29,6 +30,7 @@ const CONTENT_BOTTOM_MARGIN: f32 = 35.0;
 enum TerminalSource {
     Log { path: String, offset: u64 },
     Adc { frame: ADCFrame, last_push: Instant },
+    Gnss { frame: GnssFrame },
 }
 
 /// Generic scrolling-terminal diagnostic page. Backed by a `TextBoxRenderer` and driven by
@@ -67,6 +69,18 @@ impl TerminalPage {
             // Backdated so the first poll pushes a line immediately instead of waiting out
             // a full interval after page construction.
             source: TerminalSource::Adc { frame, last_push: Instant::now() - ADC_PUSH_INTERVAL },
+        };
+        page.setup_buttons();
+        page
+    }
+
+    pub fn new_gnss(id: u32, name: &str, smart_event_sender: SmartEventSender, event_receiver: EventReceiver, frame: GnssFrame) -> Self {
+        let mut page = TerminalPage {
+            base: PageBase::new(id, name.to_string()),
+            smart_event_sender,
+            event_receiver,
+            text_box: TextBoxRenderer::new(MAX_BUFFERED_LINES),
+            source: TerminalSource::Gnss { frame },
         };
         page.setup_buttons();
         page
@@ -152,6 +166,15 @@ impl TerminalPage {
             .join(" ");
         text_box.push_line(formatted);
     }
+
+    /// Unlike poll_adc (which re-renders one throttled "current frame" line), the GNSS
+    /// source is already line-oriented (NMEA sentences) — every buffered line is pushed
+    /// as-is, no throttling or reformatting needed.
+    fn poll_gnss(frame: &GnssFrame, text_box: &mut TextBoxRenderer) {
+        for line in frame.drain_lines() {
+            text_box.push_line(line);
+        }
+    }
 }
 
 impl Page for TerminalPage {
@@ -195,6 +218,7 @@ impl Page for TerminalPage {
         match &mut self.source {
             TerminalSource::Log { path, offset } => Self::poll_log(path, offset, &mut self.text_box),
             TerminalSource::Adc { frame, last_push } => Self::poll_adc(frame, last_push, &mut self.text_box),
+            TerminalSource::Gnss { frame } => Self::poll_gnss(frame, &mut self.text_box),
         }
     }
 

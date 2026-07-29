@@ -95,6 +95,9 @@ No manual frame timing/sleep/target-FPS constant — frame pacing is delegated e
 - **Never read a freshly-created serial/USB-CDC node with `cat`** before forcing raw mode — cooked-mode echo reflects received bytes back down the full-duplex link, and firmware that doesn't drain its RX buffer (like this STM32 firmware) can lock up. Force raw mode first: `stty -F /dev/niva_adc raw -echo -ixon -ixoff 115200`. The Rust app itself is unaffected — it opens the port via the `serialport` crate, which sets raw mode on open.
 - If the STM32 firmware hangs, the dashboard recovers by power-cycling the whole USB hub (`2109:3431`, location `1-1`) via `uhubctl -l 1-1 -a 2` — cycling only the device's individual port was tested and found unreliable. Requires a narrow passwordless sudoers entry (`/etc/sudoers.d/niva-uhubctl`) for that exact command; any change to the invoked args must be mirrored there.
 
+## GNSS Receiver Connectivity
+- udev rule (`/etc/udev/rules.d/99-niva-gps.rules`) creates `/dev/niva_gps` symlink for the UM982's USB-serial adapter. It enumerates as a generic CH340 chip (vendor `1a86`, product `7523`), not as the UM982 itself — the rule matches on that. Unlike the STM32, the CH340 doesn't report a USB serial number, so the rule can't disambiguate by serial; this is fine only because it's the sole CH340 device on this fixed wiring (see the power supply diagram above).
+
 ## Logging
 `src/util/logging.rs` uses `flexi_logger`, writing to `~/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/Logs` and duplicating to stdout. Size-based rotation (5 MB, keep last 10). Each process start forces rotation so every run gets a fresh log file — requires one throwaway log write before `trigger_rotation()` since flexi_logger opens files lazily. Side effect: the startup marker line lands at the end of the *previous* run's rotated file, not the new one.
 

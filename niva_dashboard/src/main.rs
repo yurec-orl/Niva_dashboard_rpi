@@ -19,6 +19,7 @@ use crate::hardware::analog_signal_processing::AnalogSignalProcessorMovingAverag
 use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor, SpeedSensor, EngineTemperatureSensor};
 use crate::hardware::sensor_value::ValueConstraints;
 use crate::util::adc_data_provider::{ADCDataProvider, ADCFrame};
+use crate::util::gnss_data_provider::GnssDataProvider;
 use crate::util::logging::init_logging;
 use crate::util::ups_monitor::UpsMonitor;
 use crate::util::ups_i2c_provider::{UpsI2CDataProvider, UpsRawFrame};
@@ -471,6 +472,15 @@ fn setup_adc_data_provider() -> Result<ADCDataProvider, std::string::String> {
     Ok(provider)
 }
 
+fn setup_gnss_data_provider() -> Result<GnssDataProvider, String> {
+    // "/dev/niva_gps" is the udev symlink for the GNSS receiver (UM982, enumerating as a
+    // CH340 USB-serial adapter). Same reconnect-owning-thread pattern as the ADC provider:
+    // this succeeds even if the receiver isn't plugged in yet.
+    let mut provider = GnssDataProvider::new("/dev/niva_gps", 115200);
+    provider.run().map_err(|e| e.to_string())?;
+    Ok(provider)
+}
+
 fn setup_ups_i2c_provider() -> Result<UpsI2CDataProvider, String> {
     let mut provider = UpsI2CDataProvider::new();
     provider.run().map_err(|e| e.to_string())?;
@@ -557,6 +567,21 @@ fn main() -> std::process::ExitCode {
     // Obtain a frame handle before moving adc into setup_sensors
     let adc_frame = adc.as_ref().map(|p| p.frame());
 
+    // Kept alive for the process lifetime, same as `adc` — its Drop impl stops the
+    // background thread cleanly on shutdown. Not currently consumed by any sensor chain,
+    // only by the GNSS diagnostic terminal page.
+    let gnss = match setup_gnss_data_provider() {
+        Ok(provider) => {
+            log::info!("✓ GNSS data provider started");
+            Some(provider)
+        }
+        Err(e) => {
+            log::info!("GNSS data provider unavailable: {}", e);
+            None
+        }
+    };
+    let gnss_frame = gnss.as_ref().map(|p| p.frame());
+
     // Temporary diagnostic: log raw ADC frame contents once a second to verify
     // the serial reader thread is actually receiving data from the STM32 module.
     // if let Some(frame) = adc_frame.clone() {
@@ -576,7 +601,7 @@ fn main() -> std::process::ExitCode {
     let sensors = setup_sensors(adc_frame, ups_frame);
     let ui_style = setup_ui_style();
 
-    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag);
+    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag, gnss_frame);
 
     mgr.setup().expect("Failed to setup page manager");
 

@@ -11,6 +11,7 @@ use crate::hardware::hw_providers::HWInput;
 use crate::alerts::alert_manager::{AlertManager, Severity};
 use crate::alerts::watchdog::Watchdog;
 use crate::util::adc_data_provider::ADCFrame;
+use crate::util::gnss_data_provider::GnssFrame;
 use crate::util::ups_monitor::UpsMonitor;
 
 use std::collections::HashMap;
@@ -27,6 +28,7 @@ pub const MAIN_PAGE_ID: u32 = 0;
 pub const DIAG_PAGE_ID: u32 = 1;
 pub const ADC_TERM_PAGE_ID: u32 = 2;
 pub const LOG_PAGE_ID: u32 = 3;
+pub const GNSS_TERM_PAGE_ID: u32 = 4;
 
 // ButtonPosition correspond to physical 2x4 buttons layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -215,6 +217,10 @@ pub struct PageManager {
     // None when the ADC data provider failed to start.
     adc_frame: Option<ADCFrame>,
 
+    // Handle to the shared GNSS line buffer, used to build the GNSS diagnostic terminal
+    // page. None when the GNSS data provider failed to start.
+    gnss_frame: Option<GnssFrame>,
+
     fps_counter: FpsCounter,
     start_time: Instant,
 
@@ -237,7 +243,7 @@ pub struct PageManager {
 impl PageManager {
     pub fn new(context: GraphicsContext, sensor_manager: SensorManager, ui_style: UIStyle,
                input_sources: Vec<Box<dyn InputSource>>, ups_monitor: UpsMonitor,
-               adc_frame: Option<ADCFrame>) -> Self {
+               adc_frame: Option<ADCFrame>, gnss_frame: Option<GnssFrame>) -> Self {
         let mut buttons_map = HashMap::new();
         buttons_map.insert('1', ButtonPosition::Left1);
         buttons_map.insert('2', ButtonPosition::Left2);
@@ -275,6 +281,7 @@ impl PageManager {
             alert_manager,
             ups_monitor,
             adc_frame,
+            gnss_frame,
             fps_counter: FpsCounter::new(),
             start_time: Instant::now(),
             last_cpu_stat: None,
@@ -418,6 +425,16 @@ impl PageManager {
                                                            self.get_event_receiver(),
                                                            frame));
             self.add_page(adc_page);
+        }
+
+        // GNSS terminal page only exists when the GNSS data provider actually started —
+        // without a frame handle there is nothing for it to display.
+        if let Some(frame) = self.gnss_frame.clone() {
+            let gnss_page = Box::new(TerminalPage::new_gnss(GNSS_TERM_PAGE_ID, "GNSS",
+                                                             smart_sender.clone(),
+                                                             self.get_event_receiver(),
+                                                             frame));
+            self.add_page(gnss_page);
         }
 
         // Set up watchdogs for alert manager.

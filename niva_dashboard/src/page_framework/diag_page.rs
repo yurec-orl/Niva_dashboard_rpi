@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
 use crate::page_framework::events::{EventReceiver, SmartEventSender, UIEvent};
-use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition, MAIN_PAGE_ID, ADC_TERM_PAGE_ID, LOG_PAGE_ID};
+use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition, MAIN_PAGE_ID, ADC_TERM_PAGE_ID, LOG_PAGE_ID, GNSS_TERM_PAGE_ID};
 use crate::hardware::sensor_manager::SensorManager;
 use crate::util::diagnostics::{self, ThrottleStatus};
 
@@ -66,6 +66,10 @@ impl DiagPage {
             PageButton::new(ButtonPosition::Left2, "ЖУРН".into(), Box::new({
                 let sender = self.smart_event_sender.clone();
                 move || sender.send(UIEvent::SwitchToPage(LOG_PAGE_ID))
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Left3, "ГНСС".into(), Box::new({
+                let sender = self.smart_event_sender.clone();
+                move || sender.send(UIEvent::SwitchToPage(GNSS_TERM_PAGE_ID))
             }) as Box<dyn FnMut()>),
             PageButton::new(ButtonPosition::Right1, "ПЕРЕЗАГР".into(), Box::new({
                 let sender = self.smart_event_sender.clone();
