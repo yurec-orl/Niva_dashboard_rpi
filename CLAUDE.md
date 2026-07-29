@@ -121,6 +121,7 @@ Boot reduced from ~16.8s to ~5.1s by disabling unused systemd services (`Network
   have it still function if no link to ADC module). Power considerations: 16 mA draw per pin and <= 50 mA total GPIO draw. 16 mA should be fine for one LED, possibly even less if brightness is enough for a warning light.
 - [In progress] GNSS connectivity and indicators
 - BNO085 connectivity and related indicators
+- Out of memory protection: Linux hangs/freezes if it runs out of memory (should not happen during normal operation, but occasionally happens during development). Find some way to protect vs out-of-memory conditions.
 
 ## PiOS login
 `user` / `@Niva21#`; `root` password is standard password with a single numeric character.
