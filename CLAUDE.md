@@ -121,7 +121,7 @@ Boot reduced from ~16.8s to ~5.1s by disabling unused systemd services (`Network
   have it still function if no link to ADC module). Power considerations: 16 mA draw per pin and <= 50 mA total GPIO draw. 16 mA should be fine for one LED, possibly even less if brightness is enough for a warning light.
 - [In progress] GNSS connectivity and indicators
 - BNO085 connectivity and related indicators
-- Out of memory protection: Linux hangs/freezes if it runs out of memory (should not happen during normal operation, but occasionally happens during development). Find some way to protect vs out-of-memory conditions.
+- [Done] Out of memory protection: `earlyoom` installed and enabled (OS-level, not part of this repo — a fresh SD flash needs it reinstalled: `apt install earlyoom`). Kills the largest memory consumer before the kernel OOM killer lets the system thrash into unresponsiveness. Config in `/etc/default/earlyoom` avoids killing `sshd` (so remote recovery stays possible) but deliberately does *not* protect the dashboard binary — if it leaks and gets killed, the startup script restarts it fresh, which is the desired behavior.
 
 ## PiOS login
 `user` / `@Niva21#`; `root` password is standard password with a single numeric character.
