@@ -20,6 +20,7 @@
 //   -> AnalogSensor(convert raw data to logical values) -> UI Rendering
 
 use crate::util::adc_data_provider::ADCFrame;
+use crate::util::gnss_data_provider::GnssFrame;
 use crate::util::ups_i2c_provider::UpsRawFrame;
 
 use rppal::gpio::Level;
@@ -62,6 +63,17 @@ pub enum HWInput {
     // UPS I2C input
     HwUPSCurrent,
     HwUPSChargeState,
+    // GNSS receiver-derived inputs (see util::gnss_data_provider / util::nmea). Only
+    // scalar fields go through this pipeline via GnssChannelProvider — position and
+    // date/time are composite values, read directly from GnssFrame by whatever eventually
+    // displays them rather than forced through the u16 HWAnalogProvider boundary.
+    HwGnssSpeed,
+    HwGnssHeading,
+    HwGnssAltitude,
+    HwGnssSatellites,
+    HwGnssFixQuality,
+    // GNSS link health (see GnssLinkStatusProvider, mirrors HwAdcLink) — not a physical sensor
+    HwGnssLink,
 }
 
 // Generic interface for reading input data.
@@ -152,6 +164,85 @@ impl HWDigitalProvider for AdcLinkStatusProvider {
         let stale = match &self.frame {
             Some(frame) => frame.is_stale(),
             None => true, // ADC never connected — link is down by definition
+        };
+        Ok(if stale { Level::High } else { Level::Low })
+    }
+}
+
+/// Fixed-point encoding constants for the scalar GNSS fields read through
+/// GnssChannelProvider. Chosen by us (unlike, say, the INA219's register format), so the
+/// encode side here and the decode side in each corresponding logical sensor
+/// (hardware::sensors) must agree — kept as shared constants for exactly that reason.
+pub const GNSS_SPEED_SCALE: f32 = 10.0; // 0.1 km/h resolution
+pub const GNSS_HEADING_SCALE: f32 = 10.0; // 0.1 degree resolution
+/// Shifts altitude_m into u16's unsigned range so below-sea-level readings survive the
+/// HWAnalogProvider boundary. Supports -1000m to +64535m, far beyond any real elevation.
+pub const GNSS_ALTITUDE_OFFSET_M: f32 = 1000.0;
+
+/// Reads a single scalar field from the GNSS receiver's latest fix (see util::nmea::GnssFix),
+/// fixed-point encoded to u16 for the HWAnalogProvider boundary. Mirrors ADCChannelProvider/
+/// UPSDataProvider's pattern of wrapping a shared frame as a thin per-input provider, with
+/// one struct covering all GNSS scalar inputs (matched on `input`) rather than one struct per
+/// field, since there's no separate "channel index" to parametrize — each input reads a
+/// specific named field of the same fix.
+pub struct GnssChannelProvider {
+    input: HWInput,
+    frame: GnssFrame,
+}
+
+impl GnssChannelProvider {
+    pub fn new(input: HWInput, frame: GnssFrame) -> Self {
+        GnssChannelProvider { input, frame }
+    }
+}
+
+impl HWAnalogProvider for GnssChannelProvider {
+    fn input(&self) -> HWInput { self.input }
+
+    fn read_analog(&self, _input: HWInput) -> Result<u16, String> {
+        let fix = self.frame.fix();
+        match self.input {
+            HWInput::HwGnssSpeed => fix.speed_kmh
+                .map(|v| (v * GNSS_SPEED_SCALE).round().clamp(0.0, u16::MAX as f32) as u16)
+                .ok_or_else(|| "no GNSS speed in current fix".to_string()),
+            HWInput::HwGnssHeading => fix.heading_deg
+                .map(|v| (v * GNSS_HEADING_SCALE).round().clamp(0.0, u16::MAX as f32) as u16)
+                .ok_or_else(|| "no GNSS heading in current fix".to_string()),
+            HWInput::HwGnssAltitude => fix.altitude_m
+                .map(|v| (v + GNSS_ALTITUDE_OFFSET_M).round().clamp(0.0, u16::MAX as f32) as u16)
+                .ok_or_else(|| "no GNSS altitude in current fix".to_string()),
+            HWInput::HwGnssSatellites => fix.satellites
+                .map(|v| v as u16)
+                .ok_or_else(|| "no GNSS satellite count in current fix".to_string()),
+            HWInput::HwGnssFixQuality => fix.fix_quality
+                .map(|q| q.code() as u16)
+                .ok_or_else(|| "no GNSS fix quality in current fix".to_string()),
+            _ => Err("invalid input".to_string()),
+        }
+    }
+}
+
+/// Reports Level::High ("problem") when no GNSS line has been received recently — mirrors
+/// AdcLinkStatusProvider exactly, but tracks OS/serial-level connectivity to the receiver,
+/// not whether it currently has a position fix (that's fix_quality/status_active, read via
+/// GnssChannelProvider — a receiver can be fully connected and still report "no fix").
+pub struct GnssLinkStatusProvider {
+    frame: Option<GnssFrame>,
+}
+
+impl GnssLinkStatusProvider {
+    pub fn new(frame: Option<GnssFrame>) -> Self {
+        GnssLinkStatusProvider { frame }
+    }
+}
+
+impl HWDigitalProvider for GnssLinkStatusProvider {
+    fn input(&self) -> HWInput { HWInput::HwGnssLink }
+
+    fn read_digital(&self, _input: HWInput) -> Result<Level, String> {
+        let stale = match &self.frame {
+            Some(frame) => frame.is_stale(),
+            None => true, // GNSS receiver never connected — link is down by definition
         };
         Ok(if stale { Level::High } else { Level::Low })
     }

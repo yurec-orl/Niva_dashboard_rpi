@@ -57,6 +57,23 @@ impl FixQuality {
             other => Self::Unknown(other),
         }
     }
+
+    /// Inverse of `from_code` — the raw GGA quality digit. Used by GnssChannelProvider to
+    /// pass the fix quality through the u16 HWAnalogProvider boundary (see hw_providers.rs).
+    pub fn code(&self) -> u8 {
+        match self {
+            Self::Invalid => 0,
+            Self::Gps => 1,
+            Self::DGps => 2,
+            Self::PpsFix => 3,
+            Self::RtkFixed => 4,
+            Self::RtkFloat => 5,
+            Self::Estimated => 6,
+            Self::Manual => 7,
+            Self::Simulation => 8,
+            Self::Unknown(code) => *code,
+        }
+    }
 }
 
 /// Accumulated GNSS state, built up across whatever mix of sentences the receiver emits per
@@ -352,6 +369,16 @@ mod tests {
 
         assert_eq!(fix.time, Some(UtcTime { hour: 12, minute: 0, second: 0.0 }));
         assert_eq!(fix.date, Some(UtcDate { day: 29, month: 7, year: 2026 }));
+    }
+
+    #[test]
+    fn fix_quality_code_round_trips() {
+        // Known codes (0-8) round-trip exactly; anything above the known range is preserved
+        // as-is via the Unknown variant rather than clamped or misreported.
+        for code in 0..=8u8 {
+            assert_eq!(FixQuality::from_code(code).code(), code);
+        }
+        assert_eq!(FixQuality::from_code(42).code(), 42);
     }
 
     #[test]

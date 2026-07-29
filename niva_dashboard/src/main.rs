@@ -16,10 +16,10 @@ use crate::hardware::sensor_manager::{SensorManager, SensorDigitalInputChain, Se
 use crate::hardware::hw_providers::*;
 use crate::hardware::digital_signal_processing::DigitalSignalDebouncer;
 use crate::hardware::analog_signal_processing::AnalogSignalProcessorMovingAverage;
-use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor, SpeedSensor, EngineTemperatureSensor};
+use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor, SpeedSensor, EngineTemperatureSensor, GnssAltitudeSensor};
 use crate::hardware::sensor_value::ValueConstraints;
 use crate::util::adc_data_provider::{ADCDataProvider, ADCFrame};
-use crate::util::gnss_data_provider::GnssDataProvider;
+use crate::util::gnss_data_provider::{GnssDataProvider, GnssFrame};
 use crate::util::logging::init_logging;
 use crate::util::ups_monitor::UpsMonitor;
 use crate::util::ups_i2c_provider::{UpsI2CDataProvider, UpsRawFrame};
@@ -211,7 +211,7 @@ fn setup_self_test_sensors() -> SensorManager {
     mgr
 }
 
-fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>) -> SensorManager {
+fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>, gnss: Option<GnssFrame>) -> SensorManager {
     let mut mgr = SensorManager::new();
     // Lets adc_link_down() suppress "channel not in frame" log spam while the ADC
     // reconnect loop is doing its thing (see AdcDataProvider).
@@ -227,6 +227,70 @@ fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>) -> SensorManag
                                            Level::High, ValueConstraints::digital_critical())),
     );
     mgr.add_digital_sensor_chain(adc_link_chain);
+
+    // GNSS link-health chain — added unconditionally for the same reason as the ADC one
+    // above: the receiver never having connected and a live link going stale should both
+    // surface as HwGnssLink going active.
+    let gnss_link_chain = SensorDigitalInputChain::new(
+        Box::new(GnssLinkStatusProvider::new(gnss.clone())),
+        vec![],
+        Box::new(GenericDigitalSensor::new("HwGnssLink".to_string(), "GNSS LINK".to_string(),
+                                           Level::High, ValueConstraints::digital_critical())),
+    );
+    mgr.add_digital_sensor_chain(gnss_link_chain);
+
+    // GNSS scalar sensor chains — independent of the ADC link, same as UPS below.
+    if let Some(gnss_frame) = gnss {
+        let gnss_speed_chain = SensorAnalogInputChain::new(
+            Box::new(GnssChannelProvider::new(HWInput::HwGnssSpeed, gnss_frame.clone())),
+            vec![],
+            Box::new(GenericAnalogSensor::new("gnss_speed".to_string(), "СКОР ГНСС".to_string(), "км/ч".to_string(),
+                                              ValueConstraints::analog(0.0, 200.0), 1.0 / GNSS_SPEED_SCALE)),
+        );
+        mgr.add_analog_sensor_chain(gnss_speed_chain);
+
+        let gnss_heading_chain = SensorAnalogInputChain::new(
+            Box::new(GnssChannelProvider::new(HWInput::HwGnssHeading, gnss_frame.clone())),
+            vec![],
+            Box::new(GenericAnalogSensor::new("gnss_heading".to_string(), "КУРС".to_string(), "°".to_string(),
+                                              ValueConstraints::analog(0.0, 359.9), 1.0 / GNSS_HEADING_SCALE)),
+        );
+        mgr.add_analog_sensor_chain(gnss_heading_chain);
+
+        let gnss_altitude_chain = SensorAnalogInputChain::new(
+            Box::new(GnssChannelProvider::new(HWInput::HwGnssAltitude, gnss_frame.clone())),
+            vec![],
+            Box::new(GnssAltitudeSensor::new()),
+        );
+        mgr.add_analog_sensor_chain(gnss_altitude_chain);
+
+        // Warning below 4 satellites: the minimum needed for a 3D fix, not a display
+        // preference — below that, GNSS position/altitude can't be trusted regardless of
+        // what fix_quality currently reports.
+        let gnss_satellites_chain = SensorAnalogInputChain::new(
+            Box::new(GnssChannelProvider::new(HWInput::HwGnssSatellites, gnss_frame.clone())),
+            vec![],
+            Box::new(GenericAnalogSensor::new("gnss_satellites".to_string(), "СПУТНИКИ".to_string(), "".to_string(),
+                                              ValueConstraints::analog_with_thresholds(0.0, 99.0, None, Some(4.0), None, None), 1.0)),
+        );
+        mgr.add_analog_sensor_chain(gnss_satellites_chain);
+
+        // Fix quality codes (see nmea::FixQuality) aren't linearly ordered by quality —
+        // e.g. code 6 (Estimated) is worse than code 4 (RtkFixed) despite the higher
+        // number — so no warning/critical thresholds are set here; this is a raw
+        // informational readout, not a gauge value.
+        let gnss_fix_quality_chain = SensorAnalogInputChain::new(
+            Box::new(GnssChannelProvider::new(HWInput::HwGnssFixQuality, gnss_frame)),
+            vec![],
+            Box::new(GenericAnalogSensor::new("gnss_fix_quality".to_string(), "ТИП ФИКС".to_string(), "".to_string(),
+                                              ValueConstraints::analog(0.0, 8.0), 1.0)),
+        );
+        mgr.add_analog_sensor_chain(gnss_fix_quality_chain);
+
+        log::info!("✓ GNSS sensor chains added");
+    } else {
+        log::info!("GNSS data provider unavailable — GNSS sensor chains omitted");
+    }
 
     // UPS sensor chains — added unconditionally alongside the ADC link chain, since the UPS
     // HAT is separate I2C hardware and its availability doesn't depend on the STM32 ADC link.
@@ -568,8 +632,7 @@ fn main() -> std::process::ExitCode {
     let adc_frame = adc.as_ref().map(|p| p.frame());
 
     // Kept alive for the process lifetime, same as `adc` — its Drop impl stops the
-    // background thread cleanly on shutdown. Not currently consumed by any sensor chain,
-    // only by the GNSS diagnostic terminal page.
+    // background thread cleanly on shutdown.
     let gnss = match setup_gnss_data_provider() {
         Ok(provider) => {
             log::info!("✓ GNSS data provider started");
@@ -595,13 +658,14 @@ fn main() -> std::process::ExitCode {
     let self_test_sensors = setup_self_test_sensors();
     let button_sensors = setup_button_sensors(adc_frame.clone());
     let input_sources = setup_input_sources(button_sensors);
-    // Keep a handle for the ADC diagnostic terminal page before the sensor-chain setup
-    // consumes the rest of adc_frame's clones.
+    // Keep a handle for the ADC/GNSS diagnostic terminal pages before the sensor-chain
+    // setup consumes the rest of their clones.
     let adc_frame_for_diag = adc_frame.clone();
-    let sensors = setup_sensors(adc_frame, ups_frame);
+    let gnss_frame_for_diag = gnss_frame.clone();
+    let sensors = setup_sensors(adc_frame, ups_frame, gnss_frame);
     let ui_style = setup_ui_style();
 
-    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag, gnss_frame);
+    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag, gnss_frame_for_diag);
 
     mgr.setup().expect("Failed to setup page manager");
 

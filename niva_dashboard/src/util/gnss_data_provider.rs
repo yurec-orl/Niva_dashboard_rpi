@@ -7,11 +7,18 @@ use std::thread;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// How long the background thread waits between attempts to (re)open the GNSS serial
 /// port after a failed or dropped connection.
 const RECONNECT_INTERVAL: Duration = Duration::from_secs(2);
+
+/// How long the GNSS link can go without a line (any line, not necessarily a recognized
+/// sentence type) before it's considered down. Feeds GnssLinkStatusProvider (HwGnssLink).
+/// Looser than ADC_LINK_MAX_AGE (500ms) since NMEA output rate is typically 1Hz, far slower
+/// than the STM32's continuous CSV stream — this just needs to tolerate a couple of missed
+/// update cycles before flagging a real problem.
+pub const GNSS_LINK_MAX_AGE: Duration = Duration::from_secs(3);
 
 /// Bound on buffered-but-not-yet-drained NMEA lines. A receiver at typical update rates
 /// emits well under this many sentences between two polls of the diagnostic terminal page
@@ -45,6 +52,7 @@ impl std::error::Error for GnssDataProviderError {}
 pub struct GnssFrame {
     lines: Arc<Mutex<VecDeque<String>>>,
     fix: Arc<Mutex<GnssFix>>,
+    last_update: Arc<Mutex<Instant>>,
 }
 
 impl GnssFrame {
@@ -52,6 +60,7 @@ impl GnssFrame {
         GnssFrame {
             lines: Arc::new(Mutex::new(VecDeque::new())),
             fix: Arc::new(Mutex::new(GnssFix::default())),
+            last_update: Arc::new(Mutex::new(Instant::now())),
         }
     }
 
@@ -62,11 +71,16 @@ impl GnssFrame {
 
     /// Snapshot of the latest accumulated fix (time/date/position/speed/heading/...).
     /// Individual fields are `None` until a sentence carrying them has been seen.
-    /// Not consumed yet — no indicator/HWInput wiring to GNSS data exists at this point,
-    /// only the GNSS diagnostic terminal page (which uses drain_lines instead).
-    #[allow(dead_code)]
     pub fn fix(&self) -> GnssFix {
         *self.fix.lock().unwrap()
+    }
+
+    /// True if no line has been received within GNSS_LINK_MAX_AGE — the OS/serial-level
+    /// link is down, whether because the receiver was never connected or a live link
+    /// dropped. Distinct from fix quality: this is about hearing from the receiver at all,
+    /// not whether it currently has a position lock.
+    pub fn is_stale(&self) -> bool {
+        self.last_update.lock().unwrap().elapsed() > GNSS_LINK_MAX_AGE
     }
 }
 
@@ -114,7 +128,8 @@ impl GnssConnection {
 }
 
 /// Reads NMEA sentences from the GNSS receiver's serial port in a background thread,
-/// buffering raw lines for display on the GNSS diagnostic terminal page via GnssFrame.
+/// buffering raw lines for the GNSS diagnostic terminal page and parsing them into a
+/// structured GnssFix, both exposed via GnssFrame.
 pub struct GnssDataProvider {
     port: String,
     baud: u32,
@@ -165,6 +180,7 @@ impl GnssDataProvider {
 
             match conn.reader.as_mut().unwrap().read_line() {
                 Some(line) if !line.is_empty() => {
+                    *frame.last_update.lock().unwrap() = Instant::now();
                     nmea::update_from_sentence(&mut frame.fix.lock().unwrap(), &line);
 
                     let mut lines = frame.lines.lock().unwrap();

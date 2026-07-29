@@ -544,10 +544,19 @@ impl PageManager {
             // Continuous sensor polling - poll sensors every loop iteration
             // This ensures sensor data is always up to date regardless of render timing
             if let Err(e) = self.sensor_manager.read_all_sensors() {
-                // Suppress: while the ADC link is down, the first ADC-backed chain fails
-                // with "channel not in frame" until AdcDataProvider's reconnect loop
-                // recovers it — expected and already surfaced via the ADC LINK alert.
-                if !self.sensor_manager.adc_link_down() {
+                // Suppress: while the ADC link is down, ADC-backed chains fail with
+                // "channel not in frame" until AdcDataProvider's reconnect loop recovers
+                // it — expected and already surfaced via the ADC LINK alert.
+                //
+                // Also suppress GnssChannelProvider's "no GNSS ... in current fix" —
+                // unlike the ADC case this isn't tied to link health at all (see
+                // GnssLinkStatusProvider vs GnssChannelProvider in hw_providers.rs): a
+                // fully-connected receiver can legitimately go without a field (heading
+                // especially, which needs an RTK dual-antenna fix) for extended, routine
+                // periods. Already surfaced per-field by the corresponding indicator
+                // simply showing no data, so it doesn't need error-level logging either.
+                let gnss_field_unavailable = e.starts_with("no GNSS ");
+                if !self.sensor_manager.adc_link_down() && !gnss_field_unavailable {
                     log::error!("Sensor read error: {}", e);
                 }
             }

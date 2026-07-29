@@ -191,6 +191,14 @@ impl SensorManager {
     }
 
     // Should be called periodically from event loop to update all sensors
+    //
+    // Chains are read independently — one chain failing (e.g. a GNSS field with no current
+    // fix, which is routine and can persist indefinitely) must not prevent every other,
+    // unrelated chain from updating. Previously this used `?` per read, which aborted the
+    // whole cycle on the first failure; since sensor_values is cleared up front, that meant
+    // every chain ordered after the failing one lost its value for the entire cycle (see
+    // niva_dashboard's GNSS integration, which surfaced this — GNSS chains fail far more
+    // routinely than the ADC ones this originally worked fine with).
     pub fn read_all_sensors(&mut self) -> Result<(), String> {
         self.sensor_values.clear();
 
@@ -202,21 +210,28 @@ impl SensorManager {
             .map(|chain| chain.hw_provider.input())
             .collect();
 
-        // Read digital sensors
+        // Last error is reported to the caller (for logging) but never stops the loop —
+        // every remaining chain still gets a chance to update sensor_values.
+        let mut last_error: Option<String> = None;
+
         for input in digital_inputs {
-            let value = self.read_digital_sensor(input)?;
-            //print!("Read digital sensor {:?}: {:?}\r\n", input, value);
-            self.sensor_values.insert(input, value);
+            match self.read_digital_sensor(input) {
+                Ok(value) => { self.sensor_values.insert(input, value); }
+                Err(e) => last_error = Some(e),
+            }
         }
 
-        // Read analog sensors  
         for input in analog_inputs {
-            let value = self.read_analog_sensor(input)?;
-            //print!("Read analog sensor {:?}: {:?}\r\n", input, value);
-            self.sensor_values.insert(input, value);
+            match self.read_analog_sensor(input) {
+                Ok(value) => { self.sensor_values.insert(input, value); }
+                Err(e) => last_error = Some(e),
+            }
         }
 
-        Ok(())
+        match last_error {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
     pub fn get_sensor_values(&self) -> &HashMap<HWInput, SensorValue> {
@@ -237,6 +252,20 @@ mod tests {
     use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor};
     use crate::hardware::sensor_value::ValueConstraints;
     use rppal::gpio::Level;
+
+    /// Always-failing analog provider, standing in for e.g. GnssChannelProvider reading a
+    /// field that's simply not present in the current fix yet — a routine, expected failure
+    /// mode that must not block unrelated chains from updating.
+    struct AlwaysFailingAnalogDataProvider {
+        input: HWInput,
+    }
+
+    impl crate::hardware::hw_providers::HWAnalogProvider for AlwaysFailingAnalogDataProvider {
+        fn input(&self) -> HWInput { self.input }
+        fn read_analog(&self, _input: HWInput) -> Result<u16, String> {
+            Err("simulated read failure".to_string())
+        }
+    }
     use std::time::Duration;
 
     #[test]
@@ -416,5 +445,40 @@ mod tests {
         log::info!("Turn signal active (after processing): {}", sensor_value.is_active());
         
         log::info!("✓ Signal processing pipeline test passed");
+    }
+
+    #[test]
+    fn test_read_all_sensors_one_failing_chain_does_not_block_others() {
+        log::info!("=== Testing read_all_sensors resilience to a single chain failure ===");
+
+        let mut manager = SensorManager::new();
+
+        // Ordered first, deliberately, so a pre-fix (abort-on-first-error) read_all_sensors
+        // would never even attempt the chain below.
+        let failing_chain = SensorAnalogInputChain::new(
+            Box::new(AlwaysFailingAnalogDataProvider { input: HWInput::HwGnssHeading }),
+            vec![],
+            Box::new(GenericAnalogSensor::new("failing".to_string(), "Failing".to_string(), "".to_string(),
+                                              ValueConstraints::analog(0.0, 100.0), 1.0)),
+        );
+        manager.add_analog_sensor_chain(failing_chain);
+
+        let working_chain = SensorAnalogInputChain::new(
+            Box::new(TestAnalogDataProvider::new(HWInput::HwFuelLvl)),
+            vec![],
+            Box::new(GenericAnalogSensor::new("working".to_string(), "Working".to_string(), "%".to_string(),
+                                              ValueConstraints::analog(0.0, 100.0), 1.0)),
+        );
+        manager.add_analog_sensor_chain(working_chain);
+
+        let result = manager.read_all_sensors();
+        assert!(result.is_err(), "the failing chain's error should still surface");
+
+        assert!(manager.get_sensor_value(&HWInput::HwGnssHeading).is_none(),
+               "the failing chain should simply have no value, not poison the cycle");
+        assert!(manager.get_sensor_value(&HWInput::HwFuelLvl).is_some(),
+               "a chain ordered after a failing one must still be read");
+
+        log::info!("✓ read_all_sensors resilience test passed");
     }
 }

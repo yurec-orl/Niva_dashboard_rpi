@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 use rppal::gpio::Level;
 
+use crate::hardware::hw_providers::GNSS_ALTITUDE_OFFSET_M;
 use crate::hardware::sensor_value::{SensorValue, ValueConstraints, ValueMetadata};
 use crate::hardware::digital_signal_processing::{DigitalSignalProcessor, DigitalSignalProcessorPulsePerSecond};
 
@@ -218,6 +219,47 @@ impl AnalogSensor for EngineTemperatureSensor {
         let temperature = (input as f32) * 0.12; // Example conversion
         self.value = SensorValue::analog_with_constraints_and_metadata(
             temperature.clamp(self.constraints.min_value, self.constraints.max_value),
+            self.constraints.clone(),
+            self.metadata.clone(),
+        );
+        Ok(&self.value)
+    }
+}
+
+/// Decodes GnssChannelProvider's altitude encoding (raw = altitude_m + GNSS_ALTITUDE_OFFSET_M,
+/// see hw_providers.rs) back to meters. A plain GenericAnalogSensor can't express this since
+/// it only supports a multiplicative scale, not an additive offset.
+pub struct GnssAltitudeSensor {
+    value: SensorValue,
+    constraints: ValueConstraints,
+    metadata: ValueMetadata,
+}
+
+impl GnssAltitudeSensor {
+    pub fn new() -> Self {
+        GnssAltitudeSensor {
+            value: SensorValue::empty(),
+            constraints: ValueConstraints::analog(-500.0, 9000.0), // Dead Sea to above Everest
+            metadata: ValueMetadata::new("м", "ВЫСОТА", "gnss_altitude"),
+        }
+    }
+}
+
+impl Sensor for GnssAltitudeSensor {
+    fn id(&self) -> &String { &self.metadata.sensor_id }
+    fn name(&self) -> &String { &self.metadata.label }
+    fn value(&self) -> Result<&SensorValue, String> { Ok(&self.value) }
+    fn constraints(&self) -> &ValueConstraints { &self.constraints }
+    fn metadata(&self) -> &ValueMetadata { &self.metadata }
+    fn min_value(&self) -> f32 { self.constraints.min_value }
+    fn max_value(&self) -> f32 { self.constraints.max_value }
+}
+
+impl AnalogSensor for GnssAltitudeSensor {
+    fn read(&mut self, input: u16) -> Result<&SensorValue, String> {
+        let altitude_m = input as f32 - GNSS_ALTITUDE_OFFSET_M;
+        self.value = SensorValue::analog_with_constraints_and_metadata(
+            altitude_m.clamp(self.constraints.min_value, self.constraints.max_value),
             self.constraints.clone(),
             self.metadata.clone(),
         );
@@ -612,6 +654,27 @@ mod tests {
             assert_eq!(*temp, 120.0);
         } else {
             panic!("Expected analog temperature value");
+        }
+    }
+
+    #[test]
+    fn test_gnss_altitude_sensor_decoding() {
+        let mut sensor = GnssAltitudeSensor::new();
+
+        // Encoded as (altitude_m + GNSS_ALTITUDE_OFFSET_M).round() by GnssChannelProvider.
+        sensor.read(1150).unwrap(); // 1150 - 1000 = 150.0 m
+        if let ValueData::Analog(alt) = &Sensor::value(&sensor).unwrap().value {
+            assert!((alt - 150.0).abs() < 0.001);
+        } else {
+            panic!("Expected analog altitude value");
+        }
+
+        // Below-sea-level altitude survives the unsigned u16 boundary via the offset.
+        sensor.read(600).unwrap(); // 600 - 1000 = -400.0 m
+        if let ValueData::Analog(alt) = &Sensor::value(&sensor).unwrap().value {
+            assert!((alt - (-400.0)).abs() < 0.001);
+        } else {
+            panic!("Expected analog altitude value");
         }
     }
 
