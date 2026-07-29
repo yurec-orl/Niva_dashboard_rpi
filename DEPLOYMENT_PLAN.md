@@ -13,19 +13,19 @@ built, that knowledge has to be reconstructed from memory.
 
 Surveyed directly on this Pi on 2026-07-29:
 
-| # | Item | Where it lives now | In repo? | Scripted? |
-|---|------|---------------------|----------|-----------|
-| 1 | Dashboard autostart + crash-restart loop | `~/.profile` (lines 30-60) | No | No |
-| 2 | TTY1 autologin override | `/etc/systemd/system/getty@tty1.service.d/autologin.conf` | No | No |
-| 3 | `install-service.sh` + `niva-dashboard.service` | `niva_dashboard/install-service.sh` | Script yes, unit file **missing** | Broken |
-| 4 | ADC udev rule | `/etc/udev/rules.d/99-niva-adc.rules` | No | No |
-| 5 | GPS udev rule | `/etc/udev/rules.d/99-niva-gps.rules` | No | No |
-| 6 | uhubctl sudoers entry | `/etc/sudoers.d/niva-uhubctl` | No | No |
-| 7 | earlyoom package + config | apt package + `/etc/default/earlyoom` | No | No |
-| 8 | Boot-time service disables (6 units) | applied via `systemctl disable`, described in `/home/user/boot-optimizations.md` | No (doc lives outside repo) | No |
-| 9 | I2C bus enablement for UPS HAT | `dtparam=i2c_arm=on` in `/boot/firmware/config.txt` | No | No |
-| 10 | `/etc/niva_dashboard/ui_style.json` | `/etc/niva_dashboard/` | No | Orphaned — load call is commented out at `main.rs:523`, so this file currently does nothing |
-| 11 | Hardcoded absolute font/style paths | baked into `niva_dashboard/src/graphics/ui_style.rs` (`/home/user/Work/Niva_Dashboard_Rpi/...`) | In repo, but wrong — ties to one dev machine's clone path | N/A |
+| #  | Item                                            | Where it lives now                                                               | In repo? | Scripted? |
+|----|-------------------------------------------------|----------------------------------------------------------------------------------|----------|-----------|
+| 1  | Dashboard autostart + crash-restart loop        | `~/.profile` (lines 30-60)                                                       | No       | No        |
+| 2  | TTY1 autologin override                         | `/etc/systemd/system/getty@tty1.service.d/autologin.conf`                        | No       | No        |
+| 3  | `install-service.sh` + `niva-dashboard.service` | `niva_dashboard/install-service.sh`                                              | Script yes, unit file **missing** | Broken |
+| 4  | ADC udev rule                                   | `/etc/udev/rules.d/99-niva-adc.rules`                                            | No       | No        |
+| 5  | GPS udev rule                                   | `/etc/udev/rules.d/99-niva-gps.rules`                                            | No       | No        |
+| 6  | uhubctl sudoers entry                           | `/etc/sudoers.d/niva-uhubctl`                                                    | No       | No        |
+| 7  | earlyoom package + config                       | apt package + `/etc/default/earlyoom`                                            | No       | No        |
+| 8  | Boot-time service disables (6 units)            | applied via `systemctl disable`, described in `/home/user/boot-optimizations.md` | No (doc lives outside repo) | No |
+| 9  | I2C bus enablement for UPS HAT                  | `dtparam=i2c_arm=on` in `/boot/firmware/config.txt`                              | No       | No        |
+| 10 | `/etc/niva_dashboard/ui_style.json`             | `/etc/niva_dashboard/`                                                           | No       | Orphaned — load call is commented out at `main.rs:523`, so this file currently does nothing |
+| 11 | Hardcoded absolute font/style paths             | baked into `niva_dashboard/src/graphics/ui_style.rs` (`/home/user/Work/Niva_Dashboard_Rpi/...`) | In repo, but wrong — ties to one dev machine's clone path | N/A |
 
 Two more things worth flagging that fell out of this survey rather than being
 part of the original ask:
