@@ -119,6 +119,8 @@ Boot reduced from ~16.8s to ~5.1s by disabling unused systemd services (`Network
 - Doc/code mismatches to reconcile: `hardware/sensors.rs` is labeled "legacy... being refactored" in the Project Structure section above, but it's actually the live "Logical Sensor" stage the chains depend on — not a deprecated path. Also, the digital/analog signal processing "edge detection"/"low-pass filtering" terms in Core Components don't correspond to any processor by that name (debounce and the EMA `AnalogSignalProcessorDampener` fill those roles under different names). `hardware/gpio_input.rs` and `page_framework/terminal_page.rs` (a fourth page type, log/ADC) are also missing from the Project Structure listing above.
 - 'Master warning' button/indicator to the system: non-latching button with a warning light which lights up when an alert is active, and button press clears active alerts. Probably wire directly to Pi GPIO because STM32 ran out of pins (and to
   have it still function if no link to ADC module). Power considerations: 16 mA draw per pin and <= 50 mA total GPIO draw. 16 mA should be fine for one LED, possibly even less if brightness is enough for a warning light.
+- [In progress] GNSS connectivity and indicators
+- BNO085 connectivity and related indicators
 
 ## PiOS login
 `user` / `@Niva21#`; `root` password is standard password with a single numeric character.
