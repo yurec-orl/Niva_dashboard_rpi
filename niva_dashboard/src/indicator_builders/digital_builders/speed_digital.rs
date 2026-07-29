@@ -46,3 +46,20 @@ pub fn build_speed_digital(
     let bounds = IndicatorBounds::new(x, y, width, height);
     (Box::new(speed_display), bounds)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_speed_digital_bounds_and_type() {
+        let ui_style = UIStyle::new();
+        let (indicator, bounds) = build_speed_digital(50.0, 60.0, 208.0, 80.0, &ui_style);
+
+        assert_eq!(bounds.x, 50.0);
+        assert_eq!(bounds.y, 60.0);
+        assert_eq!(bounds.width, 208.0);
+        assert_eq!(bounds.height, 80.0);
+        assert_eq!(indicator.indicator_type(), "DigitalSegmentedIndicator");
+    }
+}

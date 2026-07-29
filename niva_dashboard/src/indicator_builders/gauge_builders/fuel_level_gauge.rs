@@ -117,3 +117,20 @@ pub fn build_fuel_level_gauge(
 
     (Box::new(fuel_gauge), bounds)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_fuel_level_gauge_bounds_and_type() {
+        let ui_style = UIStyle::new();
+        let (indicator, bounds) = build_fuel_level_gauge(400.0, 240.0, 180.0, &ui_style);
+
+        assert_eq!(bounds.x, 220.0);
+        assert_eq!(bounds.y, 60.0);
+        assert_eq!(bounds.width, 360.0);
+        assert_eq!(bounds.height, 360.0);
+        assert_eq!(indicator.indicator_type(), "NeedleIndicator");
+    }
+}

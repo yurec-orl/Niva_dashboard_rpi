@@ -125,3 +125,20 @@ pub fn build_oil_pressure_gauge(
 
     (Box::new(oil_pressure_gauge), bounds)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_oil_pressure_gauge_bounds_and_type() {
+        let ui_style = UIStyle::new();
+        let (indicator, bounds) = build_oil_pressure_gauge(400.0, 240.0, 150.0, &ui_style);
+
+        assert_eq!(bounds.x, 250.0);
+        assert_eq!(bounds.y, 90.0);
+        assert_eq!(bounds.width, 300.0);
+        assert_eq!(bounds.height, 300.0);
+        assert_eq!(indicator.indicator_type(), "NeedleIndicator");
+    }
+}

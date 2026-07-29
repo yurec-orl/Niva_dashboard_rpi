@@ -223,3 +223,112 @@ impl SmartEventSender {
 pub fn create_event_bus() -> EventBus {
     EventBus::new(1000) // Bounded channel with 1000 event capacity
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_global_and_page_channels_are_independent() {
+        let bus = EventBus::new(4);
+
+        bus.global_sender().send(UIEvent::Shutdown);
+        bus.page_sender().send(UIEvent::ShowLog);
+
+        assert!(matches!(bus.global_receiver().try_recv(), Ok(UIEvent::Shutdown)),
+               "global channel should only see what was sent on the global sender");
+        assert!(matches!(bus.page_receiver().try_recv(), Ok(UIEvent::ShowLog)),
+               "page channel should only see what was sent on the page sender");
+
+        // Each channel is now drained.
+        assert!(bus.global_receiver().try_recv().is_err());
+        assert!(bus.page_receiver().try_recv().is_err());
+    }
+
+    #[test]
+    fn test_unbounded_event_bus_round_trip() {
+        let bus = EventBus::unbounded();
+        bus.global_sender().send(UIEvent::Restart);
+        assert!(matches!(bus.global_receiver().try_recv(), Ok(UIEvent::Restart)));
+    }
+
+    #[test]
+    fn test_create_event_bus_has_working_bounded_channel() {
+        let bus = create_event_bus();
+        bus.global_sender().send(UIEvent::BrightnessUp);
+        assert!(matches!(bus.global_receiver().try_recv(), Ok(UIEvent::BrightnessUp)));
+    }
+
+    #[test]
+    fn test_receiver_recv_timeout_expires_on_empty_channel() {
+        let bus = EventBus::new(4);
+        let result = bus.global_receiver().recv_timeout(std::time::Duration::from_millis(10));
+        assert!(result.is_err(), "recv_timeout on an empty channel must time out rather than block forever");
+    }
+
+    // Every UIEvent variant that SmartEventSender::send routes to the global channel
+    // (handled by PageManager), per the match in `send` above.
+    fn global_events() -> Vec<UIEvent> {
+        vec![
+            UIEvent::BrightnessUp,
+            UIEvent::BrightnessDown,
+            UIEvent::SetBrightness(0.5),
+            UIEvent::SwitchToPage(2),
+            UIEvent::Shutdown,
+            UIEvent::Restart,
+            UIEvent::SuppressAlerts,
+            UIEvent::SwitchSensorSet,
+        ]
+    }
+
+    // Every UIEvent variant that SmartEventSender::send routes to the page channel
+    // (handled by the current page).
+    fn page_events() -> Vec<UIEvent> {
+        vec![
+            UIEvent::NextIndicatorSet,
+            UIEvent::PreviousIndicatorSet,
+            UIEvent::ButtonPressed("test".to_string()),
+            UIEvent::ShowSensorInfo,
+            UIEvent::ShowECUInfo,
+            UIEvent::ShowOSCInfo,
+            UIEvent::ShowLog,
+            UIEvent::OscStart,
+            UIEvent::OscStop,
+            UIEvent::OscSetSampleRate(1.0),
+            UIEvent::OscSetTimeScale(1.0),
+            UIEvent::OscSetVoltageScale(1.0),
+            UIEvent::OscSetTriggerLevel(1.0),
+            UIEvent::OscToggleChannel(0),
+        ]
+    }
+
+    #[test]
+    fn test_smart_sender_routes_global_events_to_global_channel_only() {
+        let bus = EventBus::new(global_events().len());
+        let smart_sender = bus.smart_sender();
+        let global_receiver = bus.global_receiver();
+        let page_receiver = bus.page_receiver();
+
+        for event in global_events() {
+            smart_sender.send(event);
+        }
+
+        assert_eq!(global_receiver.try_iter().count(), 8, "every global-tagged event must land on the global channel");
+        assert!(page_receiver.try_recv().is_err(), "no global-tagged event should leak onto the page channel");
+    }
+
+    #[test]
+    fn test_smart_sender_routes_page_events_to_page_channel_only() {
+        let bus = EventBus::new(page_events().len());
+        let smart_sender = bus.smart_sender();
+        let global_receiver = bus.global_receiver();
+        let page_receiver = bus.page_receiver();
+
+        for event in page_events() {
+            smart_sender.send(event);
+        }
+
+        assert_eq!(page_receiver.try_iter().count(), 14, "every page-tagged event must land on the page channel");
+        assert!(global_receiver.try_recv().is_err(), "no page-tagged event should leak onto the global channel");
+    }
+}

@@ -227,3 +227,116 @@ impl AlertManager {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::graphics::ui_style::UIStyle;
+    use crate::hardware::hw_providers::{HWAnalogProvider, HWInput};
+    use crate::hardware::sensor_manager::SensorAnalogInputChain;
+    use crate::hardware::sensor_value::ValueConstraints;
+    use crate::hardware::sensors::GenericAnalogSensor;
+
+    // Returns a fixed raw value regardless of input, so tests can control exactly what the
+    // watchdog under test sees without depending on TestAnalogDataProvider's time-based pattern.
+    struct FixedAnalogDataProvider {
+        input: HWInput,
+        raw_value: u16,
+    }
+
+    impl HWAnalogProvider for FixedAnalogDataProvider {
+        fn input(&self) -> HWInput { self.input }
+        fn read_analog(&self, _input: HWInput) -> Result<u16, String> {
+            Ok(self.raw_value)
+        }
+    }
+
+    // Builds a SensorManager with a single passthrough (scale 1.0, no processors) analog
+    // chain for `input`, reporting exactly `raw_value` with critical_high=90.
+    fn manager_with_fixed_value(input: HWInput, raw_value: u16) -> SensorManager {
+        let mut manager = SensorManager::new();
+        let chain = SensorAnalogInputChain::new(
+            Box::new(FixedAnalogDataProvider { input, raw_value }),
+            vec![],
+            Box::new(GenericAnalogSensor::new(
+                "alert_manager_test".to_string(), "Alert Manager Test".to_string(), "".to_string(),
+                ValueConstraints::analog_with_thresholds(0.0, 100.0, None, None, None, Some(90.0)),
+                1.0,
+            )),
+        );
+        manager.add_analog_sensor_chain(chain);
+        manager.read_all_sensors().expect("fixed provider read should never fail");
+        manager
+    }
+
+    fn triggering_watchdog() -> Watchdog {
+        Watchdog::new(HWInput::HwEngineCoolantTemp, "overheating".to_string(), Severity::Critical, None, None, None)
+    }
+
+    #[test]
+    fn test_disabled_manager_does_not_raise_alerts() {
+        let ui_style = UIStyle::new();
+        let mut manager = AlertManager::new(false, &ui_style);
+        manager.add_watchdog(triggering_watchdog());
+
+        let sensor_manager = manager_with_fixed_value(HWInput::HwEngineCoolantTemp, 95);
+        manager.check_watchdogs(&sensor_manager);
+
+        assert!(manager.alerts.is_empty(), "a disabled manager must not poll watchdogs at all");
+    }
+
+    #[test]
+    fn test_check_watchdogs_raises_alert_for_triggering_condition() {
+        let ui_style = UIStyle::new();
+        let mut manager = AlertManager::new(true, &ui_style);
+        manager.add_watchdog(triggering_watchdog());
+
+        let sensor_manager = manager_with_fixed_value(HWInput::HwEngineCoolantTemp, 95);
+        manager.check_watchdogs(&sensor_manager);
+
+        assert_eq!(manager.alerts.len(), 1);
+    }
+
+    #[test]
+    fn test_check_watchdogs_does_not_raise_duplicate_while_alert_active() {
+        let ui_style = UIStyle::new();
+        let mut manager = AlertManager::new(true, &ui_style);
+        manager.add_watchdog(triggering_watchdog());
+
+        let sensor_manager = manager_with_fixed_value(HWInput::HwEngineCoolantTemp, 95);
+        manager.check_watchdogs(&sensor_manager);
+        manager.check_watchdogs(&sensor_manager);
+        manager.check_watchdogs(&sensor_manager);
+
+        assert_eq!(manager.alerts.len(), 1, "a watchdog with an already-queued alert must not raise a second one");
+    }
+
+    #[test]
+    fn test_check_watchdogs_is_noop_when_condition_not_met() {
+        let ui_style = UIStyle::new();
+        let mut manager = AlertManager::new(true, &ui_style);
+        manager.add_watchdog(triggering_watchdog());
+
+        let sensor_manager = manager_with_fixed_value(HWInput::HwEngineCoolantTemp, 10); // well below critical_high
+        manager.check_watchdogs(&sensor_manager);
+
+        assert!(manager.alerts.is_empty());
+    }
+
+    #[test]
+    fn test_suppress_alerts_marks_every_queued_alert_inactive() {
+        let ui_style = UIStyle::new();
+        let mut manager = AlertManager::new(true, &ui_style);
+        manager.add_watchdog(triggering_watchdog());
+
+        let sensor_manager = manager_with_fixed_value(HWInput::HwEngineCoolantTemp, 95);
+        manager.check_watchdogs(&sensor_manager);
+        assert_eq!(manager.alerts.len(), 1);
+        assert!(manager.alerts[0].1.is_active(), "sanity check: alert starts out active");
+
+        manager.suppress_alerts();
+
+        assert!(manager.alerts.iter().all(|(_, alert)| !alert.is_active()),
+               "suppress_alerts must force every queued alert inactive regardless of source");
+    }
+}

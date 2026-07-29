@@ -319,3 +319,164 @@ impl SensorValue {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_as_f32_for_every_value_data_variant() {
+        assert!(SensorValue::empty().as_f32().is_nan());
+        assert_eq!(SensorValue::digital(true, "l", "id").as_f32(), 1.0);
+        assert_eq!(SensorValue::digital(false, "l", "id").as_f32(), 0.0);
+        assert_eq!(SensorValue::analog(42.5, 0.0, 100.0, "u", "l", "id").as_f32(), 42.5);
+
+        let percentage = SensorValue::new(ValueData::Percentage(37.0), ValueConstraints::analog(0.0, 100.0), ValueMetadata::new("", "", ""));
+        assert_eq!(percentage.as_f32(), 37.0);
+
+        let integer = SensorValue::new(ValueData::Integer(-5), ValueConstraints::analog(-10.0, 10.0), ValueMetadata::new("", "", ""));
+        assert_eq!(integer.as_f32(), -5.0);
+    }
+
+    #[test]
+    fn test_as_normalized_clamps_to_0_1_range() {
+        let value = SensorValue::analog(50.0, 0.0, 100.0, "", "", "");
+        assert_eq!(value.as_normalized(), 0.5);
+
+        let below_min = SensorValue::analog(-20.0, 0.0, 100.0, "", "", "");
+        assert_eq!(below_min.as_normalized(), 0.0, "values below min_value must clamp to 0.0, not go negative");
+
+        let above_max = SensorValue::analog(150.0, 0.0, 100.0, "", "", "");
+        assert_eq!(above_max.as_normalized(), 1.0, "values above max_value must clamp to 1.0");
+    }
+
+    #[test]
+    fn test_as_normalized_avoids_division_by_zero_when_range_is_degenerate() {
+        let value = SensorValue::analog(5.0, 10.0, 10.0, "", "", "");
+        assert_eq!(value.as_normalized(), 0.0, "min_value == max_value must not panic/NaN from a 0/0 division");
+    }
+
+    #[test]
+    fn test_is_critical_low_and_high_thresholds() {
+        let low = SensorValue::analog_with_thresholds(5.0, 0.0, 100.0, None, None, Some(10.0), Some(90.0), "", "", "");
+        assert!(low.is_critical(), "value at/below critical_low must be critical");
+
+        let high = SensorValue::analog_with_thresholds(95.0, 0.0, 100.0, None, None, Some(10.0), Some(90.0), "", "", "");
+        assert!(high.is_critical(), "value at/above critical_high must be critical");
+
+        let normal = SensorValue::analog_with_thresholds(50.0, 0.0, 100.0, None, None, Some(10.0), Some(90.0), "", "", "");
+        assert!(!normal.is_critical());
+
+        let no_thresholds = SensorValue::analog(9999.0, 0.0, 100.0, "", "", "");
+        assert!(!no_thresholds.is_critical(), "no critical thresholds configured means never critical");
+    }
+
+    #[test]
+    fn test_is_critical_boundary_values_are_inclusive() {
+        let at_critical_low = SensorValue::analog_with_thresholds(10.0, 0.0, 100.0, None, None, Some(10.0), None, "", "", "");
+        assert!(at_critical_low.is_critical(), "critical_low comparison is <=, so the exact threshold counts");
+
+        let at_critical_high = SensorValue::analog_with_thresholds(90.0, 0.0, 100.0, None, None, None, Some(90.0), "", "", "");
+        assert!(at_critical_high.is_critical(), "critical_high comparison is >=, so the exact threshold counts");
+    }
+
+    #[test]
+    fn test_is_warning_low_and_high_thresholds() {
+        let low = SensorValue::analog_with_thresholds(25.0, 0.0, 100.0, Some(30.0), Some(70.0), None, None, "", "", "");
+        assert!(low.is_warning());
+
+        let high = SensorValue::analog_with_thresholds(75.0, 0.0, 100.0, Some(30.0), Some(70.0), None, None, "", "", "");
+        assert!(high.is_warning());
+
+        let normal = SensorValue::analog_with_thresholds(50.0, 0.0, 100.0, Some(30.0), Some(70.0), None, None, "", "", "");
+        assert!(!normal.is_warning());
+    }
+
+    #[test]
+    fn test_critical_overrides_warning() {
+        // Critical thresholds are wider than warning thresholds, so a value deep enough to
+        // be critical is also past the warning threshold — is_warning must still say false.
+        let value = SensorValue::analog_with_thresholds(
+            98.0, 0.0, 100.0,
+            Some(70.0), Some(90.0), // warning_low, warning_high
+            Some(10.0), Some(95.0), // critical_low, critical_high
+            "", "", "",
+        );
+        assert!(value.is_critical());
+        assert!(!value.is_warning(), "is_critical() overriding is_warning() means both should never report true together");
+    }
+
+    #[test]
+    fn test_is_active_for_every_value_data_variant() {
+        assert!(!SensorValue::empty().is_active());
+        assert!(SensorValue::digital(true, "l", "id").is_active());
+        assert!(!SensorValue::digital(false, "l", "id").is_active());
+
+        let percentage_active = SensorValue::new(ValueData::Percentage(1.0), ValueConstraints::analog(0.0, 100.0), ValueMetadata::new("", "", ""));
+        assert!(percentage_active.is_active());
+        let percentage_inactive = SensorValue::new(ValueData::Percentage(0.0), ValueConstraints::analog(0.0, 100.0), ValueMetadata::new("", "", ""));
+        assert!(!percentage_inactive.is_active());
+
+        let integer_active = SensorValue::new(ValueData::Integer(1), ValueConstraints::analog(0.0, 100.0), ValueMetadata::new("", "", ""));
+        assert!(integer_active.is_active());
+        let integer_inactive = SensorValue::new(ValueData::Integer(0), ValueConstraints::analog(0.0, 100.0), ValueMetadata::new("", "", ""));
+        assert!(!integer_inactive.is_active());
+    }
+
+    #[test]
+    fn test_is_active_for_analog_is_strictly_greater_than_min_value() {
+        let at_min = SensorValue::analog(10.0, 10.0, 100.0, "", "", "");
+        assert!(!at_min.is_active(), "analog value exactly at min_value must not count as active");
+
+        let above_min = SensorValue::analog(10.01, 10.0, 100.0, "", "", "");
+        assert!(above_min.is_active());
+    }
+
+    #[test]
+    fn test_value_constraints_presets() {
+        let default = ValueConstraints::digital_default();
+        assert_eq!((default.min_value, default.max_value), (0.0, 1.0));
+        assert_eq!(default.critical_high, None);
+        assert_eq!(default.warning_high, None);
+
+        let critical = ValueConstraints::digital_critical();
+        assert_eq!(critical.critical_high, Some(1.0));
+        assert_eq!(critical.warning_high, None);
+
+        let warning = ValueConstraints::digital_warning();
+        assert_eq!(warning.warning_high, Some(1.0));
+        assert_eq!(warning.critical_high, None);
+    }
+
+    #[test]
+    fn test_digital_critical_and_warning_presets_drive_is_critical_is_warning() {
+        // A sensor using digital_critical() (e.g. brake fluid low) should read critical when active.
+        let critical_active = SensorValue::digital_with_constraints_and_metadata(
+            true, ValueConstraints::digital_critical(), ValueMetadata::new("", "", ""),
+        );
+        assert!(critical_active.is_critical());
+        assert!(!critical_active.is_warning());
+
+        // A sensor using digital_warning() (e.g. parking brake engaged) should read warning when active.
+        let warning_active = SensorValue::digital_with_constraints_and_metadata(
+            true, ValueConstraints::digital_warning(), ValueMetadata::new("", "", ""),
+        );
+        assert!(!warning_active.is_critical());
+        assert!(warning_active.is_warning());
+
+        // Inactive (false) must trigger neither, for both presets.
+        let inactive = SensorValue::digital_with_constraints_and_metadata(
+            false, ValueConstraints::digital_warning(), ValueMetadata::new("", "", ""),
+        );
+        assert!(!inactive.is_critical());
+        assert!(!inactive.is_warning());
+    }
+
+    #[test]
+    fn test_empty_sensor_value_is_never_critical_or_warning() {
+        let empty = SensorValue::empty();
+        assert!(!empty.is_critical());
+        assert!(!empty.is_warning());
+        assert!(!empty.is_active());
+    }
+}

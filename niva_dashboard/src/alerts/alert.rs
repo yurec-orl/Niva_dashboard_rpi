@@ -107,7 +107,7 @@ impl Alert {
             None => true,                                                   // Same as 0 timeout - expires immediately
             Some(_) if self.is_active() => false,                           // Never remove while active
             Some(timeout) => {
-                // Alert stays active for creation_time + display_timeout duration, then 
+                // Alert stays active for creation_time + display_timeout duration, then
                 // becomes expired after creation_time + display_timeout + remove_timeout,
                 // so to compare remove_timeout properly, creation_time.elapsed() needs
                 // to have display_timeout subtracted.
@@ -116,5 +116,67 @@ impl Alert {
                 since_inactive >= timeout
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn test_new_alert_is_active_when_no_display_timeout() {
+        let alert = Alert::new("test".to_string(), Severity::Warning, None, None);
+        assert!(alert.is_active());
+    }
+
+    #[test]
+    fn test_alert_becomes_inactive_after_display_timeout_elapses() {
+        let alert = Alert::new("test".to_string(), Severity::Warning, Some(Duration::from_millis(10)), None);
+        assert!(alert.is_active(), "should still be active immediately after creation");
+
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(!alert.is_active(), "should be inactive once display_timeout has elapsed");
+    }
+
+    #[test]
+    fn test_suppress_forces_alert_inactive_immediately() {
+        let mut alert = Alert::new("test".to_string(), Severity::Critical, None, Some(Duration::from_millis(50)));
+        assert!(alert.is_active());
+
+        alert.suppress();
+        assert!(!alert.is_active(), "suppress() should force the alert inactive right away");
+    }
+
+    #[test]
+    fn test_no_remove_timeout_expires_immediately_once_inactive() {
+        let mut alert = Alert::new("test".to_string(), Severity::Warning, None, None);
+        alert.suppress();
+        assert!(alert.is_expired(), "remove_timeout: None means expire as soon as inactive");
+    }
+
+    #[test]
+    fn test_active_alert_never_expires_even_with_remove_timeout_set() {
+        let alert = Alert::new("test".to_string(), Severity::Warning, None, Some(Duration::from_millis(10)));
+        std::thread::sleep(Duration::from_millis(20));
+        assert!(!alert.is_expired(), "an alert with display_timeout: None is always active, so never expires");
+    }
+
+    #[test]
+    fn test_alert_expires_only_after_remove_timeout_since_going_inactive() {
+        let mut alert = Alert::new("test".to_string(), Severity::Warning, None, Some(Duration::from_millis(30)));
+        alert.suppress(); // goes inactive now, remove_timeout countdown starts
+
+        assert!(!alert.is_expired(), "remove_timeout hasn't elapsed yet");
+
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(alert.is_expired(), "remove_timeout has now elapsed since the alert went inactive");
+    }
+
+    #[test]
+    fn test_message_and_severity_accessors() {
+        let alert = Alert::new("engine hot".to_string(), Severity::Critical, None, None);
+        assert_eq!(alert.message(), "engine hot");
+        assert!(matches!(alert.severity(), Severity::Critical));
     }
 }

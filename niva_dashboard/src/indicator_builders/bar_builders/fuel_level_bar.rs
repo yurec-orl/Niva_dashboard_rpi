@@ -71,3 +71,20 @@ pub fn build_fuel_level_bar(
     let bounds = IndicatorBounds::new(x, y, width, height);
     (Box::new(fuel_level_bar), bounds)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_fuel_level_bar_bounds_and_type() {
+        let ui_style = UIStyle::new();
+        let (indicator, bounds) = build_fuel_level_bar(10.0, 20.0, 100.0, 300.0, &ui_style);
+
+        assert_eq!(bounds.x, 10.0);
+        assert_eq!(bounds.y, 20.0);
+        assert_eq!(bounds.width, 100.0);
+        assert_eq!(bounds.height, 300.0);
+        assert_eq!(indicator.indicator_type(), "VerticalBarIndicator");
+    }
+}

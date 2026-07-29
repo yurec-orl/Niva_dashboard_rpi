@@ -71,3 +71,20 @@ pub fn build_oil_pressure_bar(
     let bounds = IndicatorBounds::new(x, y, width, height);
     (Box::new(oil_pressure_bar), bounds)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_oil_pressure_bar_bounds_and_type() {
+        let ui_style = UIStyle::new();
+        let (indicator, bounds) = build_oil_pressure_bar(5.0, 15.0, 80.0, 250.0, &ui_style);
+
+        assert_eq!(bounds.x, 5.0);
+        assert_eq!(bounds.y, 15.0);
+        assert_eq!(bounds.width, 80.0);
+        assert_eq!(bounds.height, 250.0);
+        assert_eq!(indicator.indicator_type(), "VerticalBarIndicator");
+    }
+}
