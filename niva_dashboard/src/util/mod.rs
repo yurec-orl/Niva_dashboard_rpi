@@ -1,6 +1,7 @@
 pub mod serial_reader;
 pub mod adc_data_provider;
 pub mod gnss_data_provider;
+pub mod nmea;
 pub mod diagnostics;
 pub mod logging;
 pub mod shutdown;

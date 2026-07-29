@@ -1,3 +1,4 @@
+use crate::util::nmea::{self, GnssFix};
 use crate::util::serial_reader::{LineSerialReader, SerialReader};
 
 use std::collections::VecDeque;
@@ -35,24 +36,37 @@ impl fmt::Display for GnssDataProviderError {
 
 impl std::error::Error for GnssDataProviderError {}
 
-/// A cloneable, thread-safe handle to the shared GNSS line buffer. Unlike ADCFrame (which
-/// always exposes the latest decoded sample), this is a queue of raw NMEA lines — the
-/// diagnostic terminal page is a log-style view, not a "current value" reader.
+/// A cloneable, thread-safe handle to the shared GNSS state. Combines two views onto the
+/// same stream: a queue of raw NMEA lines (for the log-style diagnostic terminal page,
+/// unlike ADCFrame which only ever exposes the latest decoded sample), and a `GnssFix`
+/// accumulated from whichever sentences update it (for indicators/consumers that want
+/// structured time/position/speed/heading rather than raw text).
 #[derive(Clone)]
 pub struct GnssFrame {
     lines: Arc<Mutex<VecDeque<String>>>,
+    fix: Arc<Mutex<GnssFix>>,
 }
 
 impl GnssFrame {
     fn new() -> Self {
         GnssFrame {
             lines: Arc::new(Mutex::new(VecDeque::new())),
+            fix: Arc::new(Mutex::new(GnssFix::default())),
         }
     }
 
     /// Removes and returns every line buffered since the last drain, oldest first.
     pub fn drain_lines(&self) -> Vec<String> {
         self.lines.lock().unwrap().drain(..).collect()
+    }
+
+    /// Snapshot of the latest accumulated fix (time/date/position/speed/heading/...).
+    /// Individual fields are `None` until a sentence carrying them has been seen.
+    /// Not consumed yet — no indicator/HWInput wiring to GNSS data exists at this point,
+    /// only the GNSS diagnostic terminal page (which uses drain_lines instead).
+    #[allow(dead_code)]
+    pub fn fix(&self) -> GnssFix {
+        *self.fix.lock().unwrap()
     }
 }
 
@@ -151,6 +165,8 @@ impl GnssDataProvider {
 
             match conn.reader.as_mut().unwrap().read_line() {
                 Some(line) if !line.is_empty() => {
+                    nmea::update_from_sentence(&mut frame.fix.lock().unwrap(), &line);
+
                     let mut lines = frame.lines.lock().unwrap();
                     if lines.len() >= MAX_BUFFERED_LINES {
                         lines.pop_front();
