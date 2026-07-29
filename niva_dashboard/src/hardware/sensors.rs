@@ -169,7 +169,7 @@ impl EngineTemperatureSensor {
         EngineTemperatureSensor {
             value: SensorValue::empty(),
             constraints: ValueConstraints::analog_with_thresholds(
-                0.0, 130.0,
+                0.0, 120.0,
                 None, None,
                 Some(100.0), Some(110.0),
             ),
@@ -216,7 +216,7 @@ impl AnalogSensor for EngineTemperatureSensor {
     fn read(&mut self, input: u16) -> Result<&SensorValue, String> {
         // Convert raw input (e.g. ADC value) to temperature
         // Placeholder conversion logic
-        let temperature = (input as f32) * 0.12; // Example conversion
+        let temperature = (input as f32) * 0.1; // Placeholder conversion
         self.value = SensorValue::analog_with_constraints_and_metadata(
             temperature.clamp(self.constraints.min_value, self.constraints.max_value),
             self.constraints.clone(),
