@@ -312,13 +312,9 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
     );
     mgr.add_analog_sensor_chain(temperature_chain);
 
-    // No signal processors: SpeedSensor consumes the raw inter-pulse period directly (see
-    // SPEED_TACHO_PULSE_PERIOD_DESIGN.md) -- unlike the count-based interim approach this
-    // replaces, period data doesn't need a prescale/moving-average pair to stay meaningful
-    // through integer processing.
     let speed_chain = SensorAnalogInputChain::new(
         Box::new(ADCChannelProvider::new(HWInput::HwSpeed, 5, frame.clone())),  // SPEED inter-pulse period, raw timer ticks
-        vec![],
+        vec![Box::new(AnalogSignalProcessorMovingAverage::new(5))],
         Box::new(SpeedSensor::new()),
     );
     mgr.add_analog_sensor_chain(speed_chain);

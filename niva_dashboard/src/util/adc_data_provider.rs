@@ -434,25 +434,28 @@ impl Drop for TestADCDataProvider {
 mod tests {
     use super::*;
     use crate::hardware::hw_providers::{ADCChannelProvider, HWAnalogProvider, HWInput};
+    use crate::hardware::analog_signal_processing::{AnalogSignalProcessor, AnalogSignalProcessorMovingAverage};
     use crate::hardware::sensors::{AnalogSensor, SpeedSensor};
 
     /// Regression test for a bug where the self-test speed gauge never visibly moved.
     /// Drives the exact same pipeline main.rs's add_adc_sensor_chains wires up for HwSpeed
-    /// (ADCChannelProvider::read_analog -> SpeedSensor, no signal processors -- see
-    /// SPEED_TACHO_PULSE_PERIOD_DESIGN.md) and asserts a nonzero km/h reading is observed
-    /// before the sweep ends.
+    /// (ADCChannelProvider::read_analog -> AnalogSignalProcessorMovingAverage -> SpeedSensor
+    /// -- see SPEED_TACHO_PULSE_PERIOD_DESIGN.md) and asserts a nonzero km/h reading is
+    /// observed before the sweep ends.
     #[test]
     fn self_test_speed_channel_produces_nonzero_reading_within_sweep() {
         let provider = TestADCDataProvider::start();
         let frame = provider.frame();
         let adc_provider = ADCChannelProvider::new(HWInput::HwSpeed, 5, frame);
+        let mut moving_avg = AnalogSignalProcessorMovingAverage::new(5);
         let mut sensor = SpeedSensor::new();
 
         let start = Instant::now();
         let mut saw_nonzero_speed = false;
         while start.elapsed() < SELF_TEST_DURATION {
             if let Ok(raw) = adc_provider.read_analog(HWInput::HwSpeed) {
-                if sensor.read(raw).unwrap().as_f32() > 0.0 {
+                let averaged = moving_avg.read(raw).unwrap();
+                if sensor.read(averaged).unwrap().as_f32() > 0.0 {
                     saw_nonzero_speed = true;
                     break;
                 }

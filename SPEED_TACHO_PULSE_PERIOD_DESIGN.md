@@ -117,12 +117,26 @@ needs numeric precision for a real km/h reading, is affected.
    `SpeedSensor`'s own conversion, so the self-test data and the real conversion it exercises
    can't silently drift apart. `SPEED_PERIOD_TIMER_HZ` (50kHz) is a placeholder pending the
    firmware wire-format decision below — chosen only so a u16 raw period doesn't wrap before
-   ~1.1 km/h while still giving sub-km/h resolution at highway speed. This got self-test's
-   speed sweep to a genuinely smooth, non-jittery state, since period-based data doesn't have
-   the count approach's inherent quantization — confirmed by
-   `util::adc_data_provider::tests::self_test_speed_channel_tracks_envelope_target_speed`,
-   which drives the sweep's synthetic data through `SpeedSensor` end-to-end and checks the
-   recovered speed tracks the intended envelope target.
+   ~1.1 km/h while still giving sub-km/h resolution at highway speed. Confirmed by
+   `util::adc_data_provider::tests::self_test_speed_channel_tracks_envelope_target_speed`
+   (drives the sweep's synthetic data through `SpeedSensor` end-to-end and checks the
+   recovered speed tracks the intended envelope target) that the underlying period-to-speed
+   conversion is correct and monotonic throughout the sweep, with no quantization artifacts.
+
+   That conversion alone still looked visibly "steppy" on the self-test needle, though,
+   because — unlike every other analog chain — HwSpeed initially had no signal processor at
+   all between the raw channel and the sensor: at the sweep's fast rate of change (peaking
+   near 200 km/h over a 500ms rise), each ~20ms raw update is itself a multi-km/h jump, and
+   with nothing damping it frame-to-frame the needle visibly stair-steps instead of gliding
+   the way the other gauges' 10-20-sample moving averages make their equally-fast self-test
+   ramps look. `main.rs`'s `add_adc_sensor_chains` now runs the raw period through a small
+   `AnalogSignalProcessorMovingAverage::new(5)` before `SpeedSensor` to restore that same
+   smoothing — much smaller than the old 15-sample count average, since (a) a period sample
+   doesn't need it for *accuracy* the way a count did, this is purely per-tick jitter
+   smoothing, and (b) `SpeedSensor`'s idle/staleness logic reads the post-average value, so a
+   larger window would perceptibly delay it from reaching `SPEED_PERIOD_IDLE_RAW` (0) once the
+   vehicle genuinely stops. That delay isn't eliminated at window=5, just kept small; revisit
+   if it proves too slow once real (noisier) firmware data exists.
 
 2. **[Next] STM32 firmware change**, implementing whichever wire format is settled on from the
    options above (this also fixes `SPEED_PERIOD_TIMER_HZ`, currently just a placeholder),
