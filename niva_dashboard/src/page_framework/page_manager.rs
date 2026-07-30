@@ -550,6 +550,11 @@ impl PageManager {
                 self.running = false;
                 continue;
             }
+            if crate::util::shutdown::restart_requested() {
+                log::info!("Restart requested (SIGUSR1)");
+                self.running = false;
+                continue;
+            }
 
             // Continuous sensor polling - poll sensors every loop iteration
             // This ensures sensor data is always up to date regardless of render timing

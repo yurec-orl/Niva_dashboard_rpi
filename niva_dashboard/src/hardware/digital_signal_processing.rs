@@ -98,6 +98,12 @@ pub struct DigitalSignalProcessorPulsePerSecond {
 }
 
 impl DigitalSignalProcessorPulsePerSecond {
+    /// Default 1s averaging window. Every current caller (SpeedSensor) now passes an
+    /// explicit interval instead — production keeps this default via
+    /// hardware::sensors::DEFAULT_SPEED_PULSE_UPDATE_INTERVAL, self-test overrides it to a
+    /// much shorter one — but this is kept as the type's own sensible default, exercised by
+    /// the unit tests below.
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self::with_update_interval(Duration::from_millis(1000))
     }

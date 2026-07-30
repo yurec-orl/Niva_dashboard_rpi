@@ -4,6 +4,7 @@ use rppal::gpio::Level;
 use crate::hardware::hw_providers::GNSS_ALTITUDE_OFFSET_M;
 use crate::hardware::sensor_value::{SensorValue, ValueConstraints, ValueMetadata};
 use crate::hardware::digital_signal_processing::{DigitalSignalProcessor, DigitalSignalProcessorPulsePerSecond};
+use std::time::Duration;
 
 // Used by all sensor types
 pub trait Sensor {
@@ -388,8 +389,22 @@ pub struct SpeedSensor {
     metadata: ValueMetadata,
 }
 
+/// SpeedSensor's default pulse-per-second averaging window — long enough to smooth over
+/// per-pulse jitter in real wheel-sensor timing. Exposed so main.rs's setup_sensors can pass
+/// it explicitly alongside the self-test path's much shorter override (see
+/// SELF_TEST_SPEED_PULSE_WINDOW), rather than duplicating the literal.
+pub const DEFAULT_SPEED_PULSE_UPDATE_INTERVAL: Duration = Duration::from_millis(1000);
+
 impl SpeedSensor {
     pub fn new() -> Self {
+        Self::with_pulse_update_interval(DEFAULT_SPEED_PULSE_UPDATE_INTERVAL)
+    }
+
+    /// Same as `new()`, but with a configurable pulse-rate averaging window instead of the
+    /// default 1s. Used by main.rs's self-test wiring: the default window barely produces
+    /// one update over the self-test sweep's ~2s total duration, which reads as the needle
+    /// never moving — a shorter window there fits several updates into the sweep.
+    pub fn with_pulse_update_interval(update_interval: Duration) -> Self {
         // Physical parameters for 235/75/15 tire
         // Width: 235mm, Aspect ratio: 75%, Rim: 15 inches
         // Diameter = 15" (381mm) + 2 * (235mm * 0.75) = 733.5mm
@@ -398,7 +413,7 @@ impl SpeedSensor {
 
         SpeedSensor {
             speed: SensorValue::analog(0.0, 0.0, 180.0, &metadata.unit, &metadata.label, &metadata.sensor_id),
-            pulse_counter: DigitalSignalProcessorPulsePerSecond::new(),
+            pulse_counter: DigitalSignalProcessorPulsePerSecond::with_update_interval(update_interval),
             pulses_per_revolution: 6, // 6 pulses per wheel rotation
             wheel_circumference_m: 2.304, // meters
             constraints: ValueConstraints::analog(0.0, 180.0),
