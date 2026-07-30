@@ -11,6 +11,7 @@ use crate::test::run_test::run_test;
 use crate::graphics::context::GraphicsContext;
 use crate::page_framework::page_manager::PageManager;
 use crate::page_framework::events::UIEvent;
+use crate::alerts::alert_manager::AlertManager;
 use crate::page_framework::input::{InputSource, PhysicalButtonInput, KeyboardInput};
 use crate::hardware::sensor_manager::{SensorManager, SensorDigitalInputChain, SensorAnalogInputChain};
 use crate::hardware::hw_providers::*;
@@ -18,7 +19,7 @@ use crate::hardware::digital_signal_processing::DigitalSignalDebouncer;
 use crate::hardware::analog_signal_processing::AnalogSignalProcessorMovingAverage;
 use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor, SpeedSensor, EngineTemperatureSensor, GnssAltitudeSensor};
 use crate::hardware::sensor_value::ValueConstraints;
-use crate::util::adc_data_provider::{ADCDataProvider, ADCFrame, TestADCDataProvider, SELF_TEST_DURATION, SELF_TEST_SPEED_PULSE_WINDOW};
+use crate::util::adc_data_provider::{ADCDataProvider, ADCFrame, TestADCDataProvider, SELF_TEST_DURATION};
 use crate::util::gnss_data_provider::{GnssDataProvider, GnssFrame};
 use crate::util::logging::init_logging;
 use crate::util::ups_monitor::UpsMonitor;
@@ -52,7 +53,7 @@ fn setup_context() -> GraphicsContext {
 fn setup_self_test_sensors() -> (SensorManager, TestADCDataProvider) {
     let mut mgr = SensorManager::new();
     let test_adc = TestADCDataProvider::start();
-    add_adc_sensor_chains(&mut mgr, test_adc.frame(), SELF_TEST_SPEED_PULSE_WINDOW);
+    add_adc_sensor_chains(&mut mgr, test_adc.frame());
 
     log::info!("✓ Self-test sensor manager initialized (synthetic ADC sweep)");
 
@@ -167,7 +168,7 @@ fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>, gnss: Option<G
         return mgr;
     };
 
-    add_adc_sensor_chains(&mut mgr, frame, crate::hardware::sensors::DEFAULT_SPEED_PULSE_UPDATE_INTERVAL);
+    add_adc_sensor_chains(&mut mgr, frame);
     log::info!("✓ Sensor manager initialized with ADC sensor chains");
 
     mgr
@@ -182,11 +183,8 @@ fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>, gnss: Option<G
 //
 // Shared by setup_sensors (real, serial-fed ADCFrame) and setup_self_test_sensors
 // (TestADCDataProvider's synthetic ADCFrame) — self-test exercises this exact wiring
-// instead of a hand-duplicated copy, so the two can't silently drift apart. The one
-// deliberate difference is speed_pulse_update_interval: SpeedSensor measures a rate over
-// real wall-clock time, so self-test's short sweep needs a much shorter averaging window
-// than production to visibly animate at all (see SELF_TEST_SPEED_PULSE_WINDOW).
-fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame, speed_pulse_update_interval: std::time::Duration) {
+// instead of a hand-duplicated copy, so the two can't silently drift apart.
+fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
     // ---- Digital sensor chains ----
 
     let brake_fluid_chain = SensorDigitalInputChain::new(
@@ -264,13 +262,6 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame, speed_pulse_u
     );
     mgr.add_digital_sensor_chain(park_brake_chain);
 
-    let speed_chain = SensorDigitalInputChain::new(
-        Box::new(ADCChannelProvider::new(HWInput::HwSpeed, 5, frame.clone())),  // SPEED pulse count
-        vec![],
-        Box::new(SpeedSensor::with_pulse_update_interval(speed_pulse_update_interval)),
-    );
-    mgr.add_digital_sensor_chain(speed_chain);
-
     let tacho_chain = SensorDigitalInputChain::new(
         Box::new(ADCChannelProvider::new(HWInput::HwTacho, 4, frame.clone())),  // TACHO pulse count
         vec![Box::new(DigitalSignalDebouncer::new(3, std::time::Duration::from_millis(10)))],
@@ -320,6 +311,17 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame, speed_pulse_u
         Box::new(EngineTemperatureSensor::new()),
     );
     mgr.add_analog_sensor_chain(temperature_chain);
+
+    // No signal processors: SpeedSensor consumes the raw inter-pulse period directly (see
+    // SPEED_TACHO_PULSE_PERIOD_DESIGN.md) -- unlike the count-based interim approach this
+    // replaces, period data doesn't need a prescale/moving-average pair to stay meaningful
+    // through integer processing.
+    let speed_chain = SensorAnalogInputChain::new(
+        Box::new(ADCChannelProvider::new(HWInput::HwSpeed, 5, frame.clone())),  // SPEED inter-pulse period, raw timer ticks
+        vec![],
+        Box::new(SpeedSensor::new()),
+    );
+    mgr.add_analog_sensor_chain(speed_chain);
 }
 
 // Physical MFD buttons (B0..B7), read from the same STM32 ADC frame as the sensors
@@ -518,8 +520,12 @@ fn main() -> std::process::ExitCode {
     let gnss_frame_for_diag = gnss_frame.clone();
     let sensors = setup_sensors(adc_frame, ups_frame, gnss_frame);
     let ui_style = setup_ui_style();
+    // Starts disabled: alerts (e.g. engine temp, oil pressure) must not fire against the
+    // synthetic self-test sensor sweep. Enabled once the self-test sequence hands off to
+    // the real sensor set (PageManager's UIEvent::SwitchSensorSet handler).
+    let alert_manager = AlertManager::new(false, &ui_style);
 
-    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag, gnss_frame_for_diag);
+    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag, gnss_frame_for_diag, alert_manager);
 
     mgr.setup().expect("Failed to setup page manager");
 

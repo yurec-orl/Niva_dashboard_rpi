@@ -12,7 +12,7 @@
 //   "$A0,A1,A2,A3,TACHO,SPEED,D0..D9,B0..B7\n"
 //   - A0..A3:  raw 12-bit analog values (0-4095)
 //   - TACHO:   pulse count since last report (tachometer, 2 PPR)
-//   - SPEED:   pulse count since last report (speed sensor, 4 PPR)
+//   - SPEED:   pulse count since last report (speed sensor, 6 PPR)
 //   - D0..D9:  digital indicator states (0/1)
 //   - B0..B7:  button states (0/1, 1 = pressed)
 //
@@ -34,7 +34,7 @@
 // === Pulse/Counter Inputs (interrupt-capable) ===
 //
 //   PB0  (EXTI0) — Tachometer signal, 2 pulses per revolution
-//   PB1  (EXTI1) — Speed sensor signal, 4 pulses per revolution
+//   PB1  (EXTI1) — Speed sensor signal, 6 pulses per revolution
 //
 //   Using external interrupts (EXTI) for pulse counting.
 //   12V sensor signals go through voltage divider + 1nF filter cap to 3.3V.
@@ -190,7 +190,7 @@
 
 // Pulse inputs (EXTI interrupt-based counting)
 #define PIN_TACHO           PB0   // Tachometer, 2 PPR
-#define PIN_SPEED           PB1   // Speed sensor, 4 PPR
+#define PIN_SPEED           PB1   // Speed sensor, 6 PPR
 
 // Digital indicators — active-low (INPUT_PULLUP)
 #define PIN_D_OIL_WARN      PA8   // D0

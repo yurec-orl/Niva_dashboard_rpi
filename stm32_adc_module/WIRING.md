@@ -177,7 +177,7 @@ Pulse sensor ── R1 ──┬── PA8/PA9 (TIM1 input)
 | Pin | Signal               |
 |-----|----------------------|
 | PB0 | Tachometer (2 PPR)   |
-| PB1 | Speed sensor (4 PPR) |
+| PB1 | Speed sensor (6 PPR) |
 
 ---
 

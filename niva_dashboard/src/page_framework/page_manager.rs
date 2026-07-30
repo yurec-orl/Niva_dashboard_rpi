@@ -243,7 +243,8 @@ pub struct PageManager {
 impl PageManager {
     pub fn new(context: GraphicsContext, sensor_manager: SensorManager, ui_style: UIStyle,
                input_sources: Vec<Box<dyn InputSource>>, ups_monitor: UpsMonitor,
-               adc_frame: Option<ADCFrame>, gnss_frame: Option<GnssFrame>) -> Self {
+               adc_frame: Option<ADCFrame>, gnss_frame: Option<GnssFrame>,
+               alert_manager: AlertManager) -> Self {
         let mut buttons_map = HashMap::new();
         buttons_map.insert('1', ButtonPosition::Left1);
         buttons_map.insert('2', ButtonPosition::Left2);
@@ -258,8 +259,6 @@ impl PageManager {
         let event_bus = create_event_bus();
         let global_event_receiver = event_bus.global_receiver();
         let smart_event_sender = event_bus.smart_sender();
-
-        let alert_manager = AlertManager::new(true, &ui_style);
 
         // Event channel for switching self-test sequence sensors to real ones
         let (sensor_config_tx, sensor_config_rx) = std::sync::mpsc::channel::<SensorManager>();
@@ -513,9 +512,6 @@ impl PageManager {
         self.alert_manager.add_watchdog(ups_low_charge_watchdog);
         self.alert_manager.add_watchdog(ups_crit_charge_watchdog);
 
-        // Enable watchdogs and alerts
-        self.alert_manager.set_enabled(true);
-
         Ok(())
     }
 
@@ -702,6 +698,9 @@ impl PageManager {
                 if let Ok(new_manager) = self.sensor_config_rx.try_recv() {
                     self.sensor_manager = new_manager;
                 }
+                // Self-test sweep has finished handing off to real sensors — safe to start
+                // raising alerts now that watchdogs read live hardware, not the synthetic sweep.
+                self.alert_manager.set_enabled(true);
             }
             _ => {}
         }

@@ -319,15 +319,10 @@ pub const SELF_TEST_DURATION: Duration = Duration::from_millis(2000);
 /// How often the synthetic frame is refreshed. Comfortably faster than the 60Hz render loop
 /// that drives SensorManager reads, so no single frame value is read as if it were stuck.
 const SELF_TEST_TICK: Duration = Duration::from_millis(20);
-/// Square-wave frequency for the HwSpeed pulse channel at the sweep's peak — arbitrary, just
-/// needs to be well within what DigitalSignalProcessorPulsePerSecond can resolve at the tick
-/// rate above.
-const SELF_TEST_MAX_PULSE_HZ: f32 = 20.0;
-/// SpeedSensor's pulse-per-second averaging window during self-test, much shorter than its
-/// 1s production default (see SpeedSensor::with_pulse_update_interval) — that default barely
-/// produces one update over SELF_TEST_DURATION's 2s total, which reads as the speed needle
-/// never moving at all.
-pub const SELF_TEST_SPEED_PULSE_WINDOW: Duration = Duration::from_millis(150);
+/// Peak target speed for the HwSpeed channel's sweep — deliberately above the gauge's 180
+/// km/h max (see hardware::sensors::SpeedSensor) so the sweep visibly reaches and clamps at
+/// the top of the gauge rather than falling just short of it.
+const SELF_TEST_SPEED_PEAK_KMH: f32 = 200.0;
 
 /// Populates an ADCFrame with synthetic values instead of reading the STM32 over serial —
 /// mirrors ADCDataProvider's shape (owns an ADCFrame, updates it from a background thread) so
@@ -386,28 +381,6 @@ impl TestADCDataProvider {
         }
     }
 
-    /// Cumulative pulse-edge count for the HwSpeed square wave: the time-integral of an
-    /// edge rate that itself follows `envelope() * SELF_TEST_MAX_PULSE_HZ`. Deriving the
-    /// square wave from this integral (rather than from `elapsed * instantaneous_rate`,
-    /// which isn't actually the edge count and produces a jittery, non-monotonic value)
-    /// keeps the edge rate genuinely tracking the envelope, so the pulses-per-second speed
-    /// reading rises and falls smoothly like every other self-test gauge.
-    fn pulse_phase(elapsed: Duration) -> f32 {
-        let rise_secs = SELF_TEST_RISE.as_secs_f32();
-        let max_hz = SELF_TEST_MAX_PULSE_HZ;
-        if elapsed < SELF_TEST_RISE {
-            let t = elapsed.as_secs_f32();
-            // Integral of (max_hz * t / rise_secs) dt from 0 to t.
-            max_hz * t * t / (2.0 * rise_secs)
-        } else {
-            let phase_at_rise_end = max_hz * rise_secs / 2.0;
-            let fall_secs = SELF_TEST_FALL.as_secs_f32();
-            let s = (elapsed - SELF_TEST_RISE).as_secs_f32().min(fall_secs);
-            // Integral of (max_hz * (1 - s/fall_secs)) ds from 0 to s.
-            phase_at_rise_end + max_hz * s - max_hz * s * s / (2.0 * fall_secs)
-        }
-    }
-
     /// Builds one synthetic STM32 frame (channels 0-15, matching the real layout used by
     /// main.rs's add_adc_sensor_chains: A0-A3, TACHO, SPEED, D0-D9). Button channels
     /// (16-23) are omitted — the button sensor manager always reads the real ADCFrame
@@ -418,10 +391,14 @@ impl TestADCDataProvider {
         // Digital channels latch active only past the envelope's midpoint, so debouncers see
         // a clean active period followed by a clean inactive one rather than chattering.
         let digital_raw: u16 = if level > 0.5 { 1 } else { 0 };
-        // HwSpeed (SpeedSensor) derives speed from pulse edges, not a static level — a plain
-        // digital_raw level would read as a constant zero speed. Toggle it as a square wave
-        // whose edge rate tracks the envelope instead.
-        let pulse_raw: u16 = (Self::pulse_phase(elapsed) as u32 % 2) as u16;
+        // HwSpeed reports an inter-pulse period, not a count (see
+        // SPEED_TACHO_PULSE_PERIOD_DESIGN.md) — encoded directly from the envelope's target
+        // speed via SpeedSensor's own inverse conversion (speed_period_raw_from_kmh), so this
+        // synthetic data and the real conversion it drives can't silently drift apart. Unlike
+        // the count-based approach this replaced, no dithering trick is needed here: a period
+        // already varies smoothly with speed, so the post-conversion reading tracks the
+        // envelope directly.
+        let speed_raw = crate::hardware::sensors::speed_period_raw_from_kmh(level * SELF_TEST_SPEED_PEAK_KMH);
 
         let mut channels = vec![0u16; 16];
         channels[0] = analog_raw;  // HwOilPress
@@ -429,7 +406,7 @@ impl TestADCDataProvider {
         channels[2] = analog_raw;  // HwEngineCoolantTemp
         channels[3] = analog_raw;  // Hw12v
         channels[4] = digital_raw; // HwTacho (boolean indicator)
-        channels[5] = pulse_raw;   // HwSpeed (pulse-per-second driven)
+        channels[5] = speed_raw;   // HwSpeed (raw inter-pulse period)
         channels[6] = digital_raw; // HwOilPressLow (D0)
         channels[7] = digital_raw; // HwFuelLvlLow (D1)
         channels[8] = digital_raw; // HwCharge (D2)
@@ -456,28 +433,26 @@ impl Drop for TestADCDataProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hardware::hw_providers::{ADCChannelProvider, HWDigitalProvider, HWInput};
-    use crate::hardware::sensors::{SpeedSensor, DigitalSensor};
+    use crate::hardware::hw_providers::{ADCChannelProvider, HWAnalogProvider, HWInput};
+    use crate::hardware::sensors::{AnalogSensor, SpeedSensor};
 
-    /// Regression test for a bug where the self-test speed gauge never visibly moved:
-    /// SpeedSensor's default 1s pulse-per-second averaging window barely produces one
-    /// update over the ~2s self-test sweep, so with the default window the reading stays
-    /// at 0.0 for the whole sweep. Drives the exact same ADCChannelProvider ->
-    /// read_digital -> SpeedSensor path main.rs's self-test wiring uses (with
-    /// SELF_TEST_SPEED_PULSE_WINDOW instead of the production default) and asserts a
-    /// nonzero speed is observed before the sweep ends.
+    /// Regression test for a bug where the self-test speed gauge never visibly moved.
+    /// Drives the exact same pipeline main.rs's add_adc_sensor_chains wires up for HwSpeed
+    /// (ADCChannelProvider::read_analog -> SpeedSensor, no signal processors -- see
+    /// SPEED_TACHO_PULSE_PERIOD_DESIGN.md) and asserts a nonzero km/h reading is observed
+    /// before the sweep ends.
     #[test]
     fn self_test_speed_channel_produces_nonzero_reading_within_sweep() {
         let provider = TestADCDataProvider::start();
         let frame = provider.frame();
         let adc_provider = ADCChannelProvider::new(HWInput::HwSpeed, 5, frame);
-        let mut sensor = SpeedSensor::with_pulse_update_interval(SELF_TEST_SPEED_PULSE_WINDOW);
+        let mut sensor = SpeedSensor::new();
 
         let start = Instant::now();
         let mut saw_nonzero_speed = false;
         while start.elapsed() < SELF_TEST_DURATION {
-            if let Ok(level) = adc_provider.read_digital(HWInput::HwSpeed) {
-                if sensor.read(level).unwrap().as_f32() > 0.0 {
+            if let Ok(raw) = adc_provider.read_analog(HWInput::HwSpeed) {
+                if sensor.read(raw).unwrap().as_f32() > 0.0 {
                     saw_nonzero_speed = true;
                     break;
                 }
@@ -486,5 +461,43 @@ mod tests {
         }
 
         assert!(saw_nonzero_speed, "self-test speed channel never produced a nonzero reading within SELF_TEST_DURATION");
+    }
+
+    /// End-to-end validation of the period-based redesign (see
+    /// SPEED_TACHO_PULSE_PERIOD_DESIGN.md's Status section, step 1): generate_channels
+    /// encodes HwSpeed via speed_period_raw_from_kmh(envelope * SELF_TEST_SPEED_PEAK_KMH),
+    /// and SpeedSensor decodes it back via the inverse formula. This asserts the round trip
+    /// actually recovers the intended speed while comfortably clear of the gauge's 0 floor
+    /// and 180 clamp ceiling (both edges are dominated by rounding/staleness behavior that
+    /// the other tests exercise directly, not by the conversion itself).
+    ///
+    /// Steps through generate_channels directly (fixed SELF_TEST_TICK increments) instead of
+    /// racing TestADCDataProvider's background thread against wall-clock time: the latter
+    /// made "target" (computed from the test's own Instant) and "raw" (last written by the
+    /// thread up to one SELF_TEST_TICK ago) drift apart during the steepest part of the
+    /// sweep -- at 200 km/h over a 500ms rise, one tick of lag alone is ~8 km/h, well past
+    /// any reasonable tolerance. Calling generate_channels directly makes both sides of the
+    /// comparison agree on the exact same `elapsed`, eliminating that timing race entirely.
+    #[test]
+    fn self_test_speed_channel_tracks_envelope_target_speed() {
+        let mut sensor = SpeedSensor::new();
+
+        let mut elapsed = Duration::ZERO;
+        let mut checked_a_midrange_sample = false;
+        while elapsed < SELF_TEST_DURATION {
+            let channels = TestADCDataProvider::generate_channels(elapsed);
+            let speed = sensor.read(channels[5]).unwrap().as_f32();
+            let target = (TestADCDataProvider::envelope(elapsed) * SELF_TEST_SPEED_PEAK_KMH).min(180.0);
+
+            if target > 20.0 && target < 170.0 {
+                assert!((speed - target).abs() < 2.0,
+                        "at elapsed={:?}, target={:.1} km/h but sensor read {:.1} km/h", elapsed, target, speed);
+                checked_a_midrange_sample = true;
+            }
+
+            elapsed += SELF_TEST_TICK;
+        }
+
+        assert!(checked_a_midrange_sample, "sweep never passed through a mid-range speed to validate against");
     }
 }
