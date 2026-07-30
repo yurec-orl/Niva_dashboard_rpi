@@ -235,7 +235,7 @@ fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>, gnss: Option<G
         Box::new(GnssLinkStatusProvider::new(gnss.clone())),
         vec![],
         Box::new(GenericDigitalSensor::new("HwGnssLink".to_string(), "GNSS LINK".to_string(),
-                                           Level::High, ValueConstraints::digital_critical())),
+                                           Level::High, ValueConstraints::digital_warning())),
     );
     mgr.add_digital_sensor_chain(gnss_link_chain);
 

@@ -468,13 +468,22 @@ impl PageManager {
             None,                                           // Trigger immediately, no persistence delay
         );
 
+        let gnss_link_watchdog = Watchdog::new(
+            HWInput::HwGnssLink,
+            "ОШИБКА СВЯЗИ ГНСС".to_string(),
+            Severity::Warning,
+            Some(std::time::Duration::from_secs(30)),       // Display for 30 s
+            Some(std::time::Duration::from_secs(10*60)),    // Suppress for 10 minutes
+            None,                                           // Trigger immediately, no persistence delay
+        );
+
         // "On battery" is a Warning here — the actual shutdown decision has its own,
         // longer-delayed timer in UpsMonitor::check. This just surfaces it to the driver.
         let ups_on_battery_watchdog = Watchdog::new(
             HWInput::HwUPSCurrent,
             "РЕЗЕРВНОЕ ПИТАНИЕ".to_string(),
             Severity::Warning,
-            Some(std::time::Duration::from_secs(60)),       // Display for 60 s
+            Some(std::time::Duration::from_secs(30)),       // Display for 30 s
             Some(std::time::Duration::from_secs(60)),       // Wait 60 s before displaying again
             Some(std::time::Duration::from_secs(10)),       // Ignore brief transients
         );
@@ -499,6 +508,7 @@ impl PageManager {
         self.alert_manager.add_watchdog(engine_temp_watchdog);
         self.alert_manager.add_watchdog(oil_press_low_watchdog);
         self.alert_manager.add_watchdog(adc_link_watchdog);
+        self.alert_manager.add_watchdog(gnss_link_watchdog);
         self.alert_manager.add_watchdog(ups_on_battery_watchdog);
         self.alert_manager.add_watchdog(ups_low_charge_watchdog);
         self.alert_manager.add_watchdog(ups_crit_charge_watchdog);

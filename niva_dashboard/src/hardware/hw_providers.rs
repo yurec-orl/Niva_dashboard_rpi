@@ -63,6 +63,8 @@ pub enum HWInput {
     // UPS I2C input
     HwUPSCurrent,
     HwUPSChargeState,
+    // UPS i2C link health
+    HwUPSLink,
     // GNSS receiver-derived inputs (see util::gnss_data_provider / util::nmea). Only
     // scalar fields go through this pipeline via GnssChannelProvider — position and
     // date/time are composite values, read directly from GnssFrame by whatever eventually
