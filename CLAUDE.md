@@ -2,7 +2,7 @@
 
 ## Response constraints
 - Ask before generating demos or examples.
-- Write meaningful, descriptive comments only where the WHY isn't obvious from the code. Do not restate the code in comments.
+- Write brief, meaningful, descriptive comments only where the WHY isn't obvious from the code. Do not restate the code in comments. Do not reference design decisions or internal project docs.
 
 ## Project Overview
 A software dashboard for automotive use, written in Rust, running on Raspberry Pi 4. Mimics a multi-functional display (MFD) as found in aircraft: central screen with configurable button rows on the left and right sides. On-screen text is in Russian, using military-style abbreviations and shortened words where applicable.
