@@ -122,6 +122,7 @@ Boot reduced from ~16.8s to ~5.1s by disabling unused systemd services (`Network
 - [In progress] GNSS connectivity and indicators
 - BNO085 connectivity and related indicators
 - [Done] Out of memory protection: `earlyoom` installed and enabled (OS-level, not part of this repo — a fresh SD flash needs it reinstalled: `apt install earlyoom`). Kills the largest memory consumer before the kernel OOM killer lets the system thrash into unresponsiveness. Config in `/etc/default/earlyoom` avoids killing `sshd` (so remote recovery stays possible) but deliberately does *not* protect the dashboard binary — if it leaks and gets killed, the startup script restarts it fresh, which is the desired behavior.
+- Improve sensor->watchdog->alert construction: currently, it is a multi-step process involving a lot of parameters, and it's easy to mismatch one of the parameters which can cause the alert to never trigger.
 
 ## PiOS login
 `user` / `@Niva21#`; `root` password is standard password with a single numeric character.
