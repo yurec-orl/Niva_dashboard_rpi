@@ -1,0 +1,196 @@
+#![allow(dead_code)]
+use crate::graphics::context::GraphicsContext;
+use crate::graphics::ui_style::*;
+use crate::page_framework::events::{EventReceiver, SmartEventSender, UIEvent};
+use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition, MAIN_PAGE_ID};
+use crate::hardware::sensor_manager::SensorManager;
+use crate::util::gnss_data_provider::GnssFrame;
+use crate::util::nmea::{FixQuality, GnssFix};
+
+const CONTENT_X_MARGIN: f32 = 40.0;
+const TITLE_Y: f32 = 20.0;
+const TITLE_CONTENT_GAP: f32 = 10.0;
+
+/// Structured GNSS status page: parsed fix (position/speed/heading/time) pulled straight
+/// from GnssFrame, unlike the raw-NMEA `TerminalPage::new_gnss` view reachable from the
+/// diag page.
+pub struct GnssPage {
+    base: PageBase,
+    event_receiver: EventReceiver,
+    smart_event_sender: SmartEventSender,
+    frame: GnssFrame,
+}
+
+impl GnssPage {
+    pub fn new(id: u32, smart_event_sender: SmartEventSender, event_receiver: EventReceiver, frame: GnssFrame) -> Self {
+        let mut page = GnssPage {
+            base: PageBase::new(id, "GNSS".to_string()),
+            smart_event_sender,
+            event_receiver,
+            frame,
+        };
+        page.setup_buttons();
+        page
+    }
+
+    fn setup_buttons(&mut self) {
+        let buttons = vec![
+            PageButton::new(ButtonPosition::Right4, "ВОЗВ".into(), Box::new({
+                let sender = self.smart_event_sender.clone();
+                move || sender.send(UIEvent::SwitchToPage(MAIN_PAGE_ID))
+            }) as Box<dyn FnMut()>),
+        ];
+        self.base.set_buttons(buttons);
+    }
+
+    fn na() -> String {
+        "н/д".to_string()
+    }
+
+    fn fix_quality_label(q: FixQuality) -> String {
+        match q {
+            FixQuality::Invalid => "НЕТ".to_string(),
+            FixQuality::Gps => "GPS".to_string(),
+            FixQuality::DGps => "DGPS".to_string(),
+            FixQuality::PpsFix => "PPS".to_string(),
+            FixQuality::RtkFixed => "RTK ФИКС".to_string(),
+            FixQuality::RtkFloat => "RTK ПЛАВ".to_string(),
+            FixQuality::Estimated => "ОЦЕНКА".to_string(),
+            FixQuality::Manual => "РУЧН".to_string(),
+            FixQuality::Simulation => "СИМ".to_string(),
+            FixQuality::Unknown(code) => format!("? ({})", code),
+        }
+    }
+
+    fn lat_str(fix: &GnssFix) -> String {
+        match fix.latitude_deg {
+            Some(v) => format!("{:.6}\u{00B0} {}", v.abs(), if v >= 0.0 { "с.ш." } else { "ю.ш." }),
+            None => Self::na(),
+        }
+    }
+
+    fn lon_str(fix: &GnssFix) -> String {
+        match fix.longitude_deg {
+            Some(v) => format!("{:.6}\u{00B0} {}", v.abs(), if v >= 0.0 { "в.д." } else { "з.д." }),
+            None => Self::na(),
+        }
+    }
+
+    fn datetime_str(fix: &GnssFix) -> String {
+        match (fix.time, fix.date) {
+            (Some(t), Some(d)) => format!("{:02}:{:02}:{:02}  {:02}.{:02}.{}", t.hour, t.minute, t.second as u8, d.day, d.month, d.year),
+            (Some(t), None) => format!("{:02}:{:02}:{:02}", t.hour, t.minute, t.second as u8),
+            _ => Self::na(),
+        }
+    }
+}
+
+impl Page for GnssPage {
+    fn id(&self) -> u32 {
+        self.base.id()
+    }
+
+    fn name(&self) -> &str {
+        self.base.name()
+    }
+
+    fn set_buttons(&mut self, buttons: Vec<PageButton<Box<dyn FnMut()>>>) {
+        self.base.set_buttons(buttons);
+    }
+
+    fn render(&self, context: &mut GraphicsContext, _sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
+        let title_font = ui_style.get_string(TEXT_PRIMARY_FONT, DEFAULT_GLOBAL_FONT_PATH);
+        let title_font_size = ui_style.get_integer(TEXT_PRIMARY_FONT_SIZE, 24);
+        let title_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (1.0, 1.0, 1.0));
+        let header_color = title_color;
+        let text_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (0.8, 0.8, 0.8));
+        let warning_color = ui_style.get_color(TEXT_WARNING_COLOR, (1.0, 1.0, 0.0));
+
+        let font = ui_style.get_string(TEXT_MONOSPACE_FONT, TERMINAL_FONT_PATH);
+        let font_size = ui_style.get_integer(TEXT_MONOSPACE_FONT_SIZE, 16);
+
+        context.render_text_with_font(
+            "НАВИГАЦИЯ", CONTENT_X_MARGIN, TITLE_Y, 1.0, title_color, &title_font, title_font_size,
+        )?;
+
+        let title_height = context.calculate_text_height_with_font("НАВИГАЦИЯ", 1.0, &title_font, title_font_size)?;
+        let line_height = context.get_line_height_with_font(1.0, &font, font_size)?;
+        let mut y = TITLE_Y + title_height + TITLE_CONTENT_GAP;
+
+        // Read directly from the frame rather than through the sensor chain — lat/lon/
+        // time/date are composite fields GnssChannelProvider doesn't carry (see
+        // hw_providers.rs), so this page is the sole consumer of the full GnssFix.
+        let stale = self.frame.is_stale();
+        let fix = self.frame.fix();
+
+        let link_str = if stale { "НЕТ СВЯЗИ" } else { "ОК" }.to_string();
+        let quality_str = fix.fix_quality.map(Self::fix_quality_label).unwrap_or_else(Self::na);
+        let satellites_str = fix.satellites.map(|s| s.to_string()).unwrap_or_else(Self::na);
+        let hdop_str = fix.hdop.map(|v| format!("{:.2}", v)).unwrap_or_else(Self::na);
+        let alt_str = fix.altitude_m.map(|v| format!("{:.0} м", v)).unwrap_or_else(Self::na);
+        let speed_str = fix.speed_kmh.map(|v| format!("{:.1} км/ч", v)).unwrap_or_else(Self::na);
+        let course_str = fix.course_deg.map(|v| format!("{:.1}\u{00B0}", v)).unwrap_or_else(Self::na);
+        let heading_str = fix.heading_deg.map(|v| format!("{:.1}\u{00B0}", v)).unwrap_or_else(Self::na);
+
+        let lines: Vec<(String, bool, bool)> = vec![
+            ("СВЯЗЬ:".to_string(), true, false),
+            (format!("  статус:    {}", link_str), false, stale),
+            (String::new(), false, false),
+            ("ФИКС:".to_string(), true, false),
+            (format!("  качество:  {}", quality_str), false, false),
+            (format!("  спутники:  {}", satellites_str), false, false),
+            (format!("  HDOP:      {}", hdop_str), false, false),
+            (String::new(), false, false),
+            ("ПОЗИЦИЯ:".to_string(), true, false),
+            (format!("  широта:    {}", Self::lat_str(&fix)), false, false),
+            (format!("  долгота:   {}", Self::lon_str(&fix)), false, false),
+            (format!("  высота:    {}", alt_str), false, false),
+            (String::new(), false, false),
+            ("ДВИЖЕНИЕ:".to_string(), true, false),
+            (format!("  скорость:  {}", speed_str), false, false),
+            (format!("  курс:      {}", course_str), false, false),
+            (format!("  азимут:    {}", heading_str), false, false),
+            (String::new(), false, false),
+            ("ВРЕМЯ UTC:".to_string(), true, false),
+            (format!("  {}", Self::datetime_str(&fix)), false, false),
+        ];
+
+        for (text, is_header, is_warning) in &lines {
+            if !text.is_empty() {
+                let color = if *is_warning { warning_color } else if *is_header { header_color } else { text_color };
+                context.render_text_with_font(text, CONTENT_X_MARGIN, y, 1.0, color, &font, font_size)?;
+            }
+            y += line_height;
+        }
+
+        Ok(())
+    }
+
+    fn on_enter(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn on_exit(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn on_button(&mut self, _button: char) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn process_events(&mut self) {
+        while self.event_receiver.try_recv().is_ok() {}
+    }
+
+    fn buttons(&self) -> &Vec<PageButton<Box<dyn FnMut()>>> {
+        self.base.buttons()
+    }
+
+    fn button_by_position(&self, pos: ButtonPosition) -> Option<&PageButton<Box<dyn FnMut()>>> {
+        self.base.button_by_position(pos)
+    }
+
+    fn button_by_position_mut(&mut self, pos: ButtonPosition) -> Option<&mut PageButton<Box<dyn FnMut()>>> {
+        self.base.button_by_position_mut(pos)
+    }
+}
