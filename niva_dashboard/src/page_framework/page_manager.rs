@@ -6,7 +6,7 @@ use crate::page_framework::events::{UIEvent, EventReceiver, EventBus, SmartEvent
 use crate::page_framework::input::{InputHandler, InputSource, ButtonState};
 use crate::page_framework::main_page::MainPage;
 use crate::page_framework::terminal_page::TerminalPage;
-use crate::page_framework::gnss_page::GnssPage;
+use crate::page_framework::gnss_page::{GnssPage, GnssMode};
 use crate::hardware::sensor_manager::SensorManager;
 use crate::hardware::hw_providers::HWInput;
 use crate::alerts::alert_manager::{AlertManager, Severity};
@@ -440,7 +440,9 @@ impl PageManager {
             let gnss_page = Box::new(GnssPage::new(GNSS_PAGE_ID,
                                                      smart_sender.clone(),
                                                      self.get_event_receiver(),
-                                                     frame));
+                                                     frame,
+                                                     GnssMode::PNP,
+                                                     &self.ui_style));
             self.add_page(gnss_page);
         }
 

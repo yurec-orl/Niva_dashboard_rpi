@@ -69,7 +69,7 @@ impl CompassIndicator {
             minor_mark_length: 10.0,
             mark_width: 2.0,
             ring_margin: 6.0,
-            label_font_size: 36,
+            label_font_size: 32,
             label_gap: 24.0,
             major_mark_color_key: COMPASS_MAJOR_MARK_COLOR,
             minor_mark_color_key: COMPASS_MINOR_MARK_COLOR,
@@ -385,8 +385,8 @@ impl Decorator for CompassHeadingMarkerDecorator {
         let top_y = cy - marks_inner_r + self.major_mark_length * 2.0;
 
         // Two vertical halves, from the circle's center up to the scale's inner edge.
-        context.render_rectangle(cx - half_gap - self.arrow_width / 2.0, top_y, self.arrow_width, cy - top_y, arrow_color, true, 0.0, 0.0)?;
-        context.render_rectangle(cx + half_gap - self.arrow_width / 2.0, top_y, self.arrow_width, cy - top_y, arrow_color, true, 0.0, 0.0)?;
+        context.render_rectangle(cx - half_gap - self.arrow_width / 2.0, top_y, self.arrow_width, bounds.height - top_y, arrow_color, true, 0.0, 0.0)?;
+        context.render_rectangle(cx + half_gap - self.arrow_width / 2.0, top_y, self.arrow_width, bounds.height - top_y, arrow_color, true, 0.0, 0.0)?;
 
         // Center tick between the halves, poking up into the scale.
         let center_len = self.major_mark_length * 3.0;

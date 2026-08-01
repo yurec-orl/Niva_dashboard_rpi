@@ -120,6 +120,8 @@ Boot reduced from ~16.8s to ~5.1s by disabling unused systemd services (`Network
 - 'Master warning' button/indicator to the system: non-latching button with a warning light which lights up when an alert is active, and button press clears active alerts. Probably wire directly to Pi GPIO because STM32 ran out of pins (and to
   have it still function if no link to ADC module). Power considerations: 16 mA draw per pin and <= 50 mA total GPIO draw. 16 mA should be fine for one LED, possibly even less if brightness is enough for a warning light.
 - [In progress] GNSS connectivity and indicators
+- [In progress] HSI (horizontal situation indicator) styled indicator - heading, speed, altitude, manually set waypoints, etc.
+- Nav page map mode - need to decide on which map data to use and how to render
 - BNO085 connectivity and related indicators
 - [Done] Out of memory protection: `earlyoom` installed and enabled (OS-level, not part of this repo — a fresh SD flash needs it reinstalled: `apt install earlyoom`). Kills the largest memory consumer before the kernel OOM killer lets the system thrash into unresponsiveness. Config in `/etc/default/earlyoom` avoids killing `sshd` (so remote recovery stays possible) but deliberately does *not* protect the dashboard binary — if it leaks and gets killed, the startup script restarts it fresh, which is the desired behavior.
 - Improve sensor->watchdog->alert construction: currently, it is a multi-step process involving a lot of parameters, and it's easy to mismatch one of the parameters which can cause the alert to never trigger.

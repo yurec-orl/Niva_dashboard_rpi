@@ -4,12 +4,29 @@ use crate::graphics::ui_style::*;
 use crate::page_framework::events::{EventReceiver, SmartEventSender, UIEvent};
 use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition, MAIN_PAGE_ID};
 use crate::hardware::sensor_manager::SensorManager;
+use crate::hardware::hw_providers::HWInput;
 use crate::util::gnss_data_provider::GnssFrame;
 use crate::util::nmea::{FixQuality, GnssFix};
+use crate::indicators::compass_indicator::{CompassHeadingMarkerDecorator, CompassIndicator};
+use crate::indicators::indicator::{Indicator, IndicatorBounds};
+use crate::indicators::text_indicator::{TextIndicator, TextAlignment};
+use crate::indicators::decorator::*;
+use crate::util::gnss_data_provider::TestGnssDataProvider;
 
 const CONTENT_X_MARGIN: f32 = 40.0;
 const TITLE_Y: f32 = 20.0;
 const TITLE_CONTENT_GAP: f32 = 10.0;
+
+pub enum GnssMode {
+    Info,
+    PNP,        // ПНП (планово-навигационный прибор) imitation mode - heading, track and basic waypoint navigation
+    Map,        // map mode - not implemented yet
+}
+
+struct PnpMode {
+    compass_indicator: CompassIndicator,
+    heading_indicator: TextIndicator,
+}
 
 /// Structured GNSS status page: parsed fix (position/speed/heading/time) pulled straight
 /// from GnssFrame, unlike the raw-NMEA `TerminalPage::new_gnss` view reachable from the
@@ -19,22 +36,55 @@ pub struct GnssPage {
     event_receiver: EventReceiver,
     smart_event_sender: SmartEventSender,
     frame: GnssFrame,
+    mode: GnssMode,
+    pnp_mode: PnpMode,
+    gnss: TestGnssDataProvider,
 }
 
 impl GnssPage {
-    pub fn new(id: u32, smart_event_sender: SmartEventSender, event_receiver: EventReceiver, frame: GnssFrame) -> Self {
+    pub fn new(id: u32, smart_event_sender: SmartEventSender, event_receiver: EventReceiver, frame: GnssFrame, mode: GnssMode, ui_style: &UIStyle) -> Self {
         let mut page = GnssPage {
             base: PageBase::new(id, "GNSS".to_string()),
             smart_event_sender,
             event_receiver,
             frame,
+            mode,
+            pnp_mode: GnssPage::setup_pnp_mode(ui_style),
+            gnss: TestGnssDataProvider::start()         // TODO: Temporary data provider - remove after testing
         };
         page.setup_buttons();
         page
     }
 
+    fn setup_pnp_mode(ui_style: &UIStyle) -> PnpMode {
+        let visible_half_angle_deg = 120.0;
+        let ring_margin = 24.0;
+        let major_mark_length = 18.0;
+
+        let heading_label_color = ui_style.get_color(COMPASS_LABEL_COLOR, (0.9, 0.9, 1.0));
+        let heading_label_font = ui_style.get_string(COMPASS_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
+
+        PnpMode {
+            compass_indicator: CompassIndicator::new().with_decorators(vec![
+                Box::new(CompassHeadingMarkerDecorator::new(visible_half_angle_deg, ring_margin, major_mark_length))]),
+            heading_indicator: TextIndicator::new().with_font(heading_label_font, 36, 1.0).with_colors(heading_label_color, (1.0, 1.0, 0.0), (1.0, 0.0, 0.0)).
+                with_parameters(TextAlignment::Center, false, false).with_decorators(vec![
+                    Box::new(BoxDecorator::new(2.0, COMPASS_LABEL_COLOR, 0.0)),
+                    Box::new(TriangleDecorator::new([(0.5, 1.5), (0.35, 1.2), (0.65, 1.2)], 2.0, COMPASS_LABEL_COLOR, true)),
+                ]),
+        }
+    }
+
     fn setup_buttons(&mut self) {
         let buttons = vec![
+            PageButton::new(ButtonPosition::Left1, "ПНП".into(), Box::new({
+                let sender = self.smart_event_sender.clone();
+                move || sender.send(UIEvent::NavPnpMode)
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Left2, "ИНФ".into(), Box::new({
+                let sender = self.smart_event_sender.clone();
+                move || sender.send(UIEvent::NavInfoMode)
+            }) as Box<dyn FnMut()>),
             PageButton::new(ButtonPosition::Right4, "ВОЗВ".into(), Box::new({
                 let sender = self.smart_event_sender.clone();
                 move || sender.send(UIEvent::SwitchToPage(MAIN_PAGE_ID))
@@ -83,22 +133,8 @@ impl GnssPage {
             _ => Self::na(),
         }
     }
-}
 
-impl Page for GnssPage {
-    fn id(&self) -> u32 {
-        self.base.id()
-    }
-
-    fn name(&self) -> &str {
-        self.base.name()
-    }
-
-    fn set_buttons(&mut self, buttons: Vec<PageButton<Box<dyn FnMut()>>>) {
-        self.base.set_buttons(buttons);
-    }
-
-    fn render(&self, context: &mut GraphicsContext, _sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
+    fn render_info_mode(&self, context: &mut GraphicsContext, _sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
         let title_font = ui_style.get_string(TEXT_PRIMARY_FONT, DEFAULT_GLOBAL_FONT_PATH);
         let title_font_size = ui_style.get_integer(TEXT_PRIMARY_FONT_SIZE, 24);
         let title_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (1.0, 1.0, 1.0));
@@ -166,6 +202,70 @@ impl Page for GnssPage {
         Ok(())
     }
 
+    fn render_pnp_mode(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
+        use crate::hardware::sensor_value::SensorValue;
+
+        let w = context.width as f32;
+        let h = context.height as f32;
+        let bounds = IndicatorBounds::new(w * 0.2, h * 0.1, w * 0.6, h * 0.8);
+
+        // if let Some(heading_value) = sensor_manager.get_sensor_value(&HWInput::HwGnssHeading) {
+        //     self.pnp_mode.compass_indicator.render(heading_value, bounds, &ui_style, context)?;
+        // }
+        
+        // TODO: remove test gnss provider usage after testing
+        let fix = self.gnss.frame().fix();
+        let heading = fix.heading_deg.unwrap_or(0.0);
+        let mut heading_value = SensorValue::analog(0.0, 0.0, 359.999, "\u{00B0}", "Курс", "test_heading");
+        heading_value.value = crate::hardware::sensor_value::ValueData::Analog(heading);
+
+        // Heading indicator sits directly above the compass's drawn arc, centered over the
+        // same horizontal span, derived from the compass's own geometry so the two can't
+        // drift out of alignment.
+        
+        let heading_font = ui_style.get_string(COMPASS_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
+        let heading_font_height = context.get_line_height_with_font(1.0, &heading_font, 36)?;
+        let heading_font_width = context.calculate_text_width_with_font("0000", 1.0, &heading_font, 36)?;
+
+        let (_cx, cy, radius) = CompassIndicator::geometry(bounds, self.pnp_mode.compass_indicator.visible_half_angle_deg());
+        let compass_top_y = cy - (radius - self.pnp_mode.compass_indicator.ring_margin());
+        let heading_bounds = IndicatorBounds::new((w - heading_font_width) / 2.0, (compass_top_y - heading_font_height - 16.0).max(0.0), heading_font_width, heading_font_height);
+        self.pnp_mode.heading_indicator.render(&heading_value, heading_bounds, &ui_style, context)?;
+
+        self.pnp_mode.compass_indicator.render(&heading_value, bounds, &ui_style, context)?;
+
+        Ok(())
+    }
+}
+
+impl Page for GnssPage {
+    fn id(&self) -> u32 {
+        self.base.id()
+    }
+
+    fn name(&self) -> &str {
+        self.base.name()
+    }
+
+    fn set_buttons(&mut self, buttons: Vec<PageButton<Box<dyn FnMut()>>>) {
+        self.base.set_buttons(buttons);
+    }
+
+    fn render(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
+
+        match self.mode {
+            GnssMode::Info => {
+                self.render_info_mode(context, sensor_manager, ui_style)?;
+            },
+            GnssMode::PNP => {
+                self.render_pnp_mode(context, sensor_manager, ui_style)?;
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+
     fn on_enter(&mut self) -> Result<(), String> {
         Ok(())
     }
@@ -179,7 +279,17 @@ impl Page for GnssPage {
     }
 
     fn process_events(&mut self) {
-        while self.event_receiver.try_recv().is_ok() {}
+        while let Ok(event) = self.event_receiver.try_recv() {
+            match event {
+                UIEvent::NavPnpMode => {
+                    self.mode = GnssMode::PNP;
+                },
+                UIEvent::NavInfoMode => {
+                    self.mode = GnssMode::Info;
+                },
+                _ => {}
+            }
+        }
     }
 
     fn buttons(&self) -> &Vec<PageButton<Box<dyn FnMut()>>> {

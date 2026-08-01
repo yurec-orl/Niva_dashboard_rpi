@@ -1447,6 +1447,139 @@ impl GraphicsContext {
         Ok(())
     }
     
+    /// Render a triangle from 3 points, filled or as an outline
+    pub fn render_triangle(
+        &mut self,
+        points: [(f32, f32); 3],
+        color: (f32, f32, f32),
+        filled: bool,
+        thickness: f32,
+    ) -> Result<(), String> {
+        let color = self.apply_brightness(color);
+        unsafe {
+            if filled {
+                self.render_filled_triangle(points, color)
+            } else {
+                self.render_triangle_outline(points, color, thickness)
+            }
+        }
+    }
+
+    /// Render a filled triangle (solid color)
+    unsafe fn render_filled_triangle(
+        &mut self,
+        points: [(f32, f32); 3],
+        color: (f32, f32, f32),
+    ) -> Result<(), String> {
+        let shader_program = self.get_or_create_rectangle_shader()?;
+        gl::UseProgram(shader_program);
+
+        let projection_matrix = self.create_2d_projection_matrix();
+        let projection_uniform = gl::GetUniformLocation(shader_program, b"projection\0".as_ptr());
+        gl::UniformMatrix4fv(projection_uniform, 1, gl::FALSE, projection_matrix.as_ptr());
+
+        let color_uniform = gl::GetUniformLocation(shader_program, b"color\0".as_ptr());
+        gl::Uniform3f(color_uniform, color.0, color.1, color.2);
+
+        let vertices: [f32; 6] = [
+            points[0].0, points[0].1,
+            points[1].0, points[1].1,
+            points[2].0, points[2].1,
+        ];
+
+        let vbo = self.get_or_create_geometry_vbo();
+        gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+        gl::BufferData(
+            gl::ARRAY_BUFFER,
+            (vertices.len() * std::mem::size_of::<f32>()) as isize,
+            vertices.as_ptr() as *const std::ffi::c_void,
+            gl::DYNAMIC_DRAW,
+        );
+
+        let position_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr()) as u32;
+        gl::VertexAttribPointer(position_attr, 2, gl::FLOAT, gl::FALSE, 0, std::ptr::null());
+        gl::EnableVertexAttribArray(position_attr);
+
+        gl::DrawArrays(gl::TRIANGLES, 0, 3);
+
+        Ok(())
+    }
+
+    /// Render a triangle outline with specified thickness
+    unsafe fn render_triangle_outline(
+        &mut self,
+        points: [(f32, f32); 3],
+        color: (f32, f32, f32),
+        thickness: f32,
+    ) -> Result<(), String> {
+        // Square-capped thick lines so corners are fully covered without a miter join
+        self.render_thick_line(points[0], points[1], color, thickness)?;
+        self.render_thick_line(points[1], points[2], color, thickness)?;
+        self.render_thick_line(points[2], points[0], color, thickness)?;
+
+        Ok(())
+    }
+
+    /// Render a thick line segment between two points, with square end caps
+    unsafe fn render_thick_line(
+        &mut self,
+        p0: (f32, f32),
+        p1: (f32, f32),
+        color: (f32, f32, f32),
+        thickness: f32,
+    ) -> Result<(), String> {
+        let shader_program = self.get_or_create_rectangle_shader()?;
+        gl::UseProgram(shader_program);
+
+        let projection_matrix = self.create_2d_projection_matrix();
+        let projection_uniform = gl::GetUniformLocation(shader_program, b"projection\0".as_ptr());
+        gl::UniformMatrix4fv(projection_uniform, 1, gl::FALSE, projection_matrix.as_ptr());
+
+        let color_uniform = gl::GetUniformLocation(shader_program, b"color\0".as_ptr());
+        gl::Uniform3f(color_uniform, color.0, color.1, color.2);
+
+        let dx = p1.0 - p0.0;
+        let dy = p1.1 - p0.1;
+        let len = (dx * dx + dy * dy).sqrt();
+        let half = thickness / 2.0;
+        let (ux, uy, nx, ny) = if len > 0.0 {
+            (dx / len, dy / len, -dy / len * half, dx / len * half)
+        } else {
+            (0.0, 0.0, half, 0.0)
+        };
+
+        // Extend both ends by half the thickness (square cap) so adjoining edges meet cleanly
+        let p0e = (p0.0 - ux * half, p0.1 - uy * half);
+        let p1e = (p1.0 + ux * half, p1.1 + uy * half);
+
+        let vertices: [f32; 12] = [
+            p0e.0 + nx, p0e.1 + ny,
+            p1e.0 + nx, p1e.1 + ny,
+            p0e.0 - nx, p0e.1 - ny,
+
+            p1e.0 + nx, p1e.1 + ny,
+            p1e.0 - nx, p1e.1 - ny,
+            p0e.0 - nx, p0e.1 - ny,
+        ];
+
+        let vbo = self.get_or_create_geometry_vbo();
+        gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+        gl::BufferData(
+            gl::ARRAY_BUFFER,
+            (vertices.len() * std::mem::size_of::<f32>()) as isize,
+            vertices.as_ptr() as *const std::ffi::c_void,
+            gl::DYNAMIC_DRAW,
+        );
+
+        let position_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr()) as u32;
+        gl::VertexAttribPointer(position_attr, 2, gl::FLOAT, gl::FALSE, 0, std::ptr::null());
+        gl::EnableVertexAttribArray(position_attr);
+
+        gl::DrawArrays(gl::TRIANGLES, 0, 6);
+
+        Ok(())
+    }
+
     /// Get or create the rectangle shader program (cached)
     unsafe fn get_or_create_rectangle_shader(&mut self) -> Result<u32, String> {
         if let Some(shader) = self.rectangle_shader {

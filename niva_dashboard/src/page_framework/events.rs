@@ -38,6 +38,11 @@ pub enum UIEvent {
     OscSetTriggerLevel(f32),
     OscToggleChannel(u8),
 
+    // Nav page events
+    NavPnpMode,
+    NavInfoMode,
+    NavMapMode,
+
     // Alert events
     SuppressAlerts,
 
@@ -212,7 +217,10 @@ impl SmartEventSender {
             UIEvent::OscSetTimeScale(_) |
             UIEvent::OscSetVoltageScale(_) |
             UIEvent::OscSetTriggerLevel(_) |
-            UIEvent::OscToggleChannel(_) => {
+            UIEvent::OscToggleChannel(_) |
+            UIEvent::NavPnpMode | 
+            UIEvent::NavInfoMode |
+            UIEvent::NavMapMode => {
                 self.page_sender.send(event);
             }
         }
