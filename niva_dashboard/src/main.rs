@@ -414,6 +414,7 @@ fn show_help() {
     log::info!("5. Indicator middle position test (needle and bar gauges at 50%)");
     log::info!("6. Indicator maximum position test (needle and bar gauges at maximum)");
     log::info!("7. Fuel level grid stress test");
+    log::info!("8. Compass indicator test (synthetic GNSS heading sweep)");
 }
 
 fn main() -> std::process::ExitCode {
@@ -426,7 +427,7 @@ fn main() -> std::process::ExitCode {
     let args: Vec<String> = env::args().collect();
 
     log::info!("Niva Dashboard - Raspberry Pi Version (KMS/DRM Backend)");
-    log::info!("Usage: cargo run -- [help|test={{needle|gpio|digital|ind_zero_pos|ind_middle_pos|ind_max_pos|fuel_grid}}]");
+    log::info!("Usage: cargo run -- [help|test={{needle|gpio|digital|ind_zero_pos|ind_middle_pos|ind_max_pos|fuel_grid|compass}}]");
 
     for arg in args {
         let parm = arg.split("=").collect::<Vec<&str>>();

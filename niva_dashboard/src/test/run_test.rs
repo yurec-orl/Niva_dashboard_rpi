@@ -2,7 +2,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::graphics::context::GraphicsContext;
-use crate::graphics::opengl_test::{run_rotating_needle_gauge_test, run_indicator_zero_position_test, run_indicator_middle_position_test, run_indicator_max_position_test, run_fuel_level_grid_test};
+use crate::graphics::opengl_test::{run_rotating_needle_gauge_test, run_indicator_zero_position_test, run_indicator_middle_position_test, run_indicator_max_position_test, run_fuel_level_grid_test, run_compass_test};
 use crate::hardware::GpioInput;
 use crate::hardware::sensor_value::SensorValue;
 use crate::indicators::digital_segmented_indicator::DigitalSegmentedIndicator;
@@ -44,9 +44,13 @@ pub fn run_test(name: &str) {
             log::info!("\n=== Fuel Level Grid Stress Test ===");
             run_graphics_test("Niva Dashboard - Fuel Grid Stress Test", run_fuel_level_grid_test);
         }
+        "compass" => {
+            log::info!("\n=== Compass Indicator Test ===");
+            run_graphics_test("Niva Dashboard - Compass Test", run_compass_test);
+        }
         _ => {
             log::error!("Unknown test: {}", name);
-            log::error!("Valid options: needle, gpio, digital, ind_zero_pos, ind_middle_pos, ind_max_pos, fuel_grid");
+            log::error!("Valid options: needle, gpio, digital, ind_zero_pos, ind_middle_pos, ind_max_pos, fuel_grid, compass");
             log::error!("Note: SDL2-based tests (sdl2, advanced, etc.) are disabled after KMS/DRM migration");
             std::process::exit(1);
         }

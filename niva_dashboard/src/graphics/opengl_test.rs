@@ -1455,3 +1455,79 @@ pub fn run_fuel_level_grid_test(context: &mut GraphicsContext) -> Result<(), Str
         }
     }
 }
+
+/// Compass indicator test: rotating heading tape + fixed lubber-line overlay, driven by
+/// TestGnssDataProvider's synthetic heading sweep (see util/gnss_data_provider.rs) instead of
+/// a real GNSS receiver. Runs long enough (COMPASS_TEST_DURATION) to watch several full
+/// rotations, including the 359°->0° wraparound.
+pub fn run_compass_test(context: &mut GraphicsContext) -> Result<(), String> {
+    use crate::graphics::ui_style::*;
+    use crate::hardware::sensor_value::SensorValue;
+    use crate::indicators::compass_indicator::{CompassHeadingMarkerDecorator, CompassIndicator};
+    use crate::indicators::indicator::{Indicator, IndicatorBounds};
+    use crate::util::gnss_data_provider::TestGnssDataProvider;
+    use std::time::{Duration, Instant};
+
+    log::info!("=== Compass Indicator Test ===");
+    log::info!("Rotating heading tape driven by a synthetic GNSS heading sweep");
+
+    const COMPASS_TEST_DURATION: Duration = Duration::from_secs(30);
+
+    unsafe {
+        gl::Viewport(0, 0, context.width, context.height);
+        gl::Enable(gl::BLEND);
+        gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+    }
+
+    let ui_style = UIStyle::new();
+    let gnss = TestGnssDataProvider::start();
+    let frame = gnss.frame();
+
+    // Both objects must agree on visible_half_angle_deg/ring_margin/major_mark_length — see
+    // CompassIndicator::geometry's doc comment on why they aren't derived from one shared
+    // instance.
+    let visible_half_angle_deg = 120.0;
+    let ring_margin = 24.0;
+    let major_mark_length = 18.0;
+    let compass = CompassIndicator::new().with_decorators(vec![
+        Box::new(CompassHeadingMarkerDecorator::new(visible_half_angle_deg, ring_margin, major_mark_length)),
+    ]);
+
+    let w = context.width as f32;
+    let h = context.height as f32;
+    let bounds = IndicatorBounds::new(w * 0.2, h * 0.05, w * 0.6, h * 0.85);
+
+    let mut heading_value = SensorValue::analog(0.0, 0.0, 359.999, "\u{00B0}", "Курс", "test_heading");
+
+    let info_font = ui_style.get_string(TEXT_MONOSPACE_FONT, TERMINAL_FONT_PATH);
+    let info_font_size = ui_style.get_integer(TEXT_MONOSPACE_FONT_SIZE, 16);
+    let info_color = ui_style.get_color(TEXT_PRIMARY_COLOR, (1.0, 0.5, 0.0));
+
+    let start_time = Instant::now();
+    while start_time.elapsed() < COMPASS_TEST_DURATION {
+        let fix = frame.fix();
+        let heading = fix.heading_deg.unwrap_or(0.0);
+        heading_value.value = crate::hardware::sensor_value::ValueData::Analog(heading);
+
+        unsafe {
+            gl::ClearColor(0.05, 0.05, 0.1, 1.0);
+            gl::Clear(gl::COLOR_BUFFER_BIT);
+        }
+
+        compass.render(&heading_value, bounds, &ui_style, context)?;
+
+        let info = format!(
+            "КУРС: {:>5.1}\u{00B0}   СКОР: {:>5.1} км/ч   СПУТ: {}",
+            heading,
+            fix.speed_kmh.unwrap_or(0.0),
+            fix.satellites.map(|s| s.to_string()).unwrap_or_else(|| "н/д".to_string()),
+        );
+        context.render_text_with_font(&info, w * 0.1, h * 0.92, 1.0, info_color, &info_font, info_font_size)?;
+
+        context.swap_buffers();
+        std::thread::sleep(std::time::Duration::from_millis(16));
+    }
+
+    log::info!("Compass indicator test completed!");
+    Ok(())
+}

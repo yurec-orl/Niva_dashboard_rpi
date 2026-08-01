@@ -147,6 +147,15 @@ pub const BAR_MARK_LABELS_COLOR: &str = "bar_mark_labels_color";
 pub const BAR_SEGMENT_COUNT: &str = "bar_segment_count";
 pub const BAR_SEGMENT_GAP: &str = "bar_segment_gap";
 
+// Compass Style Elements
+pub const COMPASS_MAJOR_MARK_COLOR: &str = "compass_major_mark_color";
+pub const COMPASS_MINOR_MARK_COLOR: &str = "compass_minor_mark_color";
+pub const COMPASS_LABEL_COLOR: &str = "compass_label_color";
+pub const COMPASS_LABEL_FONT: &str = "compass_label_font";
+pub const COMPASS_LABEL_FONT_SIZE: &str = "compass_label_font_size";
+pub const COMPASS_ARROW_COLOR: &str = "compass_arrow_color";
+pub const COMPASS_CENTER_LINE_COLOR: &str = "compass_center_line_color";
+
 // Text Style Elements
 pub const TEXT_PRIMARY_COLOR: &str = "text_primary_color";
 pub const TEXT_SECONDARY_COLOR: &str = "text_secondary_color";
@@ -613,6 +622,15 @@ impl UIStyle {
 
         self.set(BAR_SEGMENT_COUNT, UIStyleValue::Integer(10));
         self.set(BAR_SEGMENT_GAP, UIStyleValue::Float(2.0));
+
+        // Compass defaults
+        self.set(COMPASS_MAJOR_MARK_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
+        self.set(COMPASS_MINOR_MARK_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
+        self.set(COMPASS_LABEL_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
+        self.set(COMPASS_LABEL_FONT, UIStyleValue::String(DEFAULT_GLOBAL_FONT_PATH.to_string()));
+        self.set(COMPASS_LABEL_FONT_SIZE, UIStyleValue::Integer(16));
+        self.set(COMPASS_ARROW_COLOR, UIStyleValue::Color("#FF7D00".to_string()));
+        self.set(COMPASS_CENTER_LINE_COLOR, UIStyleValue::Color("#FF7D00".to_string()));
 
         // Text defaults
         self.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#FF7D00".to_string()));
