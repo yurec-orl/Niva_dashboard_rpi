@@ -272,10 +272,9 @@ impl AnalogSensor for GnssAltitudeSensor {
 const UPS_CURRENT_LSB_MA: f32 = 0.1524;
 
 /// Current draw below this (mA) counts as "discharging" (running on battery, mains absent
-/// or insufficient) — comfortably under a Pi 4's idle draw so routine float-charging near
-/// 0 mA is never misread as on-battery. Shared with UpsMonitor's shutdown-timer decision so
-/// the "on battery" alert and the eventual shutdown agree on what counts as on-battery.
-pub const UPS_ON_BATTERY_CURRENT_THRESHOLD_MA: f32 = -100.0;
+/// or insufficient). UPS reported current at full charge normally floats arount 0..-150 mA 
+// for extended periods, -200 mA threshold accounts for that.
+pub const UPS_ON_BATTERY_CURRENT_THRESHOLD_MA: f32 = -200.0;
 
 /// Bus voltage (V) mapped to state of charge (0-100%), ported from Waveshare's INA219.py
 /// demo (`p = (bus_voltage - 3) / 1.2 * 100`) — a linear estimate between an empty single
