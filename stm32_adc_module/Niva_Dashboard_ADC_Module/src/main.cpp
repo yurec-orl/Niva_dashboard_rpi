@@ -12,7 +12,10 @@
 //   "$A0,A1,A2,A3,TACHO,SPEED,D0..D9,B0..B7\n"
 //   - A0..A3:  raw 12-bit analog values (0-4095)
 //   - TACHO:   pulse count since last report (tachometer, 2 PPR)
-//   - SPEED:   pulse count since last report (speed sensor, 4 PPR)
+//   - SPEED:   average period between speed-sensor pulses since last report, in units of
+//              SPEED_PERIOD_UNIT_US (speed sensor, 6 PPR). 0 = no pulse for over
+//              SPEED_TIMEOUT_US (stopped, or below the ~2 km/h floor this encoding can
+//              represent). NOT a pulse count — see "Speed sensor timing" below for why.
 //   - D0..D9:  digital indicator states (0/1)
 //   - B0..B7:  button states (0/1, 1 = pressed)
 //
@@ -34,7 +37,7 @@
 // === Pulse/Counter Inputs (interrupt-capable) ===
 //
 //   PB0  (EXTI0) — Tachometer signal, 2 pulses per revolution
-//   PB1  (EXTI1) — Speed sensor signal, 4 pulses per revolution
+//   PB1  (EXTI1) — Speed sensor signal, 6 pulses per revolution
 //
 //   Using external interrupts (EXTI) for pulse counting.
 //   12V sensor signals go through voltage divider + 1nF filter cap to 3.3V.
@@ -228,15 +231,52 @@ HardwareSerial KLine(PB11, PB10);
 #define BTN_DEBOUNCE_MASK   0xFF        // 8 consecutive reads to confirm state
 #define KLINE_BUF_SIZE      64          // K-Line RX ring buffer size
 
+// ------------------------------------------------------------
+// Speed sensor timing
+// ------------------------------------------------------------
+// At TICK_HZ=50 (20 ms/frame) a 6 PPR sensor does not produce an integer pulse count per
+// frame across the realistic speed range (up to 150 km/h ~= 108 Hz ~= one pulse every
+// 9.2 ms): below ~69 km/h most frames see 0 or 1 new pulses, and which frame a given pulse
+// lands in shifts over time relative to the 20 ms grid. Reporting a per-frame pulse *count*
+// therefore aliases into a jittery reading even at constant speed. Timing the gap between
+// pulses (in the ISR, independent of the frame boundary) and reporting that period instead
+// removes the aliasing: the period is a direct, frame-rate-independent measurement of
+// instantaneous speed.
+//
+// SPEED_PERIOD_UNIT_US sets the wire encoding's resolution/range trade-off in a 16-bit
+// field: at 10 us/unit, periods up to 65535*10us = 655.35 ms fit (down to a ~2.1 km/h
+// floor), while resolving ~0.16 km/h steps at the 150 km/h / 9.2 ms end. Below the floor
+// (or when stopped), SPEED_TIMEOUT_US of silence makes the frame report 0 rather than
+// hanging onto a stale reading.
+#define SPEED_PERIOD_UNIT_US 10UL        // wire units for the SPEED field (10 us/unit)
+#define SPEED_TIMEOUT_US     1000000UL   // no pulse for this long => report stopped (0)
+
 // ============================================================
 // Pulse counters — updated in ISR, read atomically in loop
 // ============================================================
 
 static volatile uint32_t tacho_count = 0;
-static volatile uint32_t speed_count = 0;
 
 void tacho_isr() { tacho_count++; }
-void speed_isr() { speed_count++; }
+
+// Speed pulse *timing* — accumulates completed inter-pulse periods (for averaging when
+// more than one pulse lands in a frame) instead of counting pulses. See "Speed sensor
+// timing" above.
+static volatile uint32_t speed_last_edge_us = 0;
+static volatile uint32_t speed_period_sum_us = 0;
+static volatile uint16_t speed_period_count = 0;
+static volatile bool     speed_edge_seen = false;
+
+void speed_isr() {
+    uint32_t now = micros();
+    if (speed_edge_seen) {
+        // Unsigned subtraction wraps correctly even across a micros() rollover (~71.6 min).
+        speed_period_sum_us += (now - speed_last_edge_us);
+        speed_period_count++;
+    }
+    speed_last_edge_us = now;
+    speed_edge_seen = true;
+}
 
 // ============================================================
 // 50 Hz tick flag — set by hardware timer ISR
@@ -362,8 +402,34 @@ void loop() {
     // ----------------------------------------------------------
     noInterrupts();
     uint32_t tacho = tacho_count; tacho_count = 0;
-    uint32_t speed = speed_count; speed_count = 0;
+    uint32_t speed_period_sum = speed_period_sum_us; speed_period_sum_us = 0;
+    uint16_t speed_period_cnt = speed_period_count; speed_period_count = 0;
+    uint32_t speed_last_edge = speed_last_edge_us;
+    bool speed_has_edge = speed_edge_seen;
     interrupts();
+
+    // Speed field: average of whatever inter-pulse periods completed this frame (see
+    // "Speed sensor timing" above for why period, not count, is sent). At the realistic
+    // top speed (~150 km/h, ~9.2 ms/pulse) at most 2 periods complete per 20 ms frame, so a
+    // plain average is enough — no weighting needed.
+    static uint16_t speed_period_last = 0; // last reported SPEED field value, held across
+                                            // frames with no new pulse (see below)
+    uint16_t speed_field;
+    if (speed_period_cnt > 0) {
+        uint32_t avg_us = speed_period_sum / speed_period_cnt;
+        uint32_t units = avg_us / SPEED_PERIOD_UNIT_US;
+        speed_period_last = (units > 0xFFFF) ? 0xFFFF : (uint16_t)units;
+        speed_field = speed_period_last;
+    } else if (speed_has_edge && (micros() - speed_last_edge) < SPEED_TIMEOUT_US) {
+        // No pulse completed within this specific frame, but the gap since the last edge
+        // is still a plausible sample of the current (slow) speed — hold the last computed
+        // period instead of dropping to 0 and back every other frame.
+        speed_field = speed_period_last;
+    } else {
+        // No pulse for over SPEED_TIMEOUT_US: stopped, or below the encoding's floor.
+        speed_period_last = 0;
+        speed_field = 0;
+    }
 
     // ----------------------------------------------------------
     // 3. Digital indicators — D0..D9
@@ -419,6 +485,8 @@ void loop() {
     // ----------------------------------------------------------
     // 7. Transmit data frame over USB to Raspberry Pi
     //    Format: $A0,A1,A2,A3,TACHO,SPEED,D0..D9,B0..B7\n
+    //    SPEED is an average inter-pulse period (see "Speed sensor timing" above), not a
+    //    pulse count like TACHO.
     // ----------------------------------------------------------
     char frame[128];
     snprintf(frame, sizeof(frame),
@@ -426,7 +494,7 @@ void loop() {
         "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
         "%u,%u,%u,%u,%u,%u,%u,%u\n",
         adc[0], adc[1], adc[2], adc[3],
-        (unsigned)tacho, (unsigned)speed,
+        (unsigned)tacho, (unsigned)speed_field,
         d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], d[8], d[9],
         btn_state[0], btn_state[1], btn_state[2], btn_state[3],
         btn_state[4], btn_state[5], btn_state[6], btn_state[7]
