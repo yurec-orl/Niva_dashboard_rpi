@@ -11,7 +11,10 @@
 // Protocol (ASCII, same format as Arduino version):
 //   "$A0,A1,A2,A3,TACHO,SPEED,D0..D9,B0..B7\n"
 //   - A0..A3:  raw 12-bit analog values (0-4095)
-//   - TACHO:   pulse count since last report (tachometer, 2 PPR)
+//   - TACHO:   average period between tachometer pulses since last report, in units of
+//              TACHO_PERIOD_UNIT_US (tachometer, 2 PPR). 0 = no pulse for over
+//              TACHO_TIMEOUT_US (stalled, or below the ~46 rpm floor this encoding can
+//              represent). NOT a pulse count — see "Tachometer timing" below for why.
 //   - SPEED:   average period between speed-sensor pulses since last report, in units of
 //              SPEED_PERIOD_UNIT_US (speed sensor, 6 PPR). 0 = no pulse for over
 //              SPEED_TIMEOUT_US (stopped, or below the ~2 km/h floor this encoding can
@@ -37,8 +40,9 @@
 // === Pulse/Counter Inputs (interrupt-capable) ===
 //
 //   PB0  (EXTI0) — Tachometer signal, 2 pulses per revolution
-//   PB1  (EXTI1) — Speed sensor signal, 6 pulses per revolution
-//   PB1  (EXTI1) — Speed sensor signal, 6 pulses per revolution
+//   PB1  (EXTI1) — Speed sensor signal, 6 pulses per revolution (previously mistaken for
+//                  a 4 PPR sensor — see "Speed sensor timing" below for the consequence
+//                  this had on the reported value, independent of the PPR mixup itself)
 //
 //   Using external interrupts (EXTI) for pulse counting.
 //   12V sensor signals go through voltage divider + 1nF filter cap to 3.3V.
@@ -252,13 +256,47 @@ HardwareSerial KLine(PB11, PB10);
 #define SPEED_PERIOD_UNIT_US 10UL        // wire units for the SPEED field (10 us/unit)
 #define SPEED_TIMEOUT_US     1000000UL   // no pulse for this long => report stopped (0)
 
+// ------------------------------------------------------------
+// Tachometer timing
+// ------------------------------------------------------------
+// Same aliasing problem as speed (see "Speed sensor timing" above), but with a worse
+// symptom on the RPi side today: TACHO currently feeds a boolean "engine running" debounce
+// requiring 3 consecutive 20 ms frames to all see a pulse. At 2 PPR that requirement is
+// mathematically unsatisfiable below 1000 rpm (pulse period >= 30 ms) and phase-dependent/
+// flaky up to 1500 rpm — i.e. it can never latch true anywhere in the normal idle range
+// (400-800 rpm). Sending period instead of count fixes this the same way it fixes SPEED:
+// a period reading doesn't depend on how many pulses landed inside one particular 20 ms
+// frame, so idle (period ~37.5 ms at 800 rpm, updating a little less than every other
+// frame) is measured correctly instead of never confirming at all.
+//
+// Reuses SPEED's 10 us/unit encoding — it comfortably covers the full engine range: down
+// to a ~46 rpm floor (65535 * 10us = 655.35 ms) and resolving ~12 rpm steps at a 6000 rpm
+// redline. TACHO_TIMEOUT_US is shorter than SPEED_TIMEOUT_US since engine rpm changes (and
+// stalls) faster than road speed does.
+#define TACHO_PERIOD_UNIT_US 10UL        // wire units for the TACHO field (10 us/unit)
+#define TACHO_TIMEOUT_US     500000UL    // no pulse for this long => report stalled (0)
+
 // ============================================================
 // Pulse counters — updated in ISR, read atomically in loop
 // ============================================================
 
-static volatile uint32_t tacho_count = 0;
+// Tachometer pulse *timing* — same scheme as speed_isr below. See "Tachometer timing"
+// above for why period, not count, is measured.
+static volatile uint32_t tacho_last_edge_us = 0;
+static volatile uint32_t tacho_period_sum_us = 0;
+static volatile uint16_t tacho_period_count = 0;
+static volatile bool     tacho_edge_seen = false;
 
-void tacho_isr() { tacho_count++; }
+void tacho_isr() {
+    uint32_t now = micros();
+    if (tacho_edge_seen) {
+        // Unsigned subtraction wraps correctly even across a micros() rollover (~71.6 min).
+        tacho_period_sum_us += (now - tacho_last_edge_us);
+        tacho_period_count++;
+    }
+    tacho_last_edge_us = now;
+    tacho_edge_seen = true;
+}
 
 // Speed pulse *timing* — accumulates completed inter-pulse periods (for averaging when
 // more than one pulse lands in a frame) instead of counting pulses. See "Speed sensor
@@ -402,12 +440,37 @@ void loop() {
     // 2. Pulse counters — atomic snapshot and reset
     // ----------------------------------------------------------
     noInterrupts();
-    uint32_t tacho = tacho_count; tacho_count = 0;
+    uint32_t tacho_period_sum = tacho_period_sum_us; tacho_period_sum_us = 0;
+    uint16_t tacho_period_cnt = tacho_period_count; tacho_period_count = 0;
+    uint32_t tacho_last_edge = tacho_last_edge_us;
+    bool tacho_has_edge = tacho_edge_seen;
     uint32_t speed_period_sum = speed_period_sum_us; speed_period_sum_us = 0;
     uint16_t speed_period_cnt = speed_period_count; speed_period_count = 0;
     uint32_t speed_last_edge = speed_last_edge_us;
     bool speed_has_edge = speed_edge_seen;
     interrupts();
+
+    // Tacho field: same period-averaging scheme as SPEED below (see "Tachometer timing"
+    // above). At the 6000 rpm ceiling (~5 ms/pulse) at most 4 periods complete per 20 ms
+    // frame, so a plain average is enough — no weighting needed.
+    static uint16_t tacho_period_last = 0; // last reported TACHO field value, held across
+                                            // frames with no new pulse (see below)
+    uint16_t tacho_field;
+    if (tacho_period_cnt > 0) {
+        uint32_t avg_us = tacho_period_sum / tacho_period_cnt;
+        uint32_t units = avg_us / TACHO_PERIOD_UNIT_US;
+        tacho_period_last = (units > 0xFFFF) ? 0xFFFF : (uint16_t)units;
+        tacho_field = tacho_period_last;
+    } else if (tacho_has_edge && (micros() - tacho_last_edge) < TACHO_TIMEOUT_US) {
+        // No pulse completed within this specific frame, but the gap since the last edge
+        // is still a plausible sample of the current (slow) rpm — hold the last computed
+        // period instead of dropping to 0 and back every other frame.
+        tacho_field = tacho_period_last;
+    } else {
+        // No pulse for over TACHO_TIMEOUT_US: stalled, or below the encoding's floor.
+        tacho_period_last = 0;
+        tacho_field = 0;
+    }
 
     // Speed field: average of whatever inter-pulse periods completed this frame (see
     // "Speed sensor timing" above for why period, not count, is sent). At the realistic
@@ -486,8 +549,8 @@ void loop() {
     // ----------------------------------------------------------
     // 7. Transmit data frame over USB to Raspberry Pi
     //    Format: $A0,A1,A2,A3,TACHO,SPEED,D0..D9,B0..B7\n
-    //    SPEED is an average inter-pulse period (see "Speed sensor timing" above), not a
-    //    pulse count like TACHO.
+    //    TACHO and SPEED are both average inter-pulse periods (see "Tachometer timing" /
+    //    "Speed sensor timing" above), not pulse counts.
     // ----------------------------------------------------------
     char frame[128];
     snprintf(frame, sizeof(frame),
@@ -495,7 +558,7 @@ void loop() {
         "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
         "%u,%u,%u,%u,%u,%u,%u,%u\n",
         adc[0], adc[1], adc[2], adc[3],
-        (unsigned)tacho, (unsigned)speed_field,
+        (unsigned)tacho_field, (unsigned)speed_field,
         d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], d[8], d[9],
         btn_state[0], btn_state[1], btn_state[2], btn_state[3],
         btn_state[4], btn_state[5], btn_state[6], btn_state[7]
