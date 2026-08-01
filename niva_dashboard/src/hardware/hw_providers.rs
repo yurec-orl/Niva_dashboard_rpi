@@ -19,7 +19,7 @@
 //   HWAnalogProvider -> analog signal processing (filtering, smoothing) ->
 //   -> AnalogSensor(convert raw data to logical values) -> UI Rendering
 
-use crate::util::adc_data_provider::ADCFrame;
+use crate::util::adc_data_provider::{ADCFrame, AdcChannel};
 use crate::util::gnss_data_provider::GnssFrame;
 use crate::util::ups_i2c_provider::UpsRawFrame;
 
@@ -118,13 +118,13 @@ impl HWAnalogProvider for UPSDataProvider {
 /// Reads a single ADC channel from the shared ADCFrame.
 pub struct ADCChannelProvider {
     input: HWInput,
-    channel_index: usize,
+    channel: AdcChannel,
     frame: ADCFrame,
 }
 
 impl ADCChannelProvider {
-    pub fn new(input: HWInput, channel_index: usize, frame: ADCFrame) -> Self {
-        ADCChannelProvider { input, channel_index, frame }
+    pub fn new(input: HWInput, channel: AdcChannel, frame: ADCFrame) -> Self {
+        ADCChannelProvider { input, channel, frame }
     }
 }
 
@@ -132,7 +132,7 @@ impl HWAnalogProvider for ADCChannelProvider {
     fn input(&self) -> HWInput { self.input }
 
     fn read_analog(&self, _input: HWInput) -> Result<u16, String> {
-        self.frame.get_channel(self.channel_index)
+        self.frame.get_channel(self.channel.index())
     }
 }
 
@@ -140,7 +140,7 @@ impl HWDigitalProvider for ADCChannelProvider {
     fn input(&self) -> HWInput { self.input }
 
     fn read_digital(&self, _input: HWInput) -> Result<Level, String> {
-        self.frame.get_channel(self.channel_index)
+        self.frame.get_channel(self.channel.index())
             .map(|value| if value > 0 { Level::High } else { Level::Low })
     }
 }

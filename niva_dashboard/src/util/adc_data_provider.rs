@@ -38,6 +38,54 @@ const ADC_USB_HUB_LOCATION: &str = "1-1";
 /// disconnect/reconnect never triggers a physical power cycle.
 const HARD_RESET_STALE_THRESHOLD: Duration = Duration::from_secs(5);
 
+/// Physical channel index within the STM32 ADC frame. After stripping the leading '$'
+/// marker, the frame is a fixed sequence: A0-A3 (analog), TACHO/SPEED (raw inter-pulse
+/// periods), D0-D9 (digital, STM32 pre-normalizes 1=active/0=inactive), then B0-B7
+/// (physical MFD buttons) — see PROJECT_CONTEXT.md's "ADC module connectivity". D5 has no
+/// sensor wired to it currently but the slot still exists in the frame, so it's kept here
+/// rather than skipped, to avoid shifting every channel after it out of sync with the wire
+/// layout.
+///
+/// Single source of truth for this layout: both the real wiring (main.rs's
+/// add_adc_sensor_chains / setup_button_sensors) and the self-test synthetic frame
+/// (TestADCDataProvider::generate_channels, below) index through this enum instead of
+/// separately hand-maintained magic numbers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(usize)]
+#[allow(dead_code)] // D5: frame slot exists but no sensor is wired to it yet
+pub enum AdcChannel {
+    OilPressure = 0,
+    FuelLevel = 1,
+    EngineTemp = 2,
+    Voltage12V = 3,
+    Tacho = 4,
+    Speed = 5,
+    OilPressureLow = 6,
+    FuelLow = 7,
+    AlternatorCharging = 8,
+    ExteriorLightsOn = 9,
+    BrakeFluid = 10,
+    D5 = 11,
+    TurnSignalOn = 12,
+    HighBeamOn = 13,
+    ParkBrakeOn = 14,
+    CenterDiffLock = 15,
+    B0 = 16,
+    B1 = 17,
+    B2 = 18,
+    B3 = 19,
+    B4 = 20,
+    B5 = 21,
+    B6 = 22,
+    B7 = 23,
+}
+
+impl AdcChannel {
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+}
+
 /// Errors that can occur when starting the ADC data provider.
 #[derive(Debug)]
 pub enum AdcDataProviderError {
@@ -409,22 +457,22 @@ impl TestADCDataProvider {
         let tacho_raw = crate::hardware::sensors::tacho_period_raw_from_rpm(level * SELF_TEST_TACHO_PEAK_RPM);
 
         let mut channels = vec![0u16; 16];
-        channels[0] = analog_raw;  // HwOilPress
-        channels[1] = analog_raw;  // HwFuelLvl
-        channels[2] = analog_raw;  // HwEngineCoolantTemp
-        channels[3] = analog_raw;  // Hw12v
-        channels[4] = tacho_raw;   // HwTacho (raw inter-pulse period)
-        channels[5] = speed_raw;   // HwSpeed (raw inter-pulse period)
-        channels[6] = digital_raw; // HwOilPressLow (D0)
-        channels[7] = digital_raw; // HwFuelLvlLow (D1)
-        channels[8] = digital_raw; // HwCharge (D2)
-        channels[9] = digital_raw; // HwExtLights / HwInstrIllum (D3)
-        channels[10] = digital_raw; // HwBrakeFluidLvlLow (D4)
-        // channel 11 (D5) unused
-        channels[12] = digital_raw; // HwTurnSignal (D6)
-        channels[13] = digital_raw; // HwHighBeam (D7)
-        channels[14] = digital_raw; // HwParkBrake (D8)
-        channels[15] = digital_raw; // HwDiffLock (D9)
+        channels[AdcChannel::OilPressure.index()] = analog_raw;  // HwOilPress
+        channels[AdcChannel::FuelLevel.index()] = analog_raw;  // HwFuelLvl
+        channels[AdcChannel::EngineTemp.index()] = analog_raw;  // HwEngineCoolantTemp
+        channels[AdcChannel::Voltage12V.index()] = analog_raw;  // Hw12v
+        channels[AdcChannel::Tacho.index()] = tacho_raw;   // HwTacho (raw inter-pulse period)
+        channels[AdcChannel::Speed.index()] = speed_raw;   // HwSpeed (raw inter-pulse period)
+        channels[AdcChannel::OilPressureLow.index()] = digital_raw; // HwOilPressLow
+        channels[AdcChannel::FuelLow.index()] = digital_raw; // HwFuelLvlLow
+        channels[AdcChannel::AlternatorCharging.index()] = digital_raw; // HwCharge
+        channels[AdcChannel::ExteriorLightsOn.index()] = digital_raw; // HwExtLights / HwInstrIllum
+        channels[AdcChannel::BrakeFluid.index()] = digital_raw; // HwBrakeFluidLvlLow
+        // AdcChannel::D5 unused
+        channels[AdcChannel::TurnSignalOn.index()] = digital_raw; // HwTurnSignal
+        channels[AdcChannel::HighBeamOn.index()] = digital_raw; // HwHighBeam
+        channels[AdcChannel::ParkBrakeOn.index()] = digital_raw; // HwParkBrake
+        channels[AdcChannel::CenterDiffLock.index()] = digital_raw; // HwDiffLock
         channels
     }
 }
@@ -454,7 +502,7 @@ mod tests {
     fn self_test_speed_channel_produces_nonzero_reading_within_sweep() {
         let provider = TestADCDataProvider::start();
         let frame = provider.frame();
-        let adc_provider = ADCChannelProvider::new(HWInput::HwSpeed, 5, frame);
+        let adc_provider = ADCChannelProvider::new(HWInput::HwSpeed, AdcChannel::Speed, frame);
         let mut moving_avg = AnalogSignalProcessorMovingAverage::new(5);
         let mut sensor = SpeedSensor::new();
 
@@ -518,7 +566,7 @@ mod tests {
     fn self_test_tacho_channel_produces_nonzero_reading_within_sweep() {
         let provider = TestADCDataProvider::start();
         let frame = provider.frame();
-        let adc_provider = ADCChannelProvider::new(HWInput::HwTacho, 4, frame);
+        let adc_provider = ADCChannelProvider::new(HWInput::HwTacho, AdcChannel::Tacho, frame);
         let mut moving_avg = AnalogSignalProcessorMovingAverage::new(5);
         let mut sensor = TachoSensor::new();
 

@@ -19,7 +19,7 @@ use crate::hardware::digital_signal_processing::DigitalSignalDebouncer;
 use crate::hardware::analog_signal_processing::AnalogSignalProcessorMovingAverage;
 use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor, SpeedSensor, TachoSensor, EngineTemperatureSensor, GnssAltitudeSensor};
 use crate::hardware::sensor_value::ValueConstraints;
-use crate::util::adc_data_provider::{ADCDataProvider, ADCFrame, TestADCDataProvider, SELF_TEST_DURATION};
+use crate::util::adc_data_provider::{ADCDataProvider, ADCFrame, AdcChannel, TestADCDataProvider, SELF_TEST_DURATION};
 use crate::util::gnss_data_provider::{GnssDataProvider, GnssFrame};
 use crate::util::logging::init_logging;
 use crate::util::ups_monitor::UpsMonitor;
@@ -188,7 +188,7 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
     // ---- Digital sensor chains ----
 
     let brake_fluid_chain = SensorDigitalInputChain::new(
-        Box::new(ADCChannelProvider::new(HWInput::HwBrakeFluidLvlLow, 10, frame.clone())),  // D4
+        Box::new(ADCChannelProvider::new(HWInput::HwBrakeFluidLvlLow, AdcChannel::BrakeFluid, frame.clone())),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
         Box::new(GenericDigitalSensor::new("HwBrakeFluidLvlLow".to_string(), "Brake Fluid Level".to_string(),
                                            Level::High, ValueConstraints::digital_critical())),
@@ -196,7 +196,7 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
     mgr.add_digital_sensor_chain(brake_fluid_chain);
 
     let charge_chain = SensorDigitalInputChain::new(
-        Box::new(ADCChannelProvider::new(HWInput::HwCharge, 8, frame.clone())),  // D2
+        Box::new(ADCChannelProvider::new(HWInput::HwCharge, AdcChannel::AlternatorCharging, frame.clone())),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
         Box::new(GenericDigitalSensor::new("HwCharge".to_string(), "ЗАРЯД".to_string(),
                                            Level::High, ValueConstraints::digital_critical())),
@@ -206,7 +206,7 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
     // HwCheckEngine: no STM32 input — omitted from real sensor set
 
     let diff_lock_chain = SensorDigitalInputChain::new(
-        Box::new(ADCChannelProvider::new(HWInput::HwDiffLock, 15, frame.clone())),  // D9
+        Box::new(ADCChannelProvider::new(HWInput::HwDiffLock, AdcChannel::CenterDiffLock, frame.clone())),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
         Box::new(GenericDigitalSensor::new("HwDiffLock".to_string(), "БЛОК ДИФФ".to_string(),
                                            Level::High, ValueConstraints::digital_warning())),
@@ -214,7 +214,7 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
     mgr.add_digital_sensor_chain(diff_lock_chain);
 
     let ext_lights_chain = SensorDigitalInputChain::new(
-        Box::new(ADCChannelProvider::new(HWInput::HwExtLights, 9, frame.clone())),  // D3
+        Box::new(ADCChannelProvider::new(HWInput::HwExtLights, AdcChannel::ExteriorLightsOn, frame.clone())),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
         Box::new(GenericDigitalSensor::new("HwExtLights".to_string(), "ГАБАРИТ".to_string(),
                                            Level::High, ValueConstraints::digital_default())),
@@ -222,7 +222,7 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
     mgr.add_digital_sensor_chain(ext_lights_chain);
 
     let fuel_lvl_low_chain = SensorDigitalInputChain::new(
-        Box::new(ADCChannelProvider::new(HWInput::HwFuelLvlLow, 7, frame.clone())),  // D1
+        Box::new(ADCChannelProvider::new(HWInput::HwFuelLvlLow, AdcChannel::FuelLow, frame.clone())),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
         Box::new(GenericDigitalSensor::new("HwFuelLvlLow".to_string(), "УРОВ ТОПЛ".to_string(),
                                            Level::High, ValueConstraints::digital_warning())),
@@ -230,16 +230,16 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
     mgr.add_digital_sensor_chain(fuel_lvl_low_chain);
 
     let high_beam_chain = SensorDigitalInputChain::new(
-        Box::new(ADCChannelProvider::new(HWInput::HwHighBeam, 13, frame.clone())),  // D7
+        Box::new(ADCChannelProvider::new(HWInput::HwHighBeam, AdcChannel::HighBeamOn, frame.clone())),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
         Box::new(GenericDigitalSensor::new("HwHighBeam".to_string(), "ДАЛЬНИЙ СВЕТ".to_string(),
                                            Level::High, ValueConstraints::digital_default())),
     );
     mgr.add_digital_sensor_chain(high_beam_chain);
 
-    // D3 (ext lights / parking lights) also drives instrument illumination on Niva
+    // AdcChannel::ExteriorLightsOn (ext lights / parking lights) also drives instrument illumination on Niva
     let instr_illum_chain = SensorDigitalInputChain::new(
-        Box::new(ADCChannelProvider::new(HWInput::HwInstrIllum, 9, frame.clone())),  // D3
+        Box::new(ADCChannelProvider::new(HWInput::HwInstrIllum, AdcChannel::ExteriorLightsOn, frame.clone())),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
         Box::new(GenericDigitalSensor::new("HwInstrIllum".to_string(), "ОСВЕЩ".to_string(),
                                            Level::High, ValueConstraints::digital_default())),
@@ -247,7 +247,7 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
     mgr.add_digital_sensor_chain(instr_illum_chain);
 
     let oil_press_low_chain = SensorDigitalInputChain::new(
-        Box::new(ADCChannelProvider::new(HWInput::HwOilPressLow, 6, frame.clone())),  // D0
+        Box::new(ADCChannelProvider::new(HWInput::HwOilPressLow, AdcChannel::OilPressureLow, frame.clone())),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
         Box::new(GenericDigitalSensor::new("HwOilPressLow".to_string(), "ДАВЛ МАСЛА".to_string(),
                                            Level::High, ValueConstraints::digital_critical())),
@@ -255,7 +255,7 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
     mgr.add_digital_sensor_chain(oil_press_low_chain);
 
     let park_brake_chain = SensorDigitalInputChain::new(
-        Box::new(ADCChannelProvider::new(HWInput::HwParkBrake, 14, frame.clone())),  // D8
+        Box::new(ADCChannelProvider::new(HWInput::HwParkBrake, AdcChannel::ParkBrakeOn, frame.clone())),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
         Box::new(GenericDigitalSensor::new("HwParkBrake".to_string(), "СТОЯН ТОРМ".to_string(),
                                            Level::High, ValueConstraints::digital_warning())),
@@ -263,7 +263,7 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
     mgr.add_digital_sensor_chain(park_brake_chain);
 
     let turn_signal_chain = SensorDigitalInputChain::new(
-        Box::new(ADCChannelProvider::new(HWInput::HwTurnSignal, 12, frame.clone())),  // D6
+        Box::new(ADCChannelProvider::new(HWInput::HwTurnSignal, AdcChannel::TurnSignalOn, frame.clone())),
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
         Box::new(GenericDigitalSensor::new("HwTurnSignal".to_string(), "ИНД ПОВОР".to_string(),
                                            Level::High, ValueConstraints::digital_default())),
@@ -274,7 +274,7 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
     // Scale factors from test setup; calibration for 12-bit ADC range (0-4095) is pending.
 
     let voltage_12v_chain = SensorAnalogInputChain::new(
-        Box::new(ADCChannelProvider::new(HWInput::Hw12v, 3, frame.clone())),
+        Box::new(ADCChannelProvider::new(HWInput::Hw12v, AdcChannel::Voltage12V, frame.clone())),
         vec![Box::new(AnalogSignalProcessorMovingAverage::new(10))],
         Box::new(GenericAnalogSensor::new("Hw12v".to_string(), "БОРТ СЕТЬ".to_string(), "В".to_string(),
                                           ValueConstraints::analog_with_thresholds(0.0, 20.0, Some(11.0), Some(13.0), Some(14.7), Some(15.0)), 0.02)),
@@ -282,7 +282,7 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
     mgr.add_analog_sensor_chain(voltage_12v_chain);
 
     let fuel_level_chain = SensorAnalogInputChain::new(
-        Box::new(ADCChannelProvider::new(HWInput::HwFuelLvl, 1, frame.clone())),
+        Box::new(ADCChannelProvider::new(HWInput::HwFuelLvl, AdcChannel::FuelLevel, frame.clone())),
         vec![Box::new(AnalogSignalProcessorMovingAverage::new(15))],
         Box::new(GenericAnalogSensor::new("HwFuelLvl".to_string(), "УРОВ ТОПЛ".to_string(), "%".to_string(),
                                           ValueConstraints::analog_with_thresholds(0.0, 100.0, Some(10.0), Some(20.0), None, None), 0.1)),
@@ -290,7 +290,7 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
     mgr.add_analog_sensor_chain(fuel_level_chain);
 
     let oil_pressure_chain = SensorAnalogInputChain::new(
-        Box::new(ADCChannelProvider::new(HWInput::HwOilPress, 0, frame.clone())),
+        Box::new(ADCChannelProvider::new(HWInput::HwOilPress, AdcChannel::OilPressure, frame.clone())),
         vec![Box::new(AnalogSignalProcessorMovingAverage::new(10))],
         Box::new(GenericAnalogSensor::new("HwOilPress".to_string(), "ДАВЛ МАСЛА".to_string(), "кгс/см²".to_string(),
                                           ValueConstraints::analog_with_thresholds(0.0, 8.0, Some(0.5), Some(1.0), Some(7.0), Some(8.0)), 0.01)),
@@ -298,21 +298,21 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
     mgr.add_analog_sensor_chain(oil_pressure_chain);
 
     let temperature_chain = SensorAnalogInputChain::new(
-        Box::new(ADCChannelProvider::new(HWInput::HwEngineCoolantTemp, 2, frame.clone())),
+        Box::new(ADCChannelProvider::new(HWInput::HwEngineCoolantTemp, AdcChannel::EngineTemp, frame.clone())),
         vec![Box::new(AnalogSignalProcessorMovingAverage::new(20))],
         Box::new(EngineTemperatureSensor::new()),
     );
     mgr.add_analog_sensor_chain(temperature_chain);
 
     let speed_chain = SensorAnalogInputChain::new(
-        Box::new(ADCChannelProvider::new(HWInput::HwSpeed, 5, frame.clone())),  // SPEED inter-pulse period, raw timer ticks
+        Box::new(ADCChannelProvider::new(HWInput::HwSpeed, AdcChannel::Speed, frame.clone())),  // inter-pulse period, raw timer ticks
         vec![Box::new(AnalogSignalProcessorMovingAverage::new(5))],
         Box::new(SpeedSensor::new()),
     );
     mgr.add_analog_sensor_chain(speed_chain);
 
     let tacho_chain = SensorAnalogInputChain::new(
-        Box::new(ADCChannelProvider::new(HWInput::HwTacho, 4, frame.clone())),  // TACHO inter-pulse period, raw timer ticks
+        Box::new(ADCChannelProvider::new(HWInput::HwTacho, AdcChannel::Tacho, frame.clone())),  // inter-pulse period, raw timer ticks
         vec![Box::new(AnalogSignalProcessorMovingAverage::new(5))],
         Box::new(TachoSensor::new()),
     );
@@ -336,14 +336,14 @@ fn setup_button_sensors(adc: Option<ADCFrame>) -> SensorManager {
     };
 
     let button_inputs = [
-        (HWInput::HwButton0, 16),
-        (HWInput::HwButton1, 17),
-        (HWInput::HwButton2, 18),
-        (HWInput::HwButton3, 19),
-        (HWInput::HwButton4, 20),
-        (HWInput::HwButton5, 21),
-        (HWInput::HwButton6, 22),
-        (HWInput::HwButton7, 23),
+        (HWInput::HwButton0, AdcChannel::B0),
+        (HWInput::HwButton1, AdcChannel::B1),
+        (HWInput::HwButton2, AdcChannel::B2),
+        (HWInput::HwButton3, AdcChannel::B3),
+        (HWInput::HwButton4, AdcChannel::B4),
+        (HWInput::HwButton5, AdcChannel::B5),
+        (HWInput::HwButton6, AdcChannel::B6),
+        (HWInput::HwButton7, AdcChannel::B7),
     ];
 
     for (input, channel) in button_inputs {
