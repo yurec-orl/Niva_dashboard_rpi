@@ -65,7 +65,7 @@ pub enum AdcChannel {
     AlternatorCharging = 8,
     ExteriorLightsOn = 9,
     BrakeFluid = 10,
-    D5 = 11,
+    HeadlightsOn = 11,
     TurnSignalOn = 12,
     HighBeamOn = 13,
     ParkBrakeOn = 14,
@@ -502,7 +502,7 @@ mod tests {
     fn self_test_speed_channel_produces_nonzero_reading_within_sweep() {
         let provider = TestADCDataProvider::start();
         let frame = provider.frame();
-        let adc_provider = ADCChannelProvider::new(HWInput::HwSpeed, AdcChannel::Speed, frame);
+        let adc_provider = ADCChannelProvider::new(HWInput::HwSpeed, frame);
         let mut moving_avg = AnalogSignalProcessorMovingAverage::new(5);
         let mut sensor = SpeedSensor::new();
 
@@ -566,7 +566,7 @@ mod tests {
     fn self_test_tacho_channel_produces_nonzero_reading_within_sweep() {
         let provider = TestADCDataProvider::start();
         let frame = provider.frame();
-        let adc_provider = ADCChannelProvider::new(HWInput::HwTacho, AdcChannel::Tacho, frame);
+        let adc_provider = ADCChannelProvider::new(HWInput::HwTacho, frame);
         let mut moving_avg = AnalogSignalProcessorMovingAverage::new(5);
         let mut sensor = TachoSensor::new();
 
