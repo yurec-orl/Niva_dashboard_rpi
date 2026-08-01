@@ -3,7 +3,7 @@ use rppal::gpio::Level;
 
 use crate::hardware::hw_providers::GNSS_ALTITUDE_OFFSET_M;
 use crate::hardware::sensor_value::{SensorValue, ValueConstraints, ValueMetadata};
-use crate::hardware::digital_signal_processing::{DigitalSignalProcessor, DigitalSignalProcessorPulsePerSecond};
+use std::time::{Duration, Instant};
 
 // Used by all sensor types
 pub trait Sensor {
@@ -379,75 +379,76 @@ impl AnalogSensor for UpsChargeSensor {
     }
 }
 
+// HwSpeed (channel 5): period-based measurement, replacing the count-based interim approach
+// (see SPEED_TACHO_PULSE_PERIOD_DESIGN.md). STM32 firmware isn't changed yet -- this is
+// built and validated against TestADCDataProvider's simulated period channel first, ahead
+// of the real firmware change, per that doc's Status section.
+
+/// Wheel-speed sensor pulses/revolution (WIRING.md).
+const SPEED_PULSES_PER_REV: f32 = 6.0;
+/// 235/75/15 tire circumference, meters. Width 235mm, aspect ratio 75%, rim 15in ->
+/// diameter = 15in (381mm) + 2*(235mm*0.75) = 733.5mm -> circumference = pi*733.5mm.
+const SPEED_WHEEL_CIRCUMFERENCE_M: f32 = 2.304;
+/// Placeholder timer tick rate for the raw period channel -- the real value is a firmware
+/// decision (see the design doc's wire-format section), not made here. Chosen so a u16 raw
+/// period doesn't wrap before speed drops to a "may as well be stopped" ~1.1 km/h (65535
+/// ticks / 50_000 Hz = 1.31s period), while still giving sub-km/h resolution at highway
+/// speed (100 km/h's 13.82ms inter-pulse period is ~691 ticks at this rate).
+const SPEED_PERIOD_TIMER_HZ: f32 = 50_000.0;
+/// Raw period value reserved to mean "no pulse observed" (stationary, or no pulse seen yet
+/// since startup) -- distinct from a real, merely long period, which the wire format needs
+/// to be able to represent unambiguously at the low-speed end (see design doc).
+const SPEED_PERIOD_IDLE_RAW: u16 = 0;
+/// How many multiples of the last known inter-pulse period to wait, once that period value
+/// stops updating, before concluding the vehicle has slowed further (or stopped) and the
+/// latched period no longer reflects the current speed. Scaled to the last observed period
+/// rather than a fixed constant (contrast ADCFrame::is_stale()'s fixed ADC_LINK_MAX_AGE)
+/// since "no new pulse in N ms" means something different at 5 km/h than at 100 km/h.
+const SPEED_STALE_PERIOD_MULTIPLIER: f32 = 3.0;
+/// Floor under the multiplier above so a tiny last-known period (near top speed) can't
+/// produce an implausibly short timeout that flickers to 0 on ordinary pulse-to-pulse jitter.
+const SPEED_MIN_STALE_THRESHOLD: Duration = Duration::from_millis(100);
+
 pub struct SpeedSensor {
-    speed: SensorValue,
-    pulse_counter: DigitalSignalProcessorPulsePerSecond,
-    pulses_per_revolution: u32,
-    wheel_circumference_m: f32,
+    value: SensorValue,
     constraints: ValueConstraints,
     metadata: ValueMetadata,
+    last_raw: u16,
+    last_change: Instant,
 }
 
 impl SpeedSensor {
     pub fn new() -> Self {
-        // Physical parameters for 235/75/15 tire
-        // Width: 235mm, Aspect ratio: 75%, Rim: 15 inches
-        // Diameter = 15" (381mm) + 2 * (235mm * 0.75) = 733.5mm
-        // Circumference = π * 733.5mm = 2.304 meters
-        let metadata = ValueMetadata::new("км/ч", "СКОР", "speed_sensor");
-
         SpeedSensor {
-            speed: SensorValue::analog(0.0, 0.0, 180.0, &metadata.unit, &metadata.label, &metadata.sensor_id),
-            pulse_counter: DigitalSignalProcessorPulsePerSecond::new(),
-            pulses_per_revolution: 6, // 6 pulses per wheel rotation
-            wheel_circumference_m: 2.304, // meters
+            value: SensorValue::empty(),
             constraints: ValueConstraints::analog(0.0, 180.0),
-            metadata,
+            metadata: ValueMetadata::new("км/ч", "СКОР", "speed_sensor"),
+            last_raw: SPEED_PERIOD_IDLE_RAW,
+            last_change: Instant::now(),
         }
     }
-    
-    /// Process a digital input pulse and return current speed
-    fn process_pulse(&mut self, pulse: Level) -> f32 {
-        // Process the pulse through the counter (using DigitalSignalProcessor trait)
-        let _ = self.pulse_counter.read(pulse);
-        
-        // Get current pulses per second
-        let pulses_per_second = self.pulse_counter.pulses_per_second();
-        
-        // Debug: Log pulse activity
-        // static mut PULSE_COUNT: u32 = 0;
-        // unsafe {
-        //     PULSE_COUNT += 1;
-        //     if PULSE_COUNT % 100 == 0 {
-        //         println!("SpeedSensor Debug: Pulse #{}, Level: {:?}, PPS: {:.2}, Speed: {:.2} km/h", 
-        //                  PULSE_COUNT, pulse, pulses_per_second, self.calculate_speed_kmh(pulses_per_second));
-        //     }
-        // }
-        
-        // Calculate and return speed
-        self.speed = SensorValue::analog(self.calculate_speed_kmh(pulses_per_second),
-            self.constraints.min_value.clone(), self.constraints.max_value.clone(),
-            &self.metadata.unit, &self.metadata.label, &self.metadata.sensor_id);
-        self.speed.as_f32()
-    }
-    
-    /// Calculate speed in km/h from pulses per second
-    fn calculate_speed_kmh(&self, pulses_per_second: f32) -> f32 {
-        if pulses_per_second <= 0.0 {
-            return 0.0;
-        }
-        
-        // Revolutions per second = pulses_per_second / pulses_per_revolution
-        let revolutions_per_second = pulses_per_second / self.pulses_per_revolution as f32;
-        
-        // Distance per second (m/s) = revolutions_per_second * wheel_circumference
-        let meters_per_second = revolutions_per_second * self.wheel_circumference_m;
-        
-        // Convert m/s to km/h: multiply by 3.6
-        meters_per_second * 3.6
-    }
-    
 
+    /// Inter-pulse period (raw timer ticks) -> speed (km/h): inverting a period into a rate,
+    /// instead of dividing an accumulated count by a fixed window. Caller is responsible for
+    /// excluding SPEED_PERIOD_IDLE_RAW before calling this (division by it isn't meaningful).
+    fn speed_kmh_from_period_raw(raw: u16) -> f32 {
+        let period_s = raw as f32 / SPEED_PERIOD_TIMER_HZ;
+        SPEED_WHEEL_CIRCUMFERENCE_M / (period_s * SPEED_PULSES_PER_REV) * 3.6
+    }
+}
+
+/// Inverse of speed_kmh_from_period_raw, exposed for TestADCDataProvider's self-test sweep
+/// generator so its synthetic HwSpeed data is derived from the exact same formula the real
+/// conversion uses, rather than a separately maintained copy that could silently drift out
+/// of sync with it. Never returns SPEED_PERIOD_IDLE_RAW for a positive speed -- the rounded
+/// period is floored at 1 tick instead, so a genuinely nonzero (if implausibly high) speed
+/// can never be misread as the "no pulse" sentinel.
+pub fn speed_period_raw_from_kmh(speed_kmh: f32) -> u16 {
+    if speed_kmh <= 0.0 {
+        return SPEED_PERIOD_IDLE_RAW;
+    }
+    let period_s = SPEED_WHEEL_CIRCUMFERENCE_M / ((speed_kmh / 3.6) * SPEED_PULSES_PER_REV);
+    (period_s * SPEED_PERIOD_TIMER_HZ).round().clamp(1.0, u16::MAX as f32) as u16
 }
 
 impl Sensor for SpeedSensor {
@@ -460,8 +461,7 @@ impl Sensor for SpeedSensor {
     }
 
     fn value(&self) -> Result<&SensorValue, String> {
-        //print!("fn value: Returning speed value: {:?}\r\n", self.speed.as_f32());
-        Ok(&self.speed)
+        Ok(&self.value)
     }
 
     fn constraints(&self) -> &ValueConstraints {
@@ -481,15 +481,32 @@ impl Sensor for SpeedSensor {
     }
 }
 
-impl DigitalSensor for SpeedSensor {
-    fn active_level(&self) -> Level {
-        Level::High // Speed sensor pulses are active high
-    }
+impl AnalogSensor for SpeedSensor {
+    fn read(&mut self, input: u16) -> Result<&SensorValue, String> {
+        if input != self.last_raw {
+            self.last_raw = input;
+            self.last_change = Instant::now();
+        }
 
-    fn read(&mut self, input: Level) -> Result<&SensorValue, String> {
-        self.process_pulse(input);
-        //print!("fn read: Returning speed value: {:?}\r\n", self.speed.as_f32());
-        Ok(&self.speed)
+        let speed_kmh = if self.last_raw == SPEED_PERIOD_IDLE_RAW {
+            0.0
+        } else {
+            let last_period_s = self.last_raw as f32 / SPEED_PERIOD_TIMER_HZ;
+            let stale_after = Duration::from_secs_f32(last_period_s * SPEED_STALE_PERIOD_MULTIPLIER)
+                .max(SPEED_MIN_STALE_THRESHOLD);
+            if self.last_change.elapsed() > stale_after {
+                0.0
+            } else {
+                Self::speed_kmh_from_period_raw(self.last_raw)
+            }
+        };
+
+        self.value = SensorValue::analog_with_constraints_and_metadata(
+            speed_kmh.clamp(self.constraints.min_value, self.constraints.max_value),
+            self.constraints.clone(),
+            self.metadata.clone(),
+        );
+        Ok(&self.value)
     }
 }
 
@@ -497,6 +514,70 @@ impl DigitalSensor for SpeedSensor {
 mod tests {
     use super::*;
     use crate::hardware::sensor_value::{ValueData, ValueConstraints};
+
+    /// Raw period (in SPEED_PERIOD_TIMER_HZ ticks) that a steady 100 km/h implies, used by
+    /// several tests below as a known-good reference point.
+    fn raw_period_for_100_kmh() -> u16 {
+        let period_s = SPEED_WHEEL_CIRCUMFERENCE_M / ((100.0 / 3.6) * SPEED_PULSES_PER_REV);
+        (period_s * SPEED_PERIOD_TIMER_HZ).round() as u16
+    }
+
+    #[test]
+    fn test_speed_sensor_idle_raw_reads_zero() {
+        let mut sensor = SpeedSensor::new();
+        let speed = sensor.read(SPEED_PERIOD_IDLE_RAW).unwrap().as_f32();
+        assert_eq!(speed, 0.0);
+    }
+
+    #[test]
+    fn test_speed_sensor_converts_period_to_expected_speed() {
+        let mut sensor = SpeedSensor::new();
+        let raw = raw_period_for_100_kmh();
+        let speed = sensor.read(raw).unwrap().as_f32();
+        assert!((speed - 100.0).abs() < 1.0, "expected ~100 km/h, got {}", speed);
+    }
+
+    #[test]
+    fn test_speed_sensor_repeated_same_period_stays_fresh() {
+        // A steady speed means the same raw period value keeps being reported every read --
+        // that must NOT be treated as staleness (see SPEED_STALE_PERIOD_MULTIPLIER), or a
+        // sensor cruising at constant speed would incorrectly drop to 0.
+        let mut sensor = SpeedSensor::new();
+        let raw = raw_period_for_100_kmh();
+        for _ in 0..5 {
+            let speed = sensor.read(raw).unwrap().as_f32();
+            assert!((speed - 100.0).abs() < 1.0, "expected ~100 km/h, got {}", speed);
+        }
+    }
+
+    #[test]
+    fn test_speed_sensor_decays_to_zero_once_period_goes_stale() {
+        // A low speed's long inter-pulse period, once it stops being refreshed by a new
+        // pulse for long enough, must decay to 0 rather than reporting the stale speed
+        // forever -- this is what lets the sensor detect the vehicle has slowed further
+        // (or stopped) even though nothing ever explicitly reports SPEED_PERIOD_IDLE_RAW.
+        let mut sensor = SpeedSensor::new();
+        // ~5 km/h implies a period long enough that SPEED_MIN_STALE_THRESHOLD's floor
+        // doesn't dominate, so this actually exercises the multiplier-based timeout.
+        let period_s = SPEED_WHEEL_CIRCUMFERENCE_M / ((5.0 / 3.6) * SPEED_PULSES_PER_REV);
+        let raw = (period_s * SPEED_PERIOD_TIMER_HZ).round() as u16;
+
+        let speed = sensor.read(raw).unwrap().as_f32();
+        assert!(speed > 0.0, "expected a nonzero initial reading, got {}", speed);
+
+        std::thread::sleep(Duration::from_secs_f32(period_s * SPEED_STALE_PERIOD_MULTIPLIER) + Duration::from_millis(50));
+        let speed = sensor.read(raw).unwrap().as_f32();
+        assert_eq!(speed, 0.0, "expected stale period to decay to 0, got {}", speed);
+    }
+
+    #[test]
+    fn test_speed_sensor_clamps_to_gauge_max() {
+        let mut sensor = SpeedSensor::new();
+        // raw=1 is the shortest non-idle period the format allows -- far beyond the gauge's
+        // 180 km/h max at any plausible SPEED_PERIOD_TIMER_HZ, so this exercises the clamp.
+        let speed = sensor.read(1).unwrap().as_f32();
+        assert_eq!(speed, 180.0);
+    }
 
     #[test]
     fn test_generic_digital_sensor_creation() {
@@ -727,95 +808,6 @@ mod tests {
     }
 
     #[test]
-    fn test_speed_sensor_creation() {
-        let sensor = SpeedSensor::new();
-        
-        assert_eq!(sensor.pulses_per_revolution, 6);
-        assert!((sensor.wheel_circumference_m - 2.304).abs() < 0.001);
-        assert_eq!(sensor.constraints.min_value, 0.0);
-        assert_eq!(sensor.constraints.max_value, 180.0);
-        assert_eq!(sensor.metadata.unit, "км/ч");
-        assert_eq!(sensor.metadata.label, "СКОР");
-        assert_eq!(sensor.metadata.sensor_id, "speed_sensor");
-        assert_eq!(sensor.active_level(), Level::High);
-    }
-
-    #[test]
-    fn test_speed_sensor_calculations() {
-        let sensor = SpeedSensor::new();
-        
-        // Test zero speed
-        let speed = sensor.calculate_speed_kmh(0.0);
-        assert_eq!(speed, 0.0);
-        
-        // Test known values - validate the calculation logic
-        // 6 pulses/sec = 1 revolution/sec = 2.304 m/s = 8.2944 km/h
-        let speed = sensor.calculate_speed_kmh(6.0);
-        let expected = 2.304 * 3.6; // 8.2944 km/h
-        assert!((speed - expected).abs() < 0.01);
-        
-        // Test city driving speed (~30 km/h)
-        let speed = sensor.calculate_speed_kmh(21.7); // Should give ~30 km/h
-        assert!((speed - 30.0).abs() < 1.0); // Allow 1 km/h tolerance
-        
-        // Test highway speed (~60 km/h)
-        let speed = sensor.calculate_speed_kmh(43.4); // Should give ~60 km/h
-        assert!((speed - 60.0).abs() < 2.0); // Allow 2 km/h tolerance
-    }
-
-    #[test]
-    fn test_speed_sensor_pulse_processing() {
-        let mut sensor = SpeedSensor::new();
-        
-        // Test initial state
-        assert_eq!(sensor.value().unwrap().as_f32(), 0.0);
-
-        // Simulate pulse sequence (alternating High/Low)
-        let mut speed = 0.0;
-        for i in 0..12 { // 12 pulses = 2 full revolutions
-            let level = if i % 2 == 0 { Level::High } else { Level::Low };
-            speed = sensor.process_pulse(level);
-        }
-        
-        // After processing pulses, we should have some speed reading
-        // The exact value depends on timing in the pulse counter, so just verify it's reasonable
-        assert!(speed >= 0.0);
-        assert!(speed <= 180.0); // Within sensor constraints
-    }
-
-    #[test]
-    fn test_speed_sensor_digital_sensor_trait() {
-        let mut sensor = SpeedSensor::new();
-        
-        // Test DigitalSensor trait implementation
-        assert_eq!(sensor.active_level(), Level::High);
-        
-        // Test read method
-        let result = sensor.read(Level::High);
-        assert!(result.is_ok());
-        
-        // Test value method
-        let value_result = Sensor::value(&sensor);
-        assert!(value_result.is_ok());
-        // Check if value type is Analog
-        if let ValueData::Analog(speed) = &value_result.unwrap().value {
-            assert!(*speed >= 0.0 && *speed <= 180.0);
-        } else {
-            panic!("Expected analog speed value");
-        }
-    }
-
-    #[test]
-    fn test_speed_sensor_wheel_circumference_calculation() {
-        // Verify the wheel circumference calculation for 235/75/15 tire
-        // Diameter = 15" (381mm) + 2 * (235mm * 0.75) = 381 + 352.5 = 733.5mm
-        // Circumference = π * 733.5mm = 2304.12mm = 2.304m
-        let sensor = SpeedSensor::new();
-        let expected_circumference = std::f32::consts::PI * 0.7335; // 0.7335m diameter
-        assert!((sensor.wheel_circumference_m - expected_circumference).abs() < 0.01);
-    }
-
-    #[test]
     fn test_sensor_trait_implementations() {
         // Test GenericDigitalSensor implements Sensor trait correctly
         let constraints = ValueConstraints::digital_default();
@@ -841,14 +833,6 @@ mod tests {
         assert!(Sensor::value(&analog_sensor).is_ok());
         assert_eq!(analog_sensor.constraints().min_value, 0.0);
         assert_eq!(analog_sensor.metadata().unit, "V");
-
-        // Test SpeedSensor implements Sensor trait correctly
-        let speed_sensor = SpeedSensor::new();
-        assert_eq!(speed_sensor.id(), "speed_sensor");
-        assert_eq!(speed_sensor.name(), "СКОР");
-        assert!(Sensor::value(&speed_sensor).is_ok());
-        assert_eq!(speed_sensor.constraints().min_value, 0.0);
-        assert_eq!(speed_sensor.metadata().unit, "км/ч");
     }
 
     #[test]

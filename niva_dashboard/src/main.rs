@@ -11,6 +11,7 @@ use crate::test::run_test::run_test;
 use crate::graphics::context::GraphicsContext;
 use crate::page_framework::page_manager::PageManager;
 use crate::page_framework::events::UIEvent;
+use crate::alerts::alert_manager::AlertManager;
 use crate::page_framework::input::{InputSource, PhysicalButtonInput, KeyboardInput};
 use crate::hardware::sensor_manager::{SensorManager, SensorDigitalInputChain, SensorAnalogInputChain};
 use crate::hardware::hw_providers::*;
@@ -18,7 +19,7 @@ use crate::hardware::digital_signal_processing::DigitalSignalDebouncer;
 use crate::hardware::analog_signal_processing::AnalogSignalProcessorMovingAverage;
 use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor, SpeedSensor, EngineTemperatureSensor, GnssAltitudeSensor};
 use crate::hardware::sensor_value::ValueConstraints;
-use crate::util::adc_data_provider::{ADCDataProvider, ADCFrame};
+use crate::util::adc_data_provider::{ADCDataProvider, ADCFrame, TestADCDataProvider, SELF_TEST_DURATION};
 use crate::util::gnss_data_provider::{GnssDataProvider, GnssFrame};
 use crate::util::logging::init_logging;
 use crate::util::ups_monitor::UpsMonitor;
@@ -27,7 +28,6 @@ use crate::hardware::sensors::{UpsCurrentSensor, UpsChargeSensor};
 use rppal::gpio::Level;
 use std::env;
 use std::thread;
-use std::time::Duration;
 
 fn setup_context() -> GraphicsContext {
     let context = GraphicsContext::new_dashboard("Niva Dashboard").expect("Failed to create graphics context");
@@ -42,173 +42,22 @@ fn setup_context() -> GraphicsContext {
     context
 }
 
-fn setup_self_test_sensors() -> SensorManager {
+// Self-test sensor manager: wires the exact same ADC-backed chains as production
+// (add_adc_sensor_chains) but points them at a TestADCDataProvider's synthetic frame instead
+// of the real serial-fed one, so the startup self-test sweep exercises the same debounce/
+// averaging/threshold code every real reading goes through — unlike two independently
+// hand-written chain sets, this can't silently drift out of sync.
+//
+// Caller must keep the returned TestADCDataProvider alive for the sweep to animate —
+// dropping it stops the synthetic writer thread.
+fn setup_self_test_sensors() -> (SensorManager, TestADCDataProvider) {
     let mut mgr = SensorManager::new();
-    
-    // Sensor value constraints:
-    // - Engine Temperature: 5-100°C operational, 0-120°C dashboard range
-    // - 12V System: 12-14.4V normal, 0-20V diagnostic range  
-    // - Oil Pressure: 0-8 kgf/cm² (kilogram-force per square centimeter)
-    // - Fuel Level: 0-100% of tank capacity
-    
-    // Digital sensor chains - using test data providers for development
-    
-    // Brake fluid level low sensor
-    let brake_fluid_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HWInput::HwBrakeFluidLvlLow)),
-        vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
-        Box::new(GenericDigitalSensor::new("HwBrakeFluidLvlLow".to_string(), "Brake Fluid Level".to_string(),
-                                           Level::Low, ValueConstraints::digital_critical())),
-    );
-    mgr.add_digital_sensor_chain(brake_fluid_chain);
+    let test_adc = TestADCDataProvider::start();
+    add_adc_sensor_chains(&mut mgr, test_adc.frame());
 
-    // Charge indicator sensor
-    let charge_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HWInput::HwCharge)),
-        vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
-        Box::new(GenericDigitalSensor::new("HwCharge".to_string(), "ЗАРЯД".to_string(),
-                                           Level::Low, ValueConstraints::digital_critical())),
-    );
-    mgr.add_digital_sensor_chain(charge_chain);
+    log::info!("✓ Self-test sensor manager initialized (synthetic ADC sweep)");
 
-    // Check engine sensor
-    let check_engine_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HWInput::HwCheckEngine)),
-        vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
-        Box::new(GenericDigitalSensor::new("HwCheckEngine".to_string(), "ПРОВЕРЬ ДВИГ".to_string(),
-                                           Level::Low, ValueConstraints::digital_warning())),
-    );
-    mgr.add_digital_sensor_chain(check_engine_chain);
-
-    // Differential lock sensor
-    let diff_lock_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HWInput::HwDiffLock)),
-        vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
-        Box::new(GenericDigitalSensor::new("HwDiffLock".to_string(), "БЛОК ДИФФ".to_string(),
-                                           Level::Low, ValueConstraints::digital_warning())),
-    );
-    mgr.add_digital_sensor_chain(diff_lock_chain);
-
-    // External lights sensor
-    let ext_lights_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HWInput::HwExtLights)),
-        vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
-        Box::new(GenericDigitalSensor::new("HwExtLights".to_string(), "ГАБАРИТ".to_string(),
-                                           Level::Low, ValueConstraints::digital_default())),
-    );
-    mgr.add_digital_sensor_chain(ext_lights_chain);
-
-    // Fuel level low sensor
-    let fuel_lvl_low_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HWInput::HwFuelLvlLow)),
-        vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
-        Box::new(GenericDigitalSensor::new("HwFuelLvlLow".to_string(), "УРОВ ТОПЛ".to_string(),
-                                           Level::Low, ValueConstraints::digital_warning())),
-    );
-    mgr.add_digital_sensor_chain(fuel_lvl_low_chain);
-
-    // High beam sensor
-    let high_beam_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HWInput::HwHighBeam)),
-        vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
-        Box::new(GenericDigitalSensor::new("HwHighBeam".to_string(), "ДАЛЬНИЙ СВЕТ".to_string(),
-                                           Level::Low, ValueConstraints::digital_default())),
-    );
-    mgr.add_digital_sensor_chain(high_beam_chain);
-
-    // Instrument illumination sensor
-    let instr_illum_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HWInput::HwInstrIllum)),
-        vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
-        Box::new(GenericDigitalSensor::new("HwInstrIllum".to_string(), "ОСВЕЩ".to_string(),
-                                           Level::Low, ValueConstraints::digital_default())),
-    );
-    mgr.add_digital_sensor_chain(instr_illum_chain);
-
-    // Oil pressure low sensor
-    let oil_press_low_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HWInput::HwOilPressLow)),
-        vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
-        Box::new(GenericDigitalSensor::new("HwOilPressLow".to_string(), "ДАВЛ МАСЛА".to_string(),
-                                           Level::Low, ValueConstraints::digital_critical())),
-    );
-    mgr.add_digital_sensor_chain(oil_press_low_chain);
-
-    // Parking brake sensor
-    let park_brake_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HWInput::HwParkBrake)),
-        vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
-        Box::new(GenericDigitalSensor::new("HwParkBrake".to_string(), "СТОЯН ТОРМ".to_string(),
-                                           Level::Low, ValueConstraints::digital_warning())),
-    );
-    mgr.add_digital_sensor_chain(park_brake_chain);
-
-    // Speed sensor (active high, pulse-based)
-    let speed_chain = SensorDigitalInputChain::new(
-        Box::new(TestPulseDataProvider::new(HWInput::HwSpeed)),
-        vec![], // No signal processors - SpeedSensor handles pulse processing internally
-        Box::new(SpeedSensor::new()),
-    );
-    mgr.add_digital_sensor_chain(speed_chain);
-
-    // Tachometer sensor (active high, pulse-based)
-    let tacho_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HWInput::HwTacho)),
-        vec![Box::new(DigitalSignalDebouncer::new(3, std::time::Duration::from_millis(10)))],
-        Box::new(GenericDigitalSensor::new("HwTacho".to_string(), "ТАХОМЕТР".to_string(),
-                                           Level::High, ValueConstraints::digital_default())),
-    );
-    mgr.add_digital_sensor_chain(tacho_chain);
-
-    // Turn signal sensor
-    let turn_signal_chain = SensorDigitalInputChain::new(
-        Box::new(TestDigitalDataProvider::new(HWInput::HwTurnSignal)),
-        vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
-        Box::new(GenericDigitalSensor::new("HwTurnSignal".to_string(), "ИНД ПОВОР".to_string(),
-                                           Level::Low, ValueConstraints::digital_default())),
-    );
-    mgr.add_digital_sensor_chain(turn_signal_chain);
-
-    // Analog sensor chains - using test data providers for development
-    
-    // 12V voltage sensor (0-20V range for full diagnostic capability)
-    let voltage_12v_chain = SensorAnalogInputChain::new(
-        Box::new(TestAnalogDataProvider::new(HWInput::Hw12v)),
-        vec![Box::new(AnalogSignalProcessorMovingAverage::new(10))],
-        Box::new(GenericAnalogSensor::new("Hw12v".to_string(), "БОРТ СЕТЬ".to_string(), "В".to_string(),
-                                          ValueConstraints::analog_with_thresholds(0.0, 20.0, Some(11.0), Some(13.0), Some(14.7), Some(15.0)), 0.02)), // 0-20V range for diagnostic capability
-    );
-    mgr.add_analog_sensor_chain(voltage_12v_chain);
-
-    // Fuel level sensor
-    let fuel_level_chain = SensorAnalogInputChain::new(
-        Box::new(TestAnalogDataProvider::new(HWInput::HwFuelLvl)),
-        vec![Box::new(AnalogSignalProcessorMovingAverage::new(15))],
-        Box::new(GenericAnalogSensor::new("HwFuelLvl".to_string(), "УРОВ ТОПЛ".to_string(), "%".to_string(),
-                                          ValueConstraints::analog_with_thresholds(0.0, 100.0, Some(10.0), Some(20.0), None, None), 0.1)), // Scale for percentage
-    );
-    mgr.add_analog_sensor_chain(fuel_level_chain);
-
-    // Oil pressure sensor (0-8 kgf/cm² range)
-    let oil_pressure_chain = SensorAnalogInputChain::new(
-        Box::new(TestAnalogDataProvider::new(HWInput::HwOilPress)),
-        vec![Box::new(AnalogSignalProcessorMovingAverage::new(10))],
-        Box::new(GenericAnalogSensor::new("HwOilPress".to_string(), "ДАВЛ МАСЛА".to_string(), "кгс/см²".to_string(),
-                                          ValueConstraints::analog_with_thresholds(0.0, 8.0, Some(0.5), Some(1.0), Some(7.0), Some(8.0)), 0.01)), // 0-8 kgf/cm² pressure range
-    );
-    mgr.add_analog_sensor_chain(oil_pressure_chain);
-
-    // Engine temperature sensor (0-130°C range)
-    let temperature_chain = SensorAnalogInputChain::new(
-        Box::new(TestAnalogDataProvider::new(HWInput::HwEngineCoolantTemp)),
-        vec![Box::new(AnalogSignalProcessorMovingAverage::new(20))],
-        Box::new(EngineTemperatureSensor::new()), // 0-130°C engine temperature range
-    );
-    mgr.add_analog_sensor_chain(temperature_chain);
-
-    log::info!("✓ Sensor manager initialized with digital and analog sensor chains");
-    
-    mgr
+    (mgr, test_adc)
 }
 
 fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>, gnss: Option<GnssFrame>) -> SensorManager {
@@ -235,7 +84,7 @@ fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>, gnss: Option<G
         Box::new(GnssLinkStatusProvider::new(gnss.clone())),
         vec![],
         Box::new(GenericDigitalSensor::new("HwGnssLink".to_string(), "GNSS LINK".to_string(),
-                                           Level::High, ValueConstraints::digital_critical())),
+                                           Level::High, ValueConstraints::digital_warning())),
     );
     mgr.add_digital_sensor_chain(gnss_link_chain);
 
@@ -319,13 +168,23 @@ fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>, gnss: Option<G
         return mgr;
     };
 
-    // STM32 frame layout (after stripping '$'):
-    //   A0, A1, A2, A3, TACHO, SPEED, D0..D9, B0..B7
-    //
-    // All digital values are pre-normalized by STM32 (1=active, 0=inactive),
-    // so Level::High is the active level for every digital sensor here.
-    // Analog channels are 12-bit (0-4095); scale factors need calibration.
+    add_adc_sensor_chains(&mut mgr, frame);
+    log::info!("✓ Sensor manager initialized with ADC sensor chains");
 
+    mgr
+}
+
+// STM32 frame layout (after stripping '$'):
+//   A0, A1, A2, A3, TACHO, SPEED, D0..D9, B0..B7
+//
+// All digital values are pre-normalized by STM32 (1=active, 0=inactive),
+// so Level::High is the active level for every digital sensor here.
+// Analog channels are 12-bit (0-4095); scale factors need calibration.
+//
+// Shared by setup_sensors (real, serial-fed ADCFrame) and setup_self_test_sensors
+// (TestADCDataProvider's synthetic ADCFrame) — self-test exercises this exact wiring
+// instead of a hand-duplicated copy, so the two can't silently drift apart.
+fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
     // ---- Digital sensor chains ----
 
     let brake_fluid_chain = SensorDigitalInputChain::new(
@@ -403,13 +262,6 @@ fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>, gnss: Option<G
     );
     mgr.add_digital_sensor_chain(park_brake_chain);
 
-    let speed_chain = SensorDigitalInputChain::new(
-        Box::new(ADCChannelProvider::new(HWInput::HwSpeed, 5, frame.clone())),  // SPEED pulse count
-        vec![],
-        Box::new(SpeedSensor::new()),
-    );
-    mgr.add_digital_sensor_chain(speed_chain);
-
     let tacho_chain = SensorDigitalInputChain::new(
         Box::new(ADCChannelProvider::new(HWInput::HwTacho, 4, frame.clone())),  // TACHO pulse count
         vec![Box::new(DigitalSignalDebouncer::new(3, std::time::Duration::from_millis(10)))],
@@ -460,9 +312,12 @@ fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>, gnss: Option<G
     );
     mgr.add_analog_sensor_chain(temperature_chain);
 
-    log::info!("✓ Sensor manager initialized with ADC sensor chains");
-
-    mgr
+    let speed_chain = SensorAnalogInputChain::new(
+        Box::new(ADCChannelProvider::new(HWInput::HwSpeed, 5, frame.clone())),  // SPEED inter-pulse period, raw timer ticks
+        vec![Box::new(AnalogSignalProcessorMovingAverage::new(5))],
+        Box::new(SpeedSensor::new()),
+    );
+    mgr.add_analog_sensor_chain(speed_chain);
 }
 
 // Physical MFD buttons (B0..B7), read from the same STM32 ADC frame as the sensors
@@ -652,7 +507,7 @@ fn main() -> std::process::ExitCode {
     // }
 
     let context = setup_context();
-    let self_test_sensors = setup_self_test_sensors();
+    let (self_test_sensors, test_adc_provider) = setup_self_test_sensors();
     let button_sensors = setup_button_sensors(adc_frame.clone());
     let input_sources = setup_input_sources(button_sensors);
     // Keep a handle for the ADC/GNSS diagnostic terminal pages before the sensor-chain
@@ -661,17 +516,25 @@ fn main() -> std::process::ExitCode {
     let gnss_frame_for_diag = gnss_frame.clone();
     let sensors = setup_sensors(adc_frame, ups_frame, gnss_frame);
     let ui_style = setup_ui_style();
+    // Starts disabled: alerts (e.g. engine temp, oil pressure) must not fire against the
+    // synthetic self-test sensor sweep. Enabled once the self-test sequence hands off to
+    // the real sensor set (PageManager's UIEvent::SwitchSensorSet handler).
+    let alert_manager = AlertManager::new(false, &ui_style);
 
-    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag, gnss_frame_for_diag);
+    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag, gnss_frame_for_diag, alert_manager);
 
     mgr.setup().expect("Failed to setup page manager");
 
-    // Setup timer to switch self-tests sensor manager to functional set after 5 seconds
+    // Setup timer to switch the self-test sensor manager to the functional set once the
+    // self-test sweep finishes. test_adc_provider is moved in so its synthetic writer
+    // thread keeps animating the self-test sweep until the moment of the switch, then
+    // stops (via Drop) as soon as this closure returns.
     let sender = mgr.get_smart_event_sender();
     let sensor_config_tx = mgr.get_sensor_config_tx();
     let thread_handle = thread::spawn(move || {
-        thread::sleep(Duration::from_secs(5));      // Switch sensor manager after 5 seconds
+        thread::sleep(SELF_TEST_DURATION);
         log::info!("Switching sensor set...");
+        drop(test_adc_provider);                    // Stop the self-test ADC sweep
         sensor_config_tx.send(sensors).ok();        // Send new sensor manager
         sender.send(UIEvent::SwitchSensorSet);      // Signal event handler to poll sensor_config channel
     });
@@ -679,12 +542,16 @@ fn main() -> std::process::ExitCode {
     // Exit code doubles as a restart signal for the auto-start login script: a clean
     // exit (0) means the dashboard quit intentionally (e.g. 'q' for debugging) and should
     // not be relaunched, a non-zero code means it crashed and should be restarted after
-    // a delay, and BINARY_UPDATED_EXIT_CODE means it quit because it was rebuilt and
-    // should be restarted immediately with the new binary.
+    // a delay, and RESTART_EXIT_CODE means it quit because it was rebuilt (or a restart
+    // was explicitly requested via SIGUSR1) and should be restarted immediately.
     let exit_code = match mgr.start() {
         Ok(()) if crate::util::shutdown::binary_updated() => {
             log::info!("Restarting to pick up newly built binary");
-            std::process::ExitCode::from(crate::util::shutdown::BINARY_UPDATED_EXIT_CODE)
+            std::process::ExitCode::from(crate::util::shutdown::RESTART_EXIT_CODE)
+        }
+        Ok(()) if crate::util::shutdown::restart_requested() => {
+            log::info!("Restarting: requested via SIGUSR1");
+            std::process::ExitCode::from(crate::util::shutdown::RESTART_EXIT_CODE)
         }
         Ok(()) => {
             log::info!("Dashboard finished successfully!");

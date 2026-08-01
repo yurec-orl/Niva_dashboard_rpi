@@ -2,7 +2,7 @@
 
 ## Response constraints
 - Ask before generating demos or examples.
-- Write meaningful, descriptive comments only where the WHY isn't obvious from the code. Do not restate the code in comments.
+- Write brief, meaningful, descriptive comments only where the WHY isn't obvious from the code. Do not restate the code in comments. Do not reference design decisions or internal project docs.
 
 ## Project Overview
 A software dashboard for automotive use, written in Rust, running on Raspberry Pi 4. Mimics a multi-functional display (MFD) as found in aircraft: central screen with configurable button rows on the left and right sides. On-screen text is in Russian, using military-style abbreviations and shortened words where applicable.
@@ -122,6 +122,8 @@ Boot reduced from ~16.8s to ~5.1s by disabling unused systemd services (`Network
 - [In progress] GNSS connectivity and indicators
 - BNO085 connectivity and related indicators
 - [Done] Out of memory protection: `earlyoom` installed and enabled (OS-level, not part of this repo — a fresh SD flash needs it reinstalled: `apt install earlyoom`). Kills the largest memory consumer before the kernel OOM killer lets the system thrash into unresponsiveness. Config in `/etc/default/earlyoom` avoids killing `sshd` (so remote recovery stays possible) but deliberately does *not* protect the dashboard binary — if it leaks and gets killed, the startup script restarts it fresh, which is the desired behavior.
+- Improve sensor->watchdog->alert construction: currently, it is a multi-step process involving a lot of parameters, and it's easy to mismatch one of the parameters which can cause the alert to never trigger.
+- [In progress] ADC firmware design flaw: STM32 reports counted pulses since last data frame for HwSpeed, which gives low resolution (69.12 km/h per raw count at 6 PPR/50Hz) and visible jitter even under steady real driving, since expected counts/tick are rarely integers. Fix by measuring inter-pulse period instead of counting. Rust side (`hardware::sensors::SpeedSensor`, self-test simulation) already reworked to the period-based conversion; STM32 firmware change is the remaining step. See `SPEED_TACHO_PULSE_PERIOD_DESIGN.md` for the full analysis (100 km/h worked example, wire-format options, Rust-side conversion design) and status.
 
 ## PiOS login
 `user` / `@Niva21#`; `root` password is standard password with a single numeric character.

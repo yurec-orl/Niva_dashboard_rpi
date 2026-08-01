@@ -38,6 +38,7 @@
 //
 //   PB0  (EXTI0) — Tachometer signal, 2 pulses per revolution
 //   PB1  (EXTI1) — Speed sensor signal, 6 pulses per revolution
+//   PB1  (EXTI1) — Speed sensor signal, 6 pulses per revolution
 //
 //   Using external interrupts (EXTI) for pulse counting.
 //   12V sensor signals go through voltage divider + 1nF filter cap to 3.3V.
@@ -193,7 +194,7 @@
 
 // Pulse inputs (EXTI interrupt-based counting)
 #define PIN_TACHO           PB0   // Tachometer, 2 PPR
-#define PIN_SPEED           PB1   // Speed sensor, 4 PPR
+#define PIN_SPEED           PB1   // Speed sensor, 6 PPR
 
 // Digital indicators — active-low (INPUT_PULLUP)
 #define PIN_D_OIL_WARN      PA8   // D0

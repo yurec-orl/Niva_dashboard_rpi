@@ -243,7 +243,8 @@ pub struct PageManager {
 impl PageManager {
     pub fn new(context: GraphicsContext, sensor_manager: SensorManager, ui_style: UIStyle,
                input_sources: Vec<Box<dyn InputSource>>, ups_monitor: UpsMonitor,
-               adc_frame: Option<ADCFrame>, gnss_frame: Option<GnssFrame>) -> Self {
+               adc_frame: Option<ADCFrame>, gnss_frame: Option<GnssFrame>,
+               alert_manager: AlertManager) -> Self {
         let mut buttons_map = HashMap::new();
         buttons_map.insert('1', ButtonPosition::Left1);
         buttons_map.insert('2', ButtonPosition::Left2);
@@ -258,8 +259,6 @@ impl PageManager {
         let event_bus = create_event_bus();
         let global_event_receiver = event_bus.global_receiver();
         let smart_event_sender = event_bus.smart_sender();
-
-        let alert_manager = AlertManager::new(true, &ui_style);
 
         // Event channel for switching self-test sequence sensors to real ones
         let (sensor_config_tx, sensor_config_rx) = std::sync::mpsc::channel::<SensorManager>();
@@ -468,13 +467,22 @@ impl PageManager {
             None,                                           // Trigger immediately, no persistence delay
         );
 
+        let gnss_link_watchdog = Watchdog::new(
+            HWInput::HwGnssLink,
+            "ОШИБКА СВЯЗИ ГНСС".to_string(),
+            Severity::Warning,
+            Some(std::time::Duration::from_secs(30)),       // Display for 30 s
+            Some(std::time::Duration::from_secs(10*60)),    // Suppress for 10 minutes
+            None,                                           // Trigger immediately, no persistence delay
+        );
+
         // "On battery" is a Warning here — the actual shutdown decision has its own,
         // longer-delayed timer in UpsMonitor::check. This just surfaces it to the driver.
         let ups_on_battery_watchdog = Watchdog::new(
             HWInput::HwUPSCurrent,
             "РЕЗЕРВНОЕ ПИТАНИЕ".to_string(),
             Severity::Warning,
-            Some(std::time::Duration::from_secs(60)),       // Display for 60 s
+            Some(std::time::Duration::from_secs(30)),       // Display for 30 s
             Some(std::time::Duration::from_secs(60)),       // Wait 60 s before displaying again
             Some(std::time::Duration::from_secs(10)),       // Ignore brief transients
         );
@@ -499,12 +507,10 @@ impl PageManager {
         self.alert_manager.add_watchdog(engine_temp_watchdog);
         self.alert_manager.add_watchdog(oil_press_low_watchdog);
         self.alert_manager.add_watchdog(adc_link_watchdog);
+        self.alert_manager.add_watchdog(gnss_link_watchdog);
         self.alert_manager.add_watchdog(ups_on_battery_watchdog);
         self.alert_manager.add_watchdog(ups_low_charge_watchdog);
         self.alert_manager.add_watchdog(ups_crit_charge_watchdog);
-
-        // Enable watchdogs and alerts
-        self.alert_manager.set_enabled(true);
 
         Ok(())
     }
@@ -537,6 +543,11 @@ impl PageManager {
             }
             if crate::util::shutdown::binary_updated() {
                 log::info!("New binary detected on disk");
+                self.running = false;
+                continue;
+            }
+            if crate::util::shutdown::restart_requested() {
+                log::info!("Restart requested (SIGUSR1)");
                 self.running = false;
                 continue;
             }
@@ -687,6 +698,9 @@ impl PageManager {
                 if let Ok(new_manager) = self.sensor_config_rx.try_recv() {
                     self.sensor_manager = new_manager;
                 }
+                // Self-test sweep has finished handing off to real sensors — safe to start
+                // raising alerts now that watchdogs read live hardware, not the synthetic sweep.
+                self.alert_manager.set_enabled(true);
             }
             _ => {}
         }

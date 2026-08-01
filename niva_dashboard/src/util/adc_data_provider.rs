@@ -80,6 +80,15 @@ impl ADCFrame {
             .ok_or_else(|| format!("ADC channel {} not in frame", index))
     }
 
+    /// Replaces the frame's channel data and marks it as freshly updated. Shared by
+    /// ADCDataProvider's serial reader and TestADCDataProvider's synthetic writer — both
+    /// populate an ADCFrame the same way, so ADCChannelProvider (and everything built on
+    /// top of it) can't tell which one is currently the source.
+    fn update(&self, values: Vec<u16>) {
+        *self.data.lock().unwrap() = values;
+        *self.last_update.lock().unwrap() = Instant::now();
+    }
+
     pub fn get_data(&self) -> Vec<u16> {
         self.data.lock().unwrap().clone()
     }
@@ -225,8 +234,7 @@ impl ADCDataProvider {
                         .filter_map(|s| s.trim().parse().ok())
                         .collect();
                     if !values.is_empty() {
-                        *frame.data.lock().unwrap() = values;
-                        *frame.last_update.lock().unwrap() = Instant::now();
+                        frame.update(values);
                         reset_attempted = false;
                     }
                 }
@@ -297,5 +305,202 @@ impl Drop for ADCDataProvider {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+    }
+}
+
+/// STM32 ADC channels are 12-bit.
+const SELF_TEST_ADC_MAX_RAW: u16 = 4095;
+/// Self-test sweep timing: rise fast, fall slower — long enough that debouncers (which need
+/// several consistent samples) reliably latch both an active and an inactive state, short
+/// enough not to delay real data past what's still a startup animation, not a wait.
+const SELF_TEST_RISE: Duration = Duration::from_millis(500);
+const SELF_TEST_FALL: Duration = Duration::from_millis(1500);
+pub const SELF_TEST_DURATION: Duration = Duration::from_millis(2000);
+/// How often the synthetic frame is refreshed. Comfortably faster than the 60Hz render loop
+/// that drives SensorManager reads, so no single frame value is read as if it were stuck.
+const SELF_TEST_TICK: Duration = Duration::from_millis(20);
+/// Peak target speed for the HwSpeed channel's sweep — deliberately above the gauge's 180
+/// km/h max (see hardware::sensors::SpeedSensor) so the sweep visibly reaches and clamps at
+/// the top of the gauge rather than falling just short of it.
+const SELF_TEST_SPEED_PEAK_KMH: f32 = 200.0;
+
+/// Populates an ADCFrame with synthetic values instead of reading the STM32 over serial —
+/// mirrors ADCDataProvider's shape (owns an ADCFrame, updates it from a background thread) so
+/// self-test can wire the exact same ADCChannelProvider / signal-processor / logical-sensor
+/// chains as production (see main.rs's add_adc_sensor_chains), differing only in where the
+/// raw channel bytes come from. Runs a fixed rise/fall sweep once and then stops updating;
+/// the caller is expected to drop it (which stops the thread) once the real ADCDataProvider's
+/// frame is ready to take over.
+pub struct TestADCDataProvider {
+    should_stop: Arc<AtomicBool>,
+    frame: ADCFrame,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl TestADCDataProvider {
+    /// Starts generating synthetic frames immediately. The returned handle must be kept
+    /// alive for the sweep to keep animating — dropping it stops the background thread.
+    pub fn start() -> Self {
+        let should_stop = Arc::new(AtomicBool::new(false));
+        let frame = ADCFrame::new();
+        let thread_should_stop = Arc::clone(&should_stop);
+        let thread_frame = frame.clone();
+
+        let thread = thread::Builder::new()
+            .name("test-adc-data-provider".into())
+            .spawn(move || Self::run_loop(&thread_should_stop, &thread_frame))
+            .ok();
+
+        TestADCDataProvider { should_stop, frame, thread }
+    }
+
+    /// Returns a cloneable handle to the shared frame, same as ADCDataProvider::frame().
+    pub fn frame(&self) -> ADCFrame {
+        self.frame.clone()
+    }
+
+    fn run_loop(should_stop: &AtomicBool, frame: &ADCFrame) {
+        let start = Instant::now();
+        while !should_stop.load(Ordering::Relaxed) {
+            let elapsed = start.elapsed();
+            if elapsed >= SELF_TEST_DURATION {
+                break;
+            }
+            frame.update(Self::generate_channels(elapsed));
+            thread::sleep(SELF_TEST_TICK);
+        }
+    }
+
+    /// Triangular envelope: 0.0 -> 1.0 over the rise phase, back to 0.0 over the fall phase.
+    fn envelope(elapsed: Duration) -> f32 {
+        if elapsed < SELF_TEST_RISE {
+            elapsed.as_secs_f32() / SELF_TEST_RISE.as_secs_f32()
+        } else {
+            let fall_elapsed = (elapsed - SELF_TEST_RISE).as_secs_f32();
+            (1.0 - fall_elapsed / SELF_TEST_FALL.as_secs_f32()).max(0.0)
+        }
+    }
+
+    /// Builds one synthetic STM32 frame (channels 0-15, matching the real layout used by
+    /// main.rs's add_adc_sensor_chains: A0-A3, TACHO, SPEED, D0-D9). Button channels
+    /// (16-23) are omitted — the button sensor manager always reads the real ADCFrame
+    /// directly, never the self-test one.
+    fn generate_channels(elapsed: Duration) -> Vec<u16> {
+        let level = Self::envelope(elapsed);
+        let analog_raw = (level * SELF_TEST_ADC_MAX_RAW as f32) as u16;
+        // Digital channels latch active only past the envelope's midpoint, so debouncers see
+        // a clean active period followed by a clean inactive one rather than chattering.
+        let digital_raw: u16 = if level > 0.5 { 1 } else { 0 };
+        // HwSpeed reports an inter-pulse period, not a count (see
+        // SPEED_TACHO_PULSE_PERIOD_DESIGN.md) — encoded directly from the envelope's target
+        // speed via SpeedSensor's own inverse conversion (speed_period_raw_from_kmh), so this
+        // synthetic data and the real conversion it drives can't silently drift apart. Unlike
+        // the count-based approach this replaced, no dithering trick is needed here: a period
+        // already varies smoothly with speed, so the post-conversion reading tracks the
+        // envelope directly.
+        let speed_raw = crate::hardware::sensors::speed_period_raw_from_kmh(level * SELF_TEST_SPEED_PEAK_KMH);
+
+        let mut channels = vec![0u16; 16];
+        channels[0] = analog_raw;  // HwOilPress
+        channels[1] = analog_raw;  // HwFuelLvl
+        channels[2] = analog_raw;  // HwEngineCoolantTemp
+        channels[3] = analog_raw;  // Hw12v
+        channels[4] = digital_raw; // HwTacho (boolean indicator)
+        channels[5] = speed_raw;   // HwSpeed (raw inter-pulse period)
+        channels[6] = digital_raw; // HwOilPressLow (D0)
+        channels[7] = digital_raw; // HwFuelLvlLow (D1)
+        channels[8] = digital_raw; // HwCharge (D2)
+        channels[9] = digital_raw; // HwExtLights / HwInstrIllum (D3)
+        channels[10] = digital_raw; // HwBrakeFluidLvlLow (D4)
+        // channel 11 (D5) unused
+        channels[12] = digital_raw; // HwTurnSignal (D6)
+        channels[13] = digital_raw; // HwHighBeam (D7)
+        channels[14] = digital_raw; // HwParkBrake (D8)
+        channels[15] = digital_raw; // HwDiffLock (D9)
+        channels
+    }
+}
+
+impl Drop for TestADCDataProvider {
+    fn drop(&mut self) {
+        self.should_stop.store(true, Ordering::SeqCst);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hardware::hw_providers::{ADCChannelProvider, HWAnalogProvider, HWInput};
+    use crate::hardware::analog_signal_processing::{AnalogSignalProcessor, AnalogSignalProcessorMovingAverage};
+    use crate::hardware::sensors::{AnalogSensor, SpeedSensor};
+
+    /// Regression test for a bug where the self-test speed gauge never visibly moved.
+    /// Drives the exact same pipeline main.rs's add_adc_sensor_chains wires up for HwSpeed
+    /// (ADCChannelProvider::read_analog -> AnalogSignalProcessorMovingAverage -> SpeedSensor
+    /// -- see SPEED_TACHO_PULSE_PERIOD_DESIGN.md) and asserts a nonzero km/h reading is
+    /// observed before the sweep ends.
+    #[test]
+    fn self_test_speed_channel_produces_nonzero_reading_within_sweep() {
+        let provider = TestADCDataProvider::start();
+        let frame = provider.frame();
+        let adc_provider = ADCChannelProvider::new(HWInput::HwSpeed, 5, frame);
+        let mut moving_avg = AnalogSignalProcessorMovingAverage::new(5);
+        let mut sensor = SpeedSensor::new();
+
+        let start = Instant::now();
+        let mut saw_nonzero_speed = false;
+        while start.elapsed() < SELF_TEST_DURATION {
+            if let Ok(raw) = adc_provider.read_analog(HWInput::HwSpeed) {
+                let averaged = moving_avg.read(raw).unwrap();
+                if sensor.read(averaged).unwrap().as_f32() > 0.0 {
+                    saw_nonzero_speed = true;
+                    break;
+                }
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        assert!(saw_nonzero_speed, "self-test speed channel never produced a nonzero reading within SELF_TEST_DURATION");
+    }
+
+    /// End-to-end validation of the period-based redesign (see
+    /// SPEED_TACHO_PULSE_PERIOD_DESIGN.md's Status section, step 1): generate_channels
+    /// encodes HwSpeed via speed_period_raw_from_kmh(envelope * SELF_TEST_SPEED_PEAK_KMH),
+    /// and SpeedSensor decodes it back via the inverse formula. This asserts the round trip
+    /// actually recovers the intended speed while comfortably clear of the gauge's 0 floor
+    /// and 180 clamp ceiling (both edges are dominated by rounding/staleness behavior that
+    /// the other tests exercise directly, not by the conversion itself).
+    ///
+    /// Steps through generate_channels directly (fixed SELF_TEST_TICK increments) instead of
+    /// racing TestADCDataProvider's background thread against wall-clock time: the latter
+    /// made "target" (computed from the test's own Instant) and "raw" (last written by the
+    /// thread up to one SELF_TEST_TICK ago) drift apart during the steepest part of the
+    /// sweep -- at 200 km/h over a 500ms rise, one tick of lag alone is ~8 km/h, well past
+    /// any reasonable tolerance. Calling generate_channels directly makes both sides of the
+    /// comparison agree on the exact same `elapsed`, eliminating that timing race entirely.
+    #[test]
+    fn self_test_speed_channel_tracks_envelope_target_speed() {
+        let mut sensor = SpeedSensor::new();
+
+        let mut elapsed = Duration::ZERO;
+        let mut checked_a_midrange_sample = false;
+        while elapsed < SELF_TEST_DURATION {
+            let channels = TestADCDataProvider::generate_channels(elapsed);
+            let speed = sensor.read(channels[5]).unwrap().as_f32();
+            let target = (TestADCDataProvider::envelope(elapsed) * SELF_TEST_SPEED_PEAK_KMH).min(180.0);
+
+            if target > 20.0 && target < 170.0 {
+                assert!((speed - target).abs() < 2.0,
+                        "at elapsed={:?}, target={:.1} km/h but sensor read {:.1} km/h", elapsed, target, speed);
+                checked_a_midrange_sample = true;
+            }
+
+            elapsed += SELF_TEST_TICK;
+        }
+
+        assert!(checked_a_midrange_sample, "sweep never passed through a mid-range speed to validate against");
     }
 }
