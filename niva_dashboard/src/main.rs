@@ -17,7 +17,7 @@ use crate::hardware::sensor_manager::{SensorManager, SensorDigitalInputChain, Se
 use crate::hardware::hw_providers::*;
 use crate::hardware::digital_signal_processing::DigitalSignalDebouncer;
 use crate::hardware::analog_signal_processing::AnalogSignalProcessorMovingAverage;
-use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor, SpeedSensor, EngineTemperatureSensor, GnssAltitudeSensor};
+use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor, SpeedSensor, TachoSensor, EngineTemperatureSensor, GnssAltitudeSensor};
 use crate::hardware::sensor_value::ValueConstraints;
 use crate::util::adc_data_provider::{ADCDataProvider, ADCFrame, TestADCDataProvider, SELF_TEST_DURATION};
 use crate::util::gnss_data_provider::{GnssDataProvider, GnssFrame};
@@ -262,14 +262,6 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
     );
     mgr.add_digital_sensor_chain(park_brake_chain);
 
-    let tacho_chain = SensorDigitalInputChain::new(
-        Box::new(ADCChannelProvider::new(HWInput::HwTacho, 4, frame.clone())),  // TACHO pulse count
-        vec![Box::new(DigitalSignalDebouncer::new(3, std::time::Duration::from_millis(10)))],
-        Box::new(GenericDigitalSensor::new("HwTacho".to_string(), "ТАХОМЕТР".to_string(),
-                                           Level::High, ValueConstraints::digital_default())),
-    );
-    mgr.add_digital_sensor_chain(tacho_chain);
-
     let turn_signal_chain = SensorDigitalInputChain::new(
         Box::new(ADCChannelProvider::new(HWInput::HwTurnSignal, 12, frame.clone())),  // D6
         vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(50)))],
@@ -318,6 +310,13 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
         Box::new(SpeedSensor::new()),
     );
     mgr.add_analog_sensor_chain(speed_chain);
+
+    let tacho_chain = SensorAnalogInputChain::new(
+        Box::new(ADCChannelProvider::new(HWInput::HwTacho, 4, frame.clone())),  // TACHO inter-pulse period, raw timer ticks
+        vec![Box::new(AnalogSignalProcessorMovingAverage::new(5))],
+        Box::new(TachoSensor::new()),
+    );
+    mgr.add_analog_sensor_chain(tacho_chain);
 }
 
 // Physical MFD buttons (B0..B7), read from the same STM32 ADC frame as the sensors

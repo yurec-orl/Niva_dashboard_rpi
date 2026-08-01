@@ -379,21 +379,20 @@ impl AnalogSensor for UpsChargeSensor {
 }
 
 // HwSpeed (channel 5): period-based measurement, replacing the count-based interim approach
-// (see SPEED_TACHO_PULSE_PERIOD_DESIGN.md). STM32 firmware isn't changed yet -- this is
-// built and validated against TestADCDataProvider's simulated period channel first, ahead
-// of the real firmware change, per that doc's Status section.
+// (see SPEED_TACHO_PULSE_PERIOD_DESIGN.md). STM32 firmware now sends inter-pulse periods
+// (SPEED_PERIOD_UNIT_US = 10us/unit, same encoding as HwTacho below).
 
 /// Wheel-speed sensor pulses/revolution (WIRING.md).
 const SPEED_PULSES_PER_REV: f32 = 6.0;
 /// 235/75/15 tire circumference, meters. Width 235mm, aspect ratio 75%, rim 15in ->
 /// diameter = 15in (381mm) + 2*(235mm*0.75) = 733.5mm -> circumference = pi*733.5mm.
 const SPEED_WHEEL_CIRCUMFERENCE_M: f32 = 2.304;
-/// Placeholder timer tick rate for the raw period channel -- the real value is a firmware
-/// decision (see the design doc's wire-format section), not made here. Chosen so a u16 raw
-/// period doesn't wrap before speed drops to a "may as well be stopped" ~1.1 km/h (65535
-/// ticks / 50_000 Hz = 1.31s period), while still giving sub-km/h resolution at highway
-/// speed (100 km/h's 13.82ms inter-pulse period is ~691 ticks at this rate).
-const SPEED_PERIOD_TIMER_HZ: f32 = 50_000.0;
+/// Timer tick rate for the raw period channel: firmware's SPEED_PERIOD_UNIT_US = 10us/unit,
+/// i.e. 1/10us = 100_000 ticks/sec. A u16 raw period doesn't wrap before speed drops to a
+/// "may as well be stopped" ~0.55 km/h (65535 ticks / 100_000 Hz = 0.655s period), while
+/// still giving sub-km/h resolution at highway speed (100 km/h's 13.82ms inter-pulse period
+/// is ~1382 ticks at this rate).
+const SPEED_PERIOD_TIMER_HZ: f32 = 100_000.0;
 /// Raw period value reserved to mean "no pulse observed" (stationary, or no pulse seen yet
 /// since startup) -- distinct from a real, merely long period, which the wire format needs
 /// to be able to represent unambiguously at the low-speed end (see design doc).
@@ -509,6 +508,125 @@ impl AnalogSensor for SpeedSensor {
     }
 }
 
+// HwTacho (channel 4): period-based measurement, same wire scheme as HwSpeed above (see
+// SPEED_TACHO_PULSE_PERIOD_DESIGN.md and the STM32 firmware's "Tachometer timing" comment) --
+// replaces the old boolean "engine running" debounce, which was mathematically unable to
+// latch true anywhere in the normal idle range (400-800 rpm) because a pulse-count-per-frame
+// encoding can't represent sub-1-count-per-frame rates.
+
+/// Tachometer pulses/revolution (STM32 firmware: PIN_TACHO, 2 PPR).
+const TACHO_PULSES_PER_REV: f32 = 2.0;
+/// Wire units are TACHO_PERIOD_UNIT_US = 10us/unit on the firmware side, same encoding (and
+/// same 100_000 Hz) as SPEED_PERIOD_TIMER_HZ above.
+const TACHO_PERIOD_TIMER_HZ: f32 = 100_000.0;
+/// Raw period value reserved to mean "no pulse observed" (stalled, or no pulse seen yet
+/// since startup) -- mirrors SPEED_PERIOD_IDLE_RAW.
+const TACHO_PERIOD_IDLE_RAW: u16 = 0;
+/// Same role as SPEED_STALE_PERIOD_MULTIPLIER: how many multiples of the last known
+/// inter-pulse period to wait, once that period stops updating, before concluding the
+/// engine has slowed further (or stalled).
+const TACHO_STALE_PERIOD_MULTIPLIER: f32 = 3.0;
+/// Floor under the multiplier above, shorter than SPEED_MIN_STALE_THRESHOLD because engine
+/// rpm changes (and stalls) faster than road speed -- matches the firmware's own
+/// TACHO_TIMEOUT_US (500ms) being half of SPEED_TIMEOUT_US (1s).
+const TACHO_MIN_STALE_THRESHOLD: Duration = Duration::from_millis(50);
+
+pub struct TachoSensor {
+    value: SensorValue,
+    constraints: ValueConstraints,
+    metadata: ValueMetadata,
+    last_raw: u16,
+    last_change: Instant,
+}
+
+impl TachoSensor {
+    pub fn new() -> Self {
+        TachoSensor {
+            value: SensorValue::empty(),
+            constraints: ValueConstraints::analog(0.0, 6000.0),
+            metadata: ValueMetadata::new("об/мин", "ТАХОМЕТР", "tacho_sensor"),
+            last_raw: TACHO_PERIOD_IDLE_RAW,
+            last_change: Instant::now(),
+        }
+    }
+
+    /// Inter-pulse period (raw timer ticks) -> rpm. Caller is responsible for excluding
+    /// TACHO_PERIOD_IDLE_RAW before calling this (division by it isn't meaningful).
+    fn rpm_from_period_raw(raw: u16) -> f32 {
+        let period_s = raw as f32 / TACHO_PERIOD_TIMER_HZ;
+        60.0 / (period_s * TACHO_PULSES_PER_REV)
+    }
+}
+
+/// Inverse of rpm_from_period_raw, exposed for TestADCDataProvider's self-test sweep
+/// generator, same rationale as speed_period_raw_from_kmh.
+pub fn tacho_period_raw_from_rpm(rpm: f32) -> u16 {
+    if rpm <= 0.0 {
+        return TACHO_PERIOD_IDLE_RAW;
+    }
+    let period_s = 60.0 / (rpm * TACHO_PULSES_PER_REV);
+    (period_s * TACHO_PERIOD_TIMER_HZ).round().clamp(1.0, u16::MAX as f32) as u16
+}
+
+impl Sensor for TachoSensor {
+    fn id(&self) -> &String {
+        &self.metadata.sensor_id
+    }
+
+    fn name(&self) -> &String {
+        &self.metadata.label
+    }
+
+    fn value(&self) -> Result<&SensorValue, String> {
+        Ok(&self.value)
+    }
+
+    fn constraints(&self) -> &ValueConstraints {
+        &self.constraints
+    }
+
+    fn metadata(&self) -> &ValueMetadata {
+        &self.metadata
+    }
+
+    fn min_value(&self) -> f32 {
+        self.constraints.min_value
+    }
+
+    fn max_value(&self) -> f32 {
+        self.constraints.max_value
+    }
+}
+
+impl AnalogSensor for TachoSensor {
+    fn read(&mut self, input: u16) -> Result<&SensorValue, String> {
+        if input != self.last_raw {
+            self.last_raw = input;
+            self.last_change = Instant::now();
+        }
+
+        let rpm = if self.last_raw == TACHO_PERIOD_IDLE_RAW {
+            0.0
+        } else {
+            let last_period_s = self.last_raw as f32 / TACHO_PERIOD_TIMER_HZ;
+            let stale_after = Duration::from_secs_f32(last_period_s * TACHO_STALE_PERIOD_MULTIPLIER)
+                .max(TACHO_MIN_STALE_THRESHOLD);
+            if self.last_change.elapsed() > stale_after {
+                0.0
+            } else {
+                Self::rpm_from_period_raw(self.last_raw)
+            }
+        };
+
+        self.value = SensorValue::analog_with_constraints_and_metadata(
+            rpm.clamp(self.constraints.min_value, self.constraints.max_value),
+            self.constraints.clone(),
+            self.metadata.clone(),
+        );
+        Ok(&self.value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,6 +694,69 @@ mod tests {
         // 180 km/h max at any plausible SPEED_PERIOD_TIMER_HZ, so this exercises the clamp.
         let speed = sensor.read(1).unwrap().as_f32();
         assert_eq!(speed, 180.0);
+    }
+
+    /// Raw period (in TACHO_PERIOD_TIMER_HZ ticks) that a steady 3000 rpm implies, used by
+    /// several tests below as a known-good reference point.
+    fn raw_period_for_3000_rpm() -> u16 {
+        let period_s = 60.0 / (3000.0 * TACHO_PULSES_PER_REV);
+        (period_s * TACHO_PERIOD_TIMER_HZ).round() as u16
+    }
+
+    #[test]
+    fn test_tacho_sensor_idle_raw_reads_zero() {
+        let mut sensor = TachoSensor::new();
+        let rpm = sensor.read(TACHO_PERIOD_IDLE_RAW).unwrap().as_f32();
+        assert_eq!(rpm, 0.0);
+    }
+
+    #[test]
+    fn test_tacho_sensor_converts_period_to_expected_rpm() {
+        let mut sensor = TachoSensor::new();
+        let raw = raw_period_for_3000_rpm();
+        let rpm = sensor.read(raw).unwrap().as_f32();
+        assert!((rpm - 3000.0).abs() < 10.0, "expected ~3000 rpm, got {}", rpm);
+    }
+
+    #[test]
+    fn test_tacho_sensor_repeated_same_period_stays_fresh() {
+        // A steady rpm means the same raw period value keeps being reported every read --
+        // that must NOT be treated as staleness (see TACHO_STALE_PERIOD_MULTIPLIER), since
+        // at low rpm a single inter-pulse period can span several 20ms report frames.
+        let mut sensor = TachoSensor::new();
+        let raw = raw_period_for_3000_rpm();
+        for _ in 0..5 {
+            let rpm = sensor.read(raw).unwrap().as_f32();
+            assert!((rpm - 3000.0).abs() < 10.0, "expected ~3000 rpm, got {}", rpm);
+        }
+    }
+
+    #[test]
+    fn test_tacho_sensor_decays_to_zero_once_period_goes_stale() {
+        // Idle's long inter-pulse period, once it stops being refreshed by a new pulse for
+        // long enough, must decay to 0 -- this is how the sensor detects a stall even though
+        // nothing ever explicitly reports TACHO_PERIOD_IDLE_RAW.
+        let mut sensor = TachoSensor::new();
+        // ~500 rpm implies a period long enough that TACHO_MIN_STALE_THRESHOLD's floor
+        // doesn't dominate, so this actually exercises the multiplier-based timeout.
+        let period_s = 60.0 / (500.0 * TACHO_PULSES_PER_REV);
+        let raw = (period_s * TACHO_PERIOD_TIMER_HZ).round() as u16;
+
+        let rpm = sensor.read(raw).unwrap().as_f32();
+        assert!(rpm > 0.0, "expected a nonzero initial reading, got {}", rpm);
+
+        std::thread::sleep(Duration::from_secs_f32(period_s * TACHO_STALE_PERIOD_MULTIPLIER) + Duration::from_millis(50));
+        let rpm = sensor.read(raw).unwrap().as_f32();
+        assert_eq!(rpm, 0.0, "expected stale period to decay to 0, got {}", rpm);
+    }
+
+    #[test]
+    fn test_tacho_sensor_clamps_to_gauge_max() {
+        let mut sensor = TachoSensor::new();
+        // raw=1 is the shortest non-idle period the format allows -- far beyond the gauge's
+        // 6000 rpm max, so this exercises the clamp.
+        let rpm = sensor.read(1).unwrap().as_f32();
+        assert_eq!(rpm, 6000.0);
     }
 
     #[test]

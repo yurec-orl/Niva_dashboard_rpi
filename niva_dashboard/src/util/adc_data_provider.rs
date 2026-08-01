@@ -323,6 +323,10 @@ const SELF_TEST_TICK: Duration = Duration::from_millis(20);
 /// km/h max (see hardware::sensors::SpeedSensor) so the sweep visibly reaches and clamps at
 /// the top of the gauge rather than falling just short of it.
 const SELF_TEST_SPEED_PEAK_KMH: f32 = 200.0;
+/// Peak target rpm for the HwTacho channel's sweep -- comfortably below TachoSensor's 6000
+/// rpm gauge max (unlike SELF_TEST_SPEED_PEAK_KMH, doesn't need to overshoot it: the point
+/// here is just to exercise a realistic idle-to-redline sweep, not to test gauge clamping).
+const SELF_TEST_TACHO_PEAK_RPM: f32 = 6000.0;
 
 /// Populates an ADCFrame with synthetic values instead of reading the STM32 over serial —
 /// mirrors ADCDataProvider's shape (owns an ADCFrame, updates it from a background thread) so
@@ -399,13 +403,17 @@ impl TestADCDataProvider {
         // already varies smoothly with speed, so the post-conversion reading tracks the
         // envelope directly.
         let speed_raw = crate::hardware::sensors::speed_period_raw_from_kmh(level * SELF_TEST_SPEED_PEAK_KMH);
+        // HwTacho reports an inter-pulse period too (see hardware::sensors::TachoSensor),
+        // same rationale as HwSpeed above -- driven through TachoSensor's own inverse
+        // conversion so the synthetic data can't drift out of sync with the real one.
+        let tacho_raw = crate::hardware::sensors::tacho_period_raw_from_rpm(level * SELF_TEST_TACHO_PEAK_RPM);
 
         let mut channels = vec![0u16; 16];
         channels[0] = analog_raw;  // HwOilPress
         channels[1] = analog_raw;  // HwFuelLvl
         channels[2] = analog_raw;  // HwEngineCoolantTemp
         channels[3] = analog_raw;  // Hw12v
-        channels[4] = digital_raw; // HwTacho (boolean indicator)
+        channels[4] = tacho_raw;   // HwTacho (raw inter-pulse period)
         channels[5] = speed_raw;   // HwSpeed (raw inter-pulse period)
         channels[6] = digital_raw; // HwOilPressLow (D0)
         channels[7] = digital_raw; // HwFuelLvlLow (D1)
@@ -435,7 +443,7 @@ mod tests {
     use super::*;
     use crate::hardware::hw_providers::{ADCChannelProvider, HWAnalogProvider, HWInput};
     use crate::hardware::analog_signal_processing::{AnalogSignalProcessor, AnalogSignalProcessorMovingAverage};
-    use crate::hardware::sensors::{AnalogSensor, SpeedSensor};
+    use crate::hardware::sensors::{AnalogSensor, SpeedSensor, TachoSensor};
 
     /// Regression test for a bug where the self-test speed gauge never visibly moved.
     /// Drives the exact same pipeline main.rs's add_adc_sensor_chains wires up for HwSpeed
@@ -502,5 +510,56 @@ mod tests {
         }
 
         assert!(checked_a_midrange_sample, "sweep never passed through a mid-range speed to validate against");
+    }
+
+    /// Same regression as self_test_speed_channel_produces_nonzero_reading_within_sweep, for
+    /// the HwTacho channel now that it's also period-based (see hardware::sensors::TachoSensor).
+    #[test]
+    fn self_test_tacho_channel_produces_nonzero_reading_within_sweep() {
+        let provider = TestADCDataProvider::start();
+        let frame = provider.frame();
+        let adc_provider = ADCChannelProvider::new(HWInput::HwTacho, 4, frame);
+        let mut moving_avg = AnalogSignalProcessorMovingAverage::new(5);
+        let mut sensor = TachoSensor::new();
+
+        let start = Instant::now();
+        let mut saw_nonzero_rpm = false;
+        while start.elapsed() < SELF_TEST_DURATION {
+            if let Ok(raw) = adc_provider.read_analog(HWInput::HwTacho) {
+                let averaged = moving_avg.read(raw).unwrap();
+                if sensor.read(averaged).unwrap().as_f32() > 0.0 {
+                    saw_nonzero_rpm = true;
+                    break;
+                }
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        assert!(saw_nonzero_rpm, "self-test tacho channel never produced a nonzero reading within SELF_TEST_DURATION");
+    }
+
+    /// Same round-trip validation as self_test_speed_channel_tracks_envelope_target_speed,
+    /// for the HwTacho channel.
+    #[test]
+    fn self_test_tacho_channel_tracks_envelope_target_rpm() {
+        let mut sensor = TachoSensor::new();
+
+        let mut elapsed = Duration::ZERO;
+        let mut checked_a_midrange_sample = false;
+        while elapsed < SELF_TEST_DURATION {
+            let channels = TestADCDataProvider::generate_channels(elapsed);
+            let rpm = sensor.read(channels[4]).unwrap().as_f32();
+            let target = (TestADCDataProvider::envelope(elapsed) * SELF_TEST_TACHO_PEAK_RPM).min(6000.0);
+
+            if target > 500.0 && target < 5500.0 {
+                assert!((rpm - target).abs() < 50.0,
+                        "at elapsed={:?}, target={:.1} rpm but sensor read {:.1} rpm", elapsed, target, rpm);
+                checked_a_midrange_sample = true;
+            }
+
+            elapsed += SELF_TEST_TICK;
+        }
+
+        assert!(checked_a_midrange_sample, "sweep never passed through a mid-range rpm to validate against");
     }
 }
