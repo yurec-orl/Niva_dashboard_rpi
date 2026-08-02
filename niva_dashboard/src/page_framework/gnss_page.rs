@@ -36,6 +36,10 @@ struct PnpMode {
     /// GNSS link status box, bottom-right of the compass. Green when the link is up and a
     /// fix is held, red otherwise.
     gnss_link_indicator: TextIndicator,
+    /// "ТЕСТ" label shown below the GNSS status box while test_provider is active. Only
+    /// ever rendered in that one state, so it has a single fixed color rather than
+    /// status-driven ones like its neighbors.
+    test_mode_indicator: TextIndicator,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -57,7 +61,10 @@ pub struct GnssPage {
     frame: GnssFrame,
     mode: GnssMode,
     pnp_mode: PnpMode,
-    gnss: TestGnssDataProvider,
+    /// Synthetic GNSS provider, active only while test mode is toggled on (see
+    /// UIEvent::NavToggleGnssTest / active_frame()). `None` means the page is showing
+    /// live data from `frame`.
+    test_provider: Option<TestGnssDataProvider>,
 }
 
 impl GnssPage {
@@ -69,7 +76,7 @@ impl GnssPage {
             frame,
             mode,
             pnp_mode: GnssPage::setup_pnp_mode(ui_style),
-            gnss: TestGnssDataProvider::start()         // TODO: Temporary data provider - remove after testing
+            test_provider: None,
         };
         page.setup_buttons();
         page
@@ -98,10 +105,20 @@ impl GnssPage {
                 .with_colors((1.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 0.0, 0.0))
                 .with_parameters(TextAlignment::Center, false, true, false),
             gnss_link_indicator: TextIndicator::new()
-                .with_font(status_label_font, STATUS_LABEL_FONT_SIZE, 1.0)
+                .with_font(status_label_font.clone(), STATUS_LABEL_FONT_SIZE, 1.0)
                 .with_colors((0.0, 1.0, 0.0), (1.0, 0.0, 0.0), (1.0, 0.0, 0.0))
                 .with_parameters(TextAlignment::Center, false, true, false),
+            test_mode_indicator: TextIndicator::new()
+                .with_font(status_label_font, STATUS_LABEL_FONT_SIZE, 1.0)
+                .with_colors((1.0, 1.0, 0.0), (1.0, 1.0, 0.0), (1.0, 1.0, 0.0))
+                .with_parameters(TextAlignment::Center, false, true, false),
         }
+    }
+
+    /// The GnssFrame currently driving the page's display: the synthetic one while test
+    /// mode is on, otherwise the live frame backed by the real GNSS receiver.
+    fn active_frame(&self) -> GnssFrame {
+        self.test_provider.as_ref().map(|p| p.frame()).unwrap_or_else(|| self.frame.clone())
     }
 
     fn setup_buttons(&mut self) {
@@ -113,6 +130,10 @@ impl GnssPage {
             PageButton::new(ButtonPosition::Left2, "ИНФ".into(), Box::new({
                 let sender = self.smart_event_sender.clone();
                 move || sender.send(UIEvent::NavInfoMode)
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Right3, "ТЕСТ".into(), Box::new({
+                let sender = self.smart_event_sender.clone();
+                move || sender.send(UIEvent::NavToggleGnssTest)
             }) as Box<dyn FnMut()>),
             PageButton::new(ButtonPosition::Right4, "ВОЗВ".into(), Box::new({
                 let sender = self.smart_event_sender.clone();
@@ -170,8 +191,8 @@ impl GnssPage {
     }
 
     fn get_info_text(&self, frame: &GnssFrame, blocks: &[InfoBlocks]) -> Vec<(String, bool, bool)> {
-        let stale = self.frame.is_stale();
-        let fix = self.frame.fix();
+        let stale = frame.is_stale();
+        let fix = frame.fix();
 
         let link_str = if stale { "НЕТ СВЯЗИ" } else { "НОРМА" }.to_string();
         let quality_str = fix.fix_quality.map(Self::fix_quality_label).unwrap_or_else(Self::na);
@@ -191,8 +212,11 @@ impl GnssPage {
                 InfoBlocks::LinkStatus => {
                     lines.append(&mut vec![
                         (format!("ГНСС:   {}", link_str), false, stale),
-                        (String::new(), false, false),
                     ]);
+                    if self.test_provider.is_some() {
+                        lines.push(("ТЕСТ".to_string(), false, true));
+                    }
+                    lines.push((String::new(), false, false));
                 },
                 InfoBlocks::FixQuality => {
                     lines.append(&mut vec![
@@ -269,7 +293,7 @@ impl GnssPage {
         // time/date are composite fields GnssChannelProvider doesn't carry (see
         // hw_providers.rs), so this page is the sole consumer of the full GnssFix.
 
-        let lines = self.get_info_text(&self.frame, &[InfoBlocks::LinkStatus, InfoBlocks::FixQuality, InfoBlocks::Position, InfoBlocks::Movement, InfoBlocks::TimeAndDate]);
+        let lines = self.get_info_text(&self.active_frame(), &[InfoBlocks::LinkStatus, InfoBlocks::FixQuality, InfoBlocks::Position, InfoBlocks::Movement, InfoBlocks::TimeAndDate]);
 
         self.render_info_lines(&lines, (CONTENT_X_MARGIN, y), context, &[text_color, warning_color, header_color], &font, font_size)?;
 
@@ -290,11 +314,13 @@ impl GnssPage {
         let h = context.height as f32;
         let bounds = IndicatorBounds::new(w * 0.2, h * 0.1, w * 0.6, h * 0.8);
 
-        let lines = self.get_info_text(&self.frame, &[InfoBlocks::LinkStatus, InfoBlocks::Position, InfoBlocks::FixQuality]);
+        let active_frame = self.active_frame();
+
+        let lines = self.get_info_text(&active_frame, &[InfoBlocks::LinkStatus, InfoBlocks::Position, InfoBlocks::FixQuality]);
 
         self.render_info_lines(&lines, (CONTENT_X_MARGIN, TITLE_Y), context, &[text_color, warning_color, header_color], &font, font_size)?;
 
-        let lines = self.get_info_text(&self.frame, &[InfoBlocks::TimeAndDate, InfoBlocks::Movement]);
+        let lines = self.get_info_text(&active_frame, &[InfoBlocks::TimeAndDate, InfoBlocks::Movement]);
 
         self.render_info_lines(&lines, (w * 0.75, TITLE_Y), context, &[text_color, warning_color, header_color], &font, font_size)?;
 
@@ -302,8 +328,7 @@ impl GnssPage {
         //     self.pnp_mode.compass_indicator.render(heading_value, bounds, &ui_style, context)?;
         // }
         
-        // TODO: remove test gnss provider usage after testing
-        let fix = self.frame.fix();
+        let fix = active_frame.fix();
         let heading = fix.heading_deg.unwrap_or(0.0);
         let mut heading_value = SensorValue::analog(0.0, 0.0, 359.999, "\u{00B0}", "Курс", "test_heading");
         heading_value.value = crate::hardware::sensor_value::ValueData::Analog(heading);
@@ -332,12 +357,11 @@ impl GnssPage {
         let tip_x_offset = outer_r * half_angle_rad.sin();
 
         let status_font = ui_style.get_string(COMPASS_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
-        let status_box_padding = 16.0;
-        let status_box_height = context.get_line_height_with_font(1.0, &status_font, STATUS_LABEL_FONT_SIZE)? + status_box_padding;
+        let status_box_height = context.get_line_height_with_font(1.0, &status_font, STATUS_LABEL_FONT_SIZE)? ;
         let status_box_y = (compass_bottom_y - status_box_height).min(h - status_box_height - 4.0);
 
-        let ins_box_width = context.calculate_text_width_with_font("ИНС", 1.0, &status_font, STATUS_LABEL_FONT_SIZE)? + status_box_padding * 2.0;
-        let gnss_box_width = context.calculate_text_width_with_font("ГНСС", 1.0, &status_font, STATUS_LABEL_FONT_SIZE)? + status_box_padding * 2.0;
+        let ins_box_width = context.calculate_text_width_with_font("ИНС", 1.0, &status_font, STATUS_LABEL_FONT_SIZE)?;
+        let gnss_box_width = context.calculate_text_width_with_font("ГНСС", 1.0, &status_font, STATUS_LABEL_FONT_SIZE)?;
 
         let ins_bounds = IndicatorBounds::new((cx - ins_box_width / 2.0 - w / 8.0), status_box_y, ins_box_width, status_box_height);
         let gnss_bounds = IndicatorBounds::new((cx - gnss_box_width / 2.0 + w / 8.0), status_box_y, gnss_box_width, status_box_height);
@@ -347,12 +371,22 @@ impl GnssPage {
             true, ValueConstraints::digital_critical(), ValueMetadata::new("", "ИНС", "ins_link"));
         // Red for either "no serial link" (frame stale) or "link up but no fix yet"
         // (fix_quality Invalid or never seen) — both mean the heading/position aren't trustworthy.
-        let gnss_problem = self.frame.is_stale() || fix.fix_quality.map_or(true, |q| q == FixQuality::Invalid);
+        let gnss_problem = active_frame.is_stale() || fix.fix_quality.map_or(true, |q| q == FixQuality::Invalid);
         let gnss_value = SensorValue::digital_with_constraints_and_metadata(
             gnss_problem, ValueConstraints::digital_critical(), ValueMetadata::new("", "ГНСС", "gnss_link"));
 
         self.pnp_mode.ins_link_indicator.render(&ins_value, ins_bounds, &ui_style, context)?;
         self.pnp_mode.gnss_link_indicator.render(&gnss_value, gnss_bounds, &ui_style, context)?;
+
+        if self.test_provider.is_some() {
+            let test_bounds = IndicatorBounds::new(
+                gnss_bounds.x, gnss_bounds.y + status_box_height,
+                gnss_box_width, status_box_height,
+            );
+            let test_value = SensorValue::digital_with_constraints_and_metadata(
+                false, ValueConstraints::digital_critical(), ValueMetadata::new("", "ТЕСТ", "gnss_test"));
+            self.pnp_mode.test_mode_indicator.render(&test_value, test_bounds, &ui_style, context)?;
+        }
 
         Ok(())
     }
@@ -406,6 +440,13 @@ impl Page for GnssPage {
                 },
                 UIEvent::NavInfoMode => {
                     self.mode = GnssMode::Info;
+                },
+                UIEvent::NavToggleGnssTest => {
+                    if self.test_provider.is_some() {
+                        self.test_provider = None; // Drop stops + joins the thread
+                    } else {
+                        self.test_provider = Some(TestGnssDataProvider::start());
+                    }
                 },
                 _ => {}
             }

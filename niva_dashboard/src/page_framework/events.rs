@@ -42,6 +42,7 @@ pub enum UIEvent {
     NavPnpMode,
     NavInfoMode,
     NavMapMode,
+    NavToggleGnssTest,
 
     // Alert events
     SuppressAlerts,
@@ -218,9 +219,10 @@ impl SmartEventSender {
             UIEvent::OscSetVoltageScale(_) |
             UIEvent::OscSetTriggerLevel(_) |
             UIEvent::OscToggleChannel(_) |
-            UIEvent::NavPnpMode | 
+            UIEvent::NavPnpMode |
             UIEvent::NavInfoMode |
-            UIEvent::NavMapMode => {
+            UIEvent::NavMapMode |
+            UIEvent::NavToggleGnssTest => {
                 self.page_sender.send(event);
             }
         }

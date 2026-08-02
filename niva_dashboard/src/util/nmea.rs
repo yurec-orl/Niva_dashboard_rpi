@@ -218,6 +218,7 @@ fn parse_uniheadinga(sentence: &str, fix: &mut GnssFix) -> bool {
     let fields: Vec<&str> = body[semi_pos + 1..].split(',').collect();
 
     if fields.first() != Some(&"SOL_COMPUTED") {
+        fix.heading_deg = None;
         return true;
     }
 
