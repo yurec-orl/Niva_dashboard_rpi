@@ -395,3 +395,72 @@ impl Decorator for CompassHeadingMarkerDecorator {
         Ok(())
     }
 }
+
+/// HDOP quality ring overlaid on the compass, centered on the same point as the compass's own
+/// geometry. Bigger ring = worse fix. Unlike the other compass decorations, this isn't a
+/// Decorator: HDOP changes every frame with the GNSS fix, but Decorator::render only gets
+/// `bounds`/`style`, not a sensor value — so this is a plain helper the page calls directly
+/// with a freshly read HDOP, the same way GnssPage re-reads heading each frame.
+///
+/// Radii are fixed pixel values, not derived from compass geometry, per spec: excellent fits
+/// inside the lubber line's two vertical bars (default `arrow_gap` 20 / `arrow_width` 3, so the
+/// gap between their inner edges is 17px — 8px radius clears it); good is sized to overlap the
+/// outer edge of each bar by 4px (bars' outer edges sit at +/-11.5px from center, so radius
+/// 15.5); moderate is ~half the compass's pie radius at the PNP page's bounds (radius 240 for
+/// an 800x480 display per GnssPage::render_pnp_mode, so 120); poor sits just inside the mark
+/// ring (outer_r 234 at that same radius/ring_margin, so 224).
+pub struct HdopIndicator {
+    excellent_max: f32,
+    good_max: f32,
+    moderate_max: f32,
+    excellent_radius: f32,
+    good_radius: f32,
+    moderate_radius: f32,
+    poor_radius: f32,
+    thickness: f32,
+    excellent_color_key: &'static str,
+    good_color_key: &'static str,
+    moderate_color_key: &'static str,
+    poor_color_key: &'static str,
+}
+
+impl HdopIndicator {
+    pub fn new() -> Self {
+        Self {
+            excellent_max: 2.0,
+            good_max: 5.0,
+            moderate_max: 20.0,
+            excellent_radius: 8.0,
+            good_radius: 15.5,
+            moderate_radius: 120.0,
+            poor_radius: 224.0,
+            thickness: 3.0,
+            excellent_color_key: COMPASS_HDOP_EXCELLENT_COLOR,
+            good_color_key: COMPASS_HDOP_GOOD_COLOR,
+            moderate_color_key: COMPASS_HDOP_MODERATE_COLOR,
+            poor_color_key: COMPASS_HDOP_POOR_COLOR,
+        }
+    }
+
+    /// Draws the ring for `hdop` centered at `(cx, cy)`; draws nothing if no fix is available.
+    pub fn render(
+        &self, cx: f32, cy: f32, hdop: Option<f32>, style: &UIStyle, context: &mut GraphicsContext,
+    ) -> Result<(), String> {
+        let Some(hdop) = hdop else { return Ok(()); };
+
+        let (radius, color_key) = if hdop <= self.excellent_max {
+            (self.excellent_radius, self.excellent_color_key)
+        } else if hdop <= self.good_max {
+            (self.good_radius, self.good_color_key)
+        } else if hdop <= self.moderate_max {
+            (self.moderate_radius, self.moderate_color_key)
+        } else {
+            (self.poor_radius, self.poor_color_key)
+        };
+
+        let color = style.get_color(color_key, (1.0, 1.0, 1.0));
+        context.render_circle_arc_outline(cx, cy, radius, self.thickness, color, 0.0, 2.0 * PI, 96)?;
+
+        Ok(())
+    }
+}

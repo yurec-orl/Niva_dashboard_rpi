@@ -156,6 +156,10 @@ pub const COMPASS_LABEL_FONT_SIZE: &str = "compass_label_font_size";
 pub const COMPASS_ARROW_COLOR: &str = "compass_arrow_color";
 pub const COMPASS_CENTER_LINE_COLOR: &str = "compass_center_line_color";
 pub const COMPASS_HEADING_COLOR: &str = "compass_heading_color";
+pub const COMPASS_HDOP_EXCELLENT_COLOR: &str = "compass_hdop_excellent_color";
+pub const COMPASS_HDOP_GOOD_COLOR: &str = "compass_hdop_good_color";
+pub const COMPASS_HDOP_MODERATE_COLOR: &str = "compass_hdop_moderate_color";
+pub const COMPASS_HDOP_POOR_COLOR: &str = "compass_hdop_poor_color";
 
 // Text Style Elements
 pub const TEXT_PRIMARY_COLOR: &str = "text_primary_color";
@@ -633,6 +637,10 @@ impl UIStyle {
         self.set(COMPASS_LABEL_FONT_SIZE, UIStyleValue::Integer(16));
         self.set(COMPASS_ARROW_COLOR, UIStyleValue::Color("#FF7D00".to_string()));
         self.set(COMPASS_CENTER_LINE_COLOR, UIStyleValue::Color("#FF7D00".to_string()));
+        self.set(COMPASS_HDOP_EXCELLENT_COLOR, UIStyleValue::Color("#00FF00".to_string()));
+        self.set(COMPASS_HDOP_GOOD_COLOR, UIStyleValue::Color("#FFFF00".to_string()));
+        self.set(COMPASS_HDOP_MODERATE_COLOR, UIStyleValue::Color("#FFAA00".to_string()));
+        self.set(COMPASS_HDOP_POOR_COLOR, UIStyleValue::Color("#FF0000".to_string()));
 
         // Text defaults
         self.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#FF7D00".to_string()));

@@ -7,7 +7,7 @@ use crate::hardware::sensor_manager::SensorManager;
 use crate::hardware::hw_providers::HWInput;
 use crate::util::gnss_data_provider::GnssFrame;
 use crate::util::nmea::{FixQuality, GnssFix};
-use crate::indicators::compass_indicator::{CompassHeadingMarkerDecorator, CompassIndicator};
+use crate::indicators::compass_indicator::{CompassHeadingMarkerDecorator, CompassIndicator, HdopIndicator};
 use crate::indicators::indicator::{Indicator, IndicatorBounds};
 use crate::indicators::text_indicator::{TextIndicator, TextAlignment};
 use crate::indicators::decorator::*;
@@ -26,6 +26,7 @@ pub enum GnssMode {
 struct PnpMode {
     compass_indicator: CompassIndicator,
     heading_indicator: TextIndicator,
+    hdop_indicator: HdopIndicator,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -81,6 +82,7 @@ impl GnssPage {
                     Box::new(BoxDecorator::new(2.0, COMPASS_HEADING_COLOR, 0.0)),
                     Box::new(TriangleDecorator::new([(0.5, 1.5), (0.35, 1.2), (0.65, 1.2)], 2.0, COMPASS_HEADING_COLOR, true)),
                 ]),
+            hdop_indicator: HdopIndicator::new(),
         }
     }
 
@@ -293,12 +295,13 @@ impl GnssPage {
         let heading_font_height = context.get_line_height_with_font(1.0, &heading_font, 36)?;
         let heading_font_width = context.calculate_text_width_with_font("0000", 1.0, &heading_font, 36)?;
 
-        let (_cx, cy, radius) = CompassIndicator::geometry(bounds, self.pnp_mode.compass_indicator.visible_half_angle_deg());
+        let (cx, cy, radius) = CompassIndicator::geometry(bounds, self.pnp_mode.compass_indicator.visible_half_angle_deg());
         let compass_top_y = cy - (radius - self.pnp_mode.compass_indicator.ring_margin());
         let heading_bounds = IndicatorBounds::new((w - heading_font_width) / 2.0, (compass_top_y - heading_font_height - 20.0).max(0.0), heading_font_width, heading_font_height);
 
         self.pnp_mode.heading_indicator.render(&heading_value, heading_bounds, &ui_style, context)?;
         self.pnp_mode.compass_indicator.render(&heading_value, bounds, &ui_style, context)?;
+        self.pnp_mode.hdop_indicator.render(cx, cy, fix.hdop, &ui_style, context)?;
 
         Ok(())
     }
