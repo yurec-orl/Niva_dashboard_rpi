@@ -14,7 +14,7 @@ use crate::indicators::decorator::*;
 use crate::util::gnss_data_provider::TestGnssDataProvider;
 
 const CONTENT_X_MARGIN: f32 = 40.0;
-const TITLE_Y: f32 = 20.0;
+const TITLE_Y: f32 = 5.0;
 const TITLE_CONTENT_GAP: f32 = 10.0;
 
 pub enum GnssMode {
@@ -26,6 +26,15 @@ pub enum GnssMode {
 struct PnpMode {
     compass_indicator: CompassIndicator,
     heading_indicator: TextIndicator,
+}
+
+#[derive(PartialEq, Clone, Copy)]
+enum InfoBlocks {
+    LinkStatus,
+    FixQuality,
+    Position,
+    Movement,
+    TimeAndDate
 }
 
 /// Structured GNSS status page: parsed fix (position/speed/heading/time) pulled straight
@@ -61,7 +70,7 @@ impl GnssPage {
         let ring_margin = 24.0;
         let major_mark_length = 18.0;
 
-        let heading_label_color = ui_style.get_color(COMPASS_LABEL_COLOR, (0.9, 0.9, 1.0));
+        let heading_label_color = ui_style.get_color(COMPASS_HEADING_COLOR, (0.9, 0.9, 1.0));
         let heading_label_font = ui_style.get_string(COMPASS_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
 
         PnpMode {
@@ -69,8 +78,8 @@ impl GnssPage {
                 Box::new(CompassHeadingMarkerDecorator::new(visible_half_angle_deg, ring_margin, major_mark_length))]),
             heading_indicator: TextIndicator::new().with_font(heading_label_font, 36, 1.0).with_colors(heading_label_color, (1.0, 1.0, 0.0), (1.0, 0.0, 0.0)).
                 with_parameters(TextAlignment::Center, false, false).with_decorators(vec![
-                    Box::new(BoxDecorator::new(2.0, COMPASS_LABEL_COLOR, 0.0)),
-                    Box::new(TriangleDecorator::new([(0.5, 1.5), (0.35, 1.2), (0.65, 1.2)], 2.0, COMPASS_LABEL_COLOR, true)),
+                    Box::new(BoxDecorator::new(2.0, COMPASS_HEADING_COLOR, 0.0)),
+                    Box::new(TriangleDecorator::new([(0.5, 1.5), (0.35, 1.2), (0.65, 1.2)], 2.0, COMPASS_HEADING_COLOR, true)),
                 ]),
         }
     }
@@ -114,24 +123,105 @@ impl GnssPage {
 
     fn lat_str(fix: &GnssFix) -> String {
         match fix.latitude_deg {
-            Some(v) => format!("{:.6}\u{00B0} {}", v.abs(), if v >= 0.0 { "с.ш." } else { "ю.ш." }),
+            Some(v) => format!("{:.6}\u{00B0} {}", v.abs(), if v >= 0.0 { "С" } else { "Ю" }),
             None => Self::na(),
         }
     }
 
     fn lon_str(fix: &GnssFix) -> String {
         match fix.longitude_deg {
-            Some(v) => format!("{:.6}\u{00B0} {}", v.abs(), if v >= 0.0 { "в.д." } else { "з.д." }),
+            Some(v) => format!("{:.6}\u{00B0} {}", v.abs(), if v >= 0.0 { "В" } else { "З" }),
             None => Self::na(),
         }
     }
 
-    fn datetime_str(fix: &GnssFix) -> String {
-        match (fix.time, fix.date) {
-            (Some(t), Some(d)) => format!("{:02}:{:02}:{:02}  {:02}.{:02}.{}", t.hour, t.minute, t.second as u8, d.day, d.month, d.year),
-            (Some(t), None) => format!("{:02}:{:02}:{:02}", t.hour, t.minute, t.second as u8),
+    fn date_str(fix: &GnssFix) -> String {
+        match (fix.date) {
+            (Some(d)) => format!("{:02}.{:02}.{}", d.day, d.month, d.year),
             _ => Self::na(),
         }
+    }
+
+    fn time_str(fix: &GnssFix) -> String {
+        match (fix.time) {
+            (Some(t)) => format!("{:02}:{:02}:{:02}", t.hour, t.minute, t.second as u8),
+            _ => Self::na(),
+        }
+    }
+
+    fn get_info_text(&self, frame: &GnssFrame, blocks: &[InfoBlocks]) -> Vec<(String, bool, bool)> {
+        let stale = self.frame.is_stale();
+        let fix = self.frame.fix();
+
+        let link_str = if stale { "НЕТ СВЯЗИ" } else { "НОРМА" }.to_string();
+        let quality_str = fix.fix_quality.map(Self::fix_quality_label).unwrap_or_else(Self::na);
+        let satellites_str = fix.satellites.map(|s| s.to_string()).unwrap_or_else(Self::na);
+        let hdop_str = fix.hdop.map(|v| format!("{:.2}", v)).unwrap_or_else(Self::na);
+        let alt_str = fix.altitude_m.map(|v| format!("{:.0} м", v)).unwrap_or_else(Self::na);
+        let speed_str = fix.speed_kmh.map(|v| format!("{:.1} км/ч", v)).unwrap_or_else(Self::na);
+        let course_str = fix.course_deg.map(|v| format!("{:.1}\u{00B0}", v)).unwrap_or_else(Self::na);
+        let heading_str = fix.heading_deg.map(|v| format!("{:.1}\u{00B0}", v)).unwrap_or_else(Self::na);
+
+        let mut lines: Vec<(String, bool, bool)> = vec![];
+
+        for &block in blocks {
+            match block {
+                InfoBlocks::LinkStatus => {
+                    lines.append(&mut vec![
+                        (format!("ГНСС:   {}", link_str), false, stale),
+                        (String::new(), false, false),
+                    ]);
+                },
+                InfoBlocks::FixQuality => {
+                    lines.append(&mut vec![
+                        (format!("Фикс:   {}", quality_str), false, false),
+                        (format!("Спутн:  {}", satellites_str), false, false),
+                        (format!("HDOP:   {}", hdop_str), false, false),
+                        (String::new(), false, false),
+                    ]);
+                },
+                InfoBlocks::Position => {
+                    lines.append(&mut vec![
+                        (format!("Шир:    {}", Self::lat_str(&fix)), false, false),
+                        (format!("Дол:    {}", Self::lon_str(&fix)), false, false),
+                        (format!("Выс:    {}", alt_str), false, false),
+                        (String::new(), false, false),
+                    ]);
+                },
+                InfoBlocks::Movement => {
+                    lines.append(&mut vec![
+                        (format!("Скор:   {}", speed_str), false, false),
+                        (format!("Курс:   {}", course_str), false, false),
+                        (format!("Азимут: {}", heading_str), false, false),
+                        (String::new(), false, false),
+                    ]);
+                },
+                InfoBlocks::TimeAndDate => {
+                    lines.append(&mut vec![
+                        (format!("UTC:    {}", Self::time_str(&fix)), false, false),
+                        (format!("        {}", Self::date_str(&fix)), false, false),
+                        (String::new(), false, false),
+                    ]);
+                },
+            }
+        }
+
+        lines
+    }
+
+    fn render_info_lines(&self, lines: &Vec<(String, bool, bool)>, position: (f32, f32), context: &mut GraphicsContext, colors: &[(f32, f32, f32)], font: &String, font_size: u32) -> Result<(), String> {
+        let mut y = position.1;
+        let line_height = context.get_line_height_with_font(1.0, &font, font_size)?;
+
+        for (text, is_header, is_warning) in lines {
+            if !text.is_empty() {
+                let color = if *is_header { colors[2] } else if *is_warning { colors[1] } else { colors[0] };
+                context.render_text_with_font(text, position.0, y, 1.0, color, &font, font_size)?;
+            }
+            y += line_height;
+        }
+
+        Ok(())
     }
 
     fn render_info_mode(&self, context: &mut GraphicsContext, _sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
@@ -150,54 +240,15 @@ impl GnssPage {
         )?;
 
         let title_height = context.calculate_text_height_with_font("НАВИГАЦИЯ", 1.0, &title_font, title_font_size)?;
-        let line_height = context.get_line_height_with_font(1.0, &font, font_size)?;
-        let mut y = TITLE_Y + title_height + TITLE_CONTENT_GAP;
+        let y = TITLE_Y + title_height + TITLE_CONTENT_GAP;
 
         // Read directly from the frame rather than through the sensor chain — lat/lon/
         // time/date are composite fields GnssChannelProvider doesn't carry (see
         // hw_providers.rs), so this page is the sole consumer of the full GnssFix.
-        let stale = self.frame.is_stale();
-        let fix = self.frame.fix();
 
-        let link_str = if stale { "НЕТ СВЯЗИ" } else { "ОК" }.to_string();
-        let quality_str = fix.fix_quality.map(Self::fix_quality_label).unwrap_or_else(Self::na);
-        let satellites_str = fix.satellites.map(|s| s.to_string()).unwrap_or_else(Self::na);
-        let hdop_str = fix.hdop.map(|v| format!("{:.2}", v)).unwrap_or_else(Self::na);
-        let alt_str = fix.altitude_m.map(|v| format!("{:.0} м", v)).unwrap_or_else(Self::na);
-        let speed_str = fix.speed_kmh.map(|v| format!("{:.1} км/ч", v)).unwrap_or_else(Self::na);
-        let course_str = fix.course_deg.map(|v| format!("{:.1}\u{00B0}", v)).unwrap_or_else(Self::na);
-        let heading_str = fix.heading_deg.map(|v| format!("{:.1}\u{00B0}", v)).unwrap_or_else(Self::na);
+        let lines = self.get_info_text(&self.frame, &[InfoBlocks::LinkStatus, InfoBlocks::FixQuality, InfoBlocks::Position, InfoBlocks::Movement, InfoBlocks::TimeAndDate]);
 
-        let lines: Vec<(String, bool, bool)> = vec![
-            ("СВЯЗЬ:".to_string(), true, false),
-            (format!("  статус:    {}", link_str), false, stale),
-            (String::new(), false, false),
-            ("ФИКС:".to_string(), true, false),
-            (format!("  качество:  {}", quality_str), false, false),
-            (format!("  спутники:  {}", satellites_str), false, false),
-            (format!("  HDOP:      {}", hdop_str), false, false),
-            (String::new(), false, false),
-            ("ПОЗИЦИЯ:".to_string(), true, false),
-            (format!("  широта:    {}", Self::lat_str(&fix)), false, false),
-            (format!("  долгота:   {}", Self::lon_str(&fix)), false, false),
-            (format!("  высота:    {}", alt_str), false, false),
-            (String::new(), false, false),
-            ("ДВИЖЕНИЕ:".to_string(), true, false),
-            (format!("  скорость:  {}", speed_str), false, false),
-            (format!("  курс:      {}", course_str), false, false),
-            (format!("  азимут:    {}", heading_str), false, false),
-            (String::new(), false, false),
-            ("ВРЕМЯ UTC:".to_string(), true, false),
-            (format!("  {}", Self::datetime_str(&fix)), false, false),
-        ];
-
-        for (text, is_header, is_warning) in &lines {
-            if !text.is_empty() {
-                let color = if *is_warning { warning_color } else if *is_header { header_color } else { text_color };
-                context.render_text_with_font(text, CONTENT_X_MARGIN, y, 1.0, color, &font, font_size)?;
-            }
-            y += line_height;
-        }
+        self.render_info_lines(&lines, (CONTENT_X_MARGIN, y), context, &[text_color, warning_color, header_color], &font, font_size)?;
 
         Ok(())
     }
@@ -205,16 +256,31 @@ impl GnssPage {
     fn render_pnp_mode(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
         use crate::hardware::sensor_value::SensorValue;
 
+        let header_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (1.0, 1.0, 1.0));;
+        let text_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (0.8, 0.8, 0.8));
+        let warning_color = ui_style.get_color(TEXT_WARNING_COLOR, (1.0, 1.0, 0.0));
+
+        let font = ui_style.get_string(TEXT_MONOSPACE_FONT, TERMINAL_FONT_PATH);
+        let font_size = ui_style.get_integer(TEXT_MONOSPACE_FONT_SIZE, 16);
+
         let w = context.width as f32;
         let h = context.height as f32;
         let bounds = IndicatorBounds::new(w * 0.2, h * 0.1, w * 0.6, h * 0.8);
+
+        let lines = self.get_info_text(&self.frame, &[InfoBlocks::LinkStatus, InfoBlocks::Position, InfoBlocks::FixQuality]);
+
+        self.render_info_lines(&lines, (CONTENT_X_MARGIN, TITLE_Y), context, &[text_color, warning_color, header_color], &font, font_size)?;
+
+        let lines = self.get_info_text(&self.frame, &[InfoBlocks::TimeAndDate, InfoBlocks::Movement]);
+
+        self.render_info_lines(&lines, (w * 0.75, TITLE_Y), context, &[text_color, warning_color, header_color], &font, font_size)?;
 
         // if let Some(heading_value) = sensor_manager.get_sensor_value(&HWInput::HwGnssHeading) {
         //     self.pnp_mode.compass_indicator.render(heading_value, bounds, &ui_style, context)?;
         // }
         
         // TODO: remove test gnss provider usage after testing
-        let fix = self.gnss.frame().fix();
+        let fix = self.frame.fix();
         let heading = fix.heading_deg.unwrap_or(0.0);
         let mut heading_value = SensorValue::analog(0.0, 0.0, 359.999, "\u{00B0}", "Курс", "test_heading");
         heading_value.value = crate::hardware::sensor_value::ValueData::Analog(heading);
@@ -229,9 +295,9 @@ impl GnssPage {
 
         let (_cx, cy, radius) = CompassIndicator::geometry(bounds, self.pnp_mode.compass_indicator.visible_half_angle_deg());
         let compass_top_y = cy - (radius - self.pnp_mode.compass_indicator.ring_margin());
-        let heading_bounds = IndicatorBounds::new((w - heading_font_width) / 2.0, (compass_top_y - heading_font_height - 16.0).max(0.0), heading_font_width, heading_font_height);
-        self.pnp_mode.heading_indicator.render(&heading_value, heading_bounds, &ui_style, context)?;
+        let heading_bounds = IndicatorBounds::new((w - heading_font_width) / 2.0, (compass_top_y - heading_font_height - 20.0).max(0.0), heading_font_width, heading_font_height);
 
+        self.pnp_mode.heading_indicator.render(&heading_value, heading_bounds, &ui_style, context)?;
         self.pnp_mode.compass_indicator.render(&heading_value, bounds, &ui_style, context)?;
 
         Ok(())

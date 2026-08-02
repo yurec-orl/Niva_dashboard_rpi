@@ -54,14 +54,14 @@ impl ThrottleStatus {
         if self.soft_temp_limit_occurred { history.push("TEMP_LIMIT"); }
 
         if active.is_empty() && history.is_empty() {
-            return "OK".to_string();
+            return "НОРМА".to_string();
         }
         let mut parts = Vec::new();
         if !active.is_empty() {
-            parts.push(format!("ACTIVE: {}", active.join(",")));
+            parts.push(format!("АКТИВН: {}", active.join(",")));
         }
         if !history.is_empty() {
-            parts.push(format!("history: {}", history.join(",")));
+            parts.push(format!("ЖУРНАЛ: {}", history.join(",")));
         }
         parts.join("  ")
     }
