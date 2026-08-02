@@ -16,6 +16,9 @@ use crate::util::gnss_data_provider::TestGnssDataProvider;
 const CONTENT_X_MARGIN: f32 = 40.0;
 const TITLE_Y: f32 = 5.0;
 const TITLE_CONTENT_GAP: f32 = 10.0;
+/// Matches CompassIndicator's own (hardcoded, not style-driven) tape label size, so the
+/// INS/GNSS status boxes below the compass read as part of the same label family.
+const STATUS_LABEL_FONT_SIZE: u32 = 32;
 
 pub enum GnssMode {
     Info,
@@ -27,6 +30,12 @@ struct PnpMode {
     compass_indicator: CompassIndicator,
     heading_indicator: TextIndicator,
     hdop_indicator: HdopIndicator,
+    /// BNO085 IMU link status box, bottom-left of the compass. Always shown red — the
+    /// BNO085 isn't wired up yet, so there's no "ok" state to report.
+    ins_link_indicator: TextIndicator,
+    /// GNSS link status box, bottom-right of the compass. Green when the link is up and a
+    /// fix is held, red otherwise.
+    gnss_link_indicator: TextIndicator,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -73,16 +82,25 @@ impl GnssPage {
 
         let heading_label_color = ui_style.get_color(COMPASS_HEADING_COLOR, (0.9, 0.9, 1.0));
         let heading_label_font = ui_style.get_string(COMPASS_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
+        let status_label_font = ui_style.get_string(COMPASS_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
 
         PnpMode {
             compass_indicator: CompassIndicator::new().with_decorators(vec![
                 Box::new(CompassHeadingMarkerDecorator::new(visible_half_angle_deg, ring_margin, major_mark_length))]),
             heading_indicator: TextIndicator::new().with_font(heading_label_font, 36, 1.0).with_colors(heading_label_color, (1.0, 1.0, 0.0), (1.0, 0.0, 0.0)).
-                with_parameters(TextAlignment::Center, false, false).with_decorators(vec![
+                with_parameters(TextAlignment::Center, false, false, true).with_decorators(vec![
                     Box::new(BoxDecorator::new(2.0, COMPASS_HEADING_COLOR, 0.0)),
                     Box::new(TriangleDecorator::new([(0.5, 1.5), (0.35, 1.2), (0.65, 1.2)], 2.0, COMPASS_HEADING_COLOR, true)),
                 ]),
             hdop_indicator: HdopIndicator::new(),
+            ins_link_indicator: TextIndicator::new()
+                .with_font(status_label_font.clone(), STATUS_LABEL_FONT_SIZE, 1.0)
+                .with_colors((1.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+                .with_parameters(TextAlignment::Center, false, true, false),
+            gnss_link_indicator: TextIndicator::new()
+                .with_font(status_label_font, STATUS_LABEL_FONT_SIZE, 1.0)
+                .with_colors((0.0, 1.0, 0.0), (1.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+                .with_parameters(TextAlignment::Center, false, true, false),
         }
     }
 
@@ -259,7 +277,7 @@ impl GnssPage {
     }
 
     fn render_pnp_mode(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
-        use crate::hardware::sensor_value::SensorValue;
+        use crate::hardware::sensor_value::{SensorValue, ValueConstraints, ValueMetadata};
 
         let header_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (1.0, 1.0, 1.0));;
         let text_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (0.8, 0.8, 0.8));
@@ -305,6 +323,36 @@ impl GnssPage {
         self.pnp_mode.heading_indicator.render(&heading_value, heading_bounds, &ui_style, context)?;
         self.pnp_mode.compass_indicator.render(&heading_value, bounds, &ui_style, context)?;
         self.pnp_mode.hdop_indicator.render(cx, cy, fix.hdop, &ui_style, context)?;
+
+        // INS/GNSS link status boxes, tucked under the compass's two side tips (derived from
+        // the same geometry as the compass itself, so they track it if bounds ever change).
+        let outer_r = radius - self.pnp_mode.compass_indicator.ring_margin();
+        let half_angle_rad = self.pnp_mode.compass_indicator.visible_half_angle_deg().to_radians();
+        let compass_bottom_y = cy - outer_r * half_angle_rad.cos();
+        let tip_x_offset = outer_r * half_angle_rad.sin();
+
+        let status_font = ui_style.get_string(COMPASS_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
+        let status_box_padding = 16.0;
+        let status_box_height = context.get_line_height_with_font(1.0, &status_font, STATUS_LABEL_FONT_SIZE)? + status_box_padding;
+        let status_box_y = (compass_bottom_y - status_box_height).min(h - status_box_height - 4.0);
+
+        let ins_box_width = context.calculate_text_width_with_font("ИНС", 1.0, &status_font, STATUS_LABEL_FONT_SIZE)? + status_box_padding * 2.0;
+        let gnss_box_width = context.calculate_text_width_with_font("ГНСС", 1.0, &status_font, STATUS_LABEL_FONT_SIZE)? + status_box_padding * 2.0;
+
+        let ins_bounds = IndicatorBounds::new((cx - ins_box_width / 2.0 - w / 8.0), status_box_y, ins_box_width, status_box_height);
+        let gnss_bounds = IndicatorBounds::new((cx - gnss_box_width / 2.0 + w / 8.0), status_box_y, gnss_box_width, status_box_height);
+
+        // BNO085 isn't wired up yet — there's no "ok" state to report, so this is always red.
+        let ins_value = SensorValue::digital_with_constraints_and_metadata(
+            true, ValueConstraints::digital_critical(), ValueMetadata::new("", "ИНС", "ins_link"));
+        // Red for either "no serial link" (frame stale) or "link up but no fix yet"
+        // (fix_quality Invalid or never seen) — both mean the heading/position aren't trustworthy.
+        let gnss_problem = self.frame.is_stale() || fix.fix_quality.map_or(true, |q| q == FixQuality::Invalid);
+        let gnss_value = SensorValue::digital_with_constraints_and_metadata(
+            gnss_problem, ValueConstraints::digital_critical(), ValueMetadata::new("", "ГНСС", "gnss_link"));
+
+        self.pnp_mode.ins_link_indicator.render(&ins_value, ins_bounds, &ui_style, context)?;
+        self.pnp_mode.gnss_link_indicator.render(&gnss_value, gnss_bounds, &ui_style, context)?;
 
         Ok(())
     }

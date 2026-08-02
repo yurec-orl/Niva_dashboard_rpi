@@ -32,6 +32,10 @@ pub struct TextIndicator {
     show_unit: bool,
     /// Whether to show the label before the value
     show_label: bool,
+    /// Whether to show the formatted value. Off for indicators that only ever display a
+    /// static label (e.g. a link-status box showing just "ГНСС" in a status color) — the
+    /// underlying SensorValue still drives get_text_color, just isn't rendered as text.
+    show_value: bool,
     /// Text alignment within bounds
     alignment: TextAlignment,
     /// Font path for text rendering
@@ -65,6 +69,7 @@ impl TextIndicator {
             precision: 0,
             show_unit: true,
             show_label: true,
+            show_value: true,
             alignment: TextAlignment::Center,
             font_path: DEFAULT_GLOBAL_FONT_PATH.to_string(),
             font_size: DEFAULT_GLOBAL_FONT_SIZE,
@@ -81,10 +86,11 @@ impl TextIndicator {
         self
     }
 
-    pub fn with_parameters(mut self, alignment: TextAlignment, show_unit: bool, show_label: bool) -> Self {
+    pub fn with_parameters(mut self, alignment: TextAlignment, show_unit: bool, show_label: bool, show_value: bool) -> Self {
         self.alignment = alignment;
         self.show_unit = show_unit;
         self.show_label = show_label;
+        self.show_value = show_value;
         self
     }
 
@@ -159,26 +165,30 @@ impl TextIndicator {
         }
     }
     
-    /// Calculate text position for label and value (label above, value below, both centered)
+    /// Calculate text position for label and value. When both are shown, label sits above
+    /// value, both centered; when only one is shown, it's centered alone in `bounds`.
     fn calculate_text_positions(
-        &self, 
-        bounds: IndicatorBounds, 
-        label_width: f32, 
+        &self,
+        bounds: IndicatorBounds,
+        label_width: f32,
         value_width: f32,
         font_height: f32
     ) -> ((f32, f32), (f32, f32)) {
         // Calculate x positions (centered)
         let label_x = bounds.x + (bounds.width - label_width) / 2.0;
         let value_x = bounds.x + (bounds.width - value_width) / 2.0;
-        
-        // Calculate y positions (label in upper half, value in lower half)
+
         let center_y = bounds.y + bounds.height / 2.0;
-        let spacing = font_height * 0.2; // Small spacing between label and value
-        
-        let label_y = center_y - spacing / 2.0 - font_height / 2.0;
-        let value_y = if self.show_label { center_y + spacing / 2.0 + font_height / 2.0 } else { center_y - font_height / 2.0 };
-        
-        ((label_x, label_y), (value_x, value_y))
+
+        if self.show_label && self.show_value {
+            let spacing = font_height * 0.2; // Small spacing between label and value
+            let label_y = center_y - spacing / 2.0 - font_height / 2.0;
+            let value_y = center_y + spacing / 2.0 + font_height / 2.0;
+            ((label_x, label_y), (value_x, value_y))
+        } else {
+            let y = center_y - font_height / 2.0;
+            ((label_x, y), (value_x, y))
+        }
     }
 }
 
@@ -200,7 +210,7 @@ impl Indicator for TextIndicator {
 
         // Get label and value texts
         let label_text = if self.show_label { self.get_label(value) } else { "".to_string() };
-        let value_text = self.format_value(value);
+        let value_text = if self.show_value { self.format_value(value) } else { "".to_string() };
         
         // Use stored style parameters (no lookup needed)
         let text_color = self.get_text_color(value);
@@ -249,15 +259,17 @@ impl Indicator for TextIndicator {
         }
         
         // Render value
-        context.render_text_with_font(
-            &value_text,
-            value_x,
-            value_y,
-            self.scale,
-            text_color,
-            &self.font_path,
-            self.font_size,
-        )?;
+        if !value_text.is_empty() {
+            context.render_text_with_font(
+                &value_text,
+                value_x,
+                value_y,
+                self.scale,
+                text_color,
+                &self.font_path,
+                self.font_size,
+            )?;
+        }
         
         Ok(())
     }
