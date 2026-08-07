@@ -63,6 +63,9 @@ Thumbs.db
 .env.local
 .env.*.local
 
+# Python venvs (e.g. hardware verification scripts)
+.venv*/
+
 # Backup files
 *.bk
 *~
