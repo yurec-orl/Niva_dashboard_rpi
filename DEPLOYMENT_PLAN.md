@@ -23,7 +23,7 @@ Surveyed directly on this Pi on 2026-07-29:
 | 6  | uhubctl sudoers entry                           | `/etc/sudoers.d/niva-uhubctl`                                                    | No       | No        |
 | 7  | earlyoom package + config                       | apt package + `/etc/default/earlyoom`                                            | No       | No        |
 | 8  | Boot-time service disables (6 units)            | applied via `systemctl disable`, described in `/home/user/boot-optimizations.md` | No (doc lives outside repo) | No |
-| 9  | I2C bus enablement for UPS HAT                  | `dtparam=i2c_arm=on` in `/boot/firmware/config.txt`                              | No       | No        |
+| 9  | I2C bus enablement + clock speed                | `dtparam=i2c_arm=on` and `dtparam=i2c_arm_baudrate=400000` in `/boot/firmware/config.txt` | No       | No        |
 | 10 | `/etc/niva_dashboard/ui_style.json`             | `/etc/niva_dashboard/`                                                           | No       | Orphaned — load call is commented out at `main.rs:523`, so this file currently does nothing |
 | 11 | Hardcoded absolute font/style paths             | baked into `niva_dashboard/src/graphics/ui_style.rs` (`/home/user/Work/Niva_Dashboard_Rpi/...`) | In repo, but wrong — ties to one dev machine's clone path | N/A |
 
@@ -41,6 +41,15 @@ part of the original ask:
   mention (it only calls out that the *GPS* rule can't match on serial).
   Swapping the physical ADC module for a spare will silently stop
   `/dev/niva_adc` from appearing until someone notices and edits the rule.
+- **Item 9's `i2c_arm_baudrate=400000` is a BNO085 requirement, not a UPS HAT
+  one** — the UPS HAT (INA219 + onboard MCU, see
+  `BNO085_SHTP_PROTOCOL_RESEARCH.md`) works fine at the Pi's default 100 kHz.
+  The BNO085 is meaningfully less error-prone at 400 kHz but still not fully
+  stable at either speed (same doc). Since the baudrate applies to the whole
+  shared `i2c-1` bus, this ties an otherwise-optional sensor's requirement to
+  a config line that also affects the UPS HAT's communication — worth a
+  one-line comment in `02-boot-config.sh` explaining why, so a future reader
+  doesn't assume it's UPS-related and remove it if the BNO085 is unplugged.
 
 ## Goal
 
@@ -57,7 +66,7 @@ gets a short manual checklist instead of tribal knowledge.
 deploy/
 ├── install.sh                              # top-level idempotent installer, runs the below in order
 ├── 01-system-packages.sh                   # apt: build deps, earlyoom, uhubctl
-├── 02-boot-config.sh                       # dtparam=i2c_arm=on; the 6 boot-time systemctl disables
+├── 02-boot-config.sh                       # dtparam=i2c_arm=on + i2c_arm_baudrate=400000; the 6 boot-time systemctl disables
 ├── 03-udev-rules.sh                        # installs udev/*.rules, runs udevadm control --reload-rules
 ├── 04-sudoers.sh                           # installs sudoers/niva-uhubctl at mode 0440
 ├── 05-earlyoom.sh                          # installs earlyoom/earlyoom.default, restarts the service
