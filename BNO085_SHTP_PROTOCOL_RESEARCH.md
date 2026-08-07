@@ -155,17 +155,106 @@ Quaternion output changed correctly in response to physically rotating the board
 board, wiring, and I2C address (`0x4B`) are all good — the sensor itself is not in question for
 any future implementation issues.
 
-Two failure modes seen during testing, useful as a checklist for any hand-rolled implementation:
+Three failure modes seen during testing, useful as a checklist for any hand-rolled implementation.
+**Update**: at the Pi's default 100 kHz I2C clock these recurred every ~5-10s during streaming;
+raising the clock to 400 kHz (see "I2C clock speed" below) made them noticeably rarer, but did
+**not** eliminate them — the BNO085's I2C behavior is not fully stable even at 400 kHz, and the
+sensor is clearly sensitive to clock speed. Treat all of the retry/skip/recovery handling in the
+test script as a required part of any real driver, not a workaround for a one-off wiring issue.
 
 - **`KeyError`/`IndexError` crashes in the Adafruit library** from unrecognized report IDs
   (e.g. `0x7B`) and out-of-range channel numbers on parsed packets — see "Implementation patterns"
   below for the root cause and how to avoid repeating it.
-- **Transient `OSError: EIO`** from the kernel I2C layer, correlated with physically moving the
-  board — consistent with a momentary loose connection (jumper/breadboard contact), not a bus
-  lockup or dead device (device re-enumerated cleanly in `i2cdetect` immediately after, and no
-  kernel-level bus-fault messages appeared in `dmesg`/`journalctl`). Any real driver needs
-  retry/backoff around individual I2C transactions regardless of root cause — normal practice for
-  I2C over unshielded wiring, not specific to this sensor.
+- **Transient `OSError: EIO`** from the kernel I2C layer. Originally suspected as a momentary loose
+  connection (jumper/breadboard contact) since it correlated with physically moving the board, and
+  the device re-enumerated cleanly in `i2cdetect` immediately after with no kernel-level bus-fault
+  messages in `dmesg`/`journalctl`. Clock speed clearly affects its frequency (much rarer at
+  400 kHz than at 100 kHz) but doesn't eliminate it — treat both clock speed and physical wiring
+  as contributing factors, and keep retry/backoff around individual I2C transactions regardless.
+- **`RuntimeError('Unprocessable Batch bytes', ...)`** from the same root cause as the
+  `KeyError`/`IndexError` cases: a legitimate SHTP packet the library's generic report-batch parser
+  doesn't expect — in this case a 1-byte payload on the EXE channel (channel 1), which is the
+  standard "reset complete" notification. Same fix class as the others (catch and skip), but with
+  a sharper edge: see below.
+
+### I2C clock speed
+
+The Adafruit tutorial states the BNO085 "performs optimally" on the Pi at 400 kHz. This system's
+`i2c-1` bus was running at the Pi's default 100 kHz (`/boot/firmware/config.txt` had
+`dtparam=i2c_arm=on` but no baudrate override; confirmed via
+`/sys/firmware/devicetree/base/soc/i2c@7e804000/clock-frequency` = `100000`). Note that Blinka
+cannot change this at runtime — `busio.I2C(..., frequency=...)` is silently ignored on Linux
+(`RuntimeWarning: I2C frequency is not settable in python, ignoring!`); the clock speed is fixed by
+the device tree at boot.
+
+Fix applied: added `dtparam=i2c_arm_baudrate=400000` to `/boot/firmware/config.txt`, rebooted.
+**Result**: the errors that had been recurring every 5-10 seconds during streaming at 100 kHz
+became noticeably rarer at 400 kHz, but still occur occasionally. Conclusion: **the BNO085's I2C
+interface is not fully stable and is clearly sensitive to I2C clock speed** — 400 kHz is
+meaningfully better than 100 kHz and should be the default, but any implementation (this test
+script or a future Rust driver) still needs to tolerate transport/parsing errors as normal,
+expected operation, not as a rare edge case that a faster clock makes go away entirely.
+
+Note `i2c-1` is shared with the UPS HAT (INA219 at `0x43`, onboard MCU at `0x2D` — see
+`ups_i2c_provider.rs`/`ups_monitor.rs`); the speed change applies to the whole bus, not just the
+BNO085. No issues observed with the UPS HAT at 400 kHz in this testing, but worth keeping in mind
+if UPS communication issues ever show up after this change.
+
+### I2C clock speed
+
+The Adafruit tutorial states the BNO085 "performs optimally" on the Pi at 400 kHz. This system's
+`i2c-1` bus was running at the Pi's default 100 kHz (`/boot/firmware/config.txt` had
+`dtparam=i2c_arm=on` but no baudrate override; confirmed via
+`/sys/firmware/devicetree/base/soc/i2c@7e804000/clock-frequency` = `100000`). Note that Blinka
+cannot change this at runtime — `busio.I2C(..., frequency=...)` is silently ignored on Linux
+(`RuntimeWarning: I2C frequency is not settable in python, ignoring!`); the clock speed is fixed by
+the device tree at boot.
+
+Fix: added `dtparam=i2c_arm_baudrate=400000` to `/boot/firmware/config.txt`, rebooted. **Confirmed
+effective**: the `KeyError`/`IndexError`/`RuntimeError`/`OSError` errors that had been recurring
+every 5-10 seconds during streaming at 100 kHz stopped entirely after the switch to 400 kHz. So
+despite the SH-2/SHTP protocol being nominally clock-speed-agnostic, this sensor in practice needs
+the faster clock for reliable operation on this Pi — worth carrying into the Rust implementation
+as a hard prerequisite (verify/set the 400 kHz dtoverlay as part of setup), not just a "nice to
+have" the way the tutorial's wording implied.
+
+Note `i2c-1` is shared with the UPS HAT (INA219 at `0x43`, onboard MCU at `0x2D` — see
+`ups_i2c_provider.rs`/`ups_monitor.rs`); the speed change applies to the whole bus, not just the
+BNO085. No issues observed with the UPS HAT at 400 kHz in this testing, but worth keeping in mind
+if UPS communication issues ever show up after this change.
+
+### Error handling & recovery strategy in the test script
+
+The three failure modes above needed two different recovery strategies, and conflating them caused
+a bug worth recording:
+
+- **Malformed/unrecognized packets** (`KeyError`/`IndexError`/`RuntimeError` from parsing) — caught
+  and skipped; the next poll iteration reads a fresh packet, so no special recovery is needed
+  beyond not crashing.
+- **Transient I2C bus errors** (`OSError`/`EIO`) — caught, logged, short backoff, retry; escalated
+  to a warning (not a crash) if it stops looking transient (20+ in a row).
+- **Silent feature staleness** — the one that actually bit us: the EXE-channel "reset complete"
+  notification means the sensor *actually reset*, which silently clears its feature-enable state
+  on the device side. The Python exception gets caught and skipped same as any other malformed
+  packet, execution continues without crashing, but no *new* Rotation Vector reports ever arrive
+  again — `bno.quaternion` keeps returning the same cached last-known value forever, since nothing
+  raises an error to signal it. Only a full script restart (which re-runs the feature-enable step)
+  brought readings back to life.
+
+  First fix attempt — re-enable the feature after N consecutive parse errors — was wrong: it
+  requires a burst of errors to trigger, but the observed failure was a *single* `RuntimeError`
+  followed by silence (no more exceptions, just frozen output), so the counter never reached
+  threshold. The working fix instead detects staleness directly: track the last quaternion reading,
+  and if it repeats bit-for-bit for ~15 consecutive polls, re-enable the feature. This works because
+  live sensor output always has a small amount of noise/jitter even with the board sitting
+  perfectly still (visible throughout every capture in this doc) — an exact repeat is a reliable
+  signal that no new report arrived, regardless of whether any exception fired along the way.
+
+  **Lesson for the Rust implementation**: don't assume "no error raised" means "data is fresh."
+  A sensor-side reset can silently stop new reports without the transport layer ever surfacing a
+  failure. Track data staleness (a timestamp or repeat-count on the decoded value) independently of
+  error handling, and re-issue the Set Feature Command whenever a report is overdue — the same
+  reasoning applies to a hand-rolled SHTP client, not just this Python library.
 
 ## Implementation patterns validated against real hardware
 
