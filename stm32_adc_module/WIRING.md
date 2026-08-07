@@ -287,6 +287,38 @@ for BSS138 board wiring details.
 
 ---
 
+## Reserved: DS18B20 one-wire temp sensor bus (planned, not yet implemented)
+
+PA10 is reserved for a future DS18B20 one-wire temperature sensor bus. No firmware
+support exists yet — pin is currently unused.
+
+DS18B20 operates at 3.0–5.5V, so it can be powered directly from the STM32's 3.3V rail
+with no divider or level shifting (unlike the 12V car signals above).
+
+```
+STM32 3.3V ──┬── R1 (4.7 kΩ pull-up)
+             │        │
+             │       PA10 (1-Wire data) ── DS18B20 DATA
+             │                              DS18B20 VDD ── 3.3V
+             └──────────────────────────────DS18B20 GND ── GND
+```
+
+| Component | Value                | Notes                                                        |
+|-----------|-----------------------|---------------------------------------------------------------|
+| R1        | 4.7 kΩ                | Single pull-up for the whole bus, one resistor regardless of sensor count |
+
+Planned wiring notes (see main sketch file for pin rationale):
+- Normal power mode (3-wire: VDD, GND, DATA) rather than parasitic — simpler and more
+  robust than relying on the strong-pull-up timing parasitic mode requires.
+- Multiple sensors can share the single bus/pull-up; each DS18B20 has a factory-burned
+  unique 64-bit ROM address used to address it individually.
+- Cable run is short (~2-3m) — twisted DATA/GND pair is sufficient for noise immunity,
+  no shielded cable needed.
+- Use automotive-rated wire insulation (GXL/TXL, ~125-150°C) rather than generic PVC
+  hookup wire (~60-80°C) if routed anywhere near engine-bay heat.
+
+---
+
 ## Bill of Materials — Protection/Divider Components
 
 | Component                      | Package              | Quantity | Used for                                              |

@@ -130,7 +130,7 @@
 //   PA7   | Button 7                | GPIO IN PU  | Active-low, 3.3V direct
 //   PA8   | Oil pressure warning    | GPIO IN PU  | Active-low, level shifted
 //   PA9   | Fuel low warning        | GPIO IN PU  | Active-low, level shifted
-//   PA10  | (free / future use)     |             |
+//   PA10  | (reserved: DS18B20)     | 1-Wire      | Planned one-wire temp sensor bus, not yet implemented
 //   PA11  | USB D-                  | USB         | To Raspberry Pi
 //   PA12  | USB D+                  | USB         | To Raspberry Pi
 //   PA15  | Diff lock indicator     | GPIO IN PU  | Active-low, level shifted
@@ -160,7 +160,9 @@
 //
 // ============================================================
 // Free pins (available for future expansion):
-//   PA10, PB2 (if BOOT1 not needed at runtime)
+//   PA10 — reserved for a planned DS18B20 one-wire temp sensor bus (not yet implemented)
+//   PB2  — free if BOOT1 not needed at runtime (currently tied to GND for normal boot,
+//          so using it as GPIO would require removing that strap)
 // ============================================================
 //
 // Problem with USB enumeration on Blue Pill clones: R10 resistor across 3v3
