@@ -6,6 +6,7 @@ use crate::page_framework::events::{UIEvent, EventReceiver, EventBus, SmartEvent
 use crate::page_framework::input::{InputHandler, InputSource, ButtonState};
 use crate::page_framework::main_page::MainPage;
 use crate::page_framework::terminal_page::TerminalPage;
+use crate::page_framework::gnss_page::{GnssPage, GnssMode};
 use crate::hardware::sensor_manager::SensorManager;
 use crate::hardware::hw_providers::HWInput;
 use crate::alerts::alert_manager::{AlertManager, Severity};
@@ -29,6 +30,7 @@ pub const DIAG_PAGE_ID: u32 = 1;
 pub const ADC_TERM_PAGE_ID: u32 = 2;
 pub const LOG_PAGE_ID: u32 = 3;
 pub const GNSS_TERM_PAGE_ID: u32 = 4;
+pub const GNSS_PAGE_ID: u32 = 5;
 
 // ButtonPosition correspond to physical 2x4 buttons layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -429,10 +431,18 @@ impl PageManager {
         // GNSS terminal page only exists when the GNSS data provider actually started —
         // without a frame handle there is nothing for it to display.
         if let Some(frame) = self.gnss_frame.clone() {
-            let gnss_page = Box::new(TerminalPage::new_gnss(GNSS_TERM_PAGE_ID, "GNSS",
+            let gnss_term_page = Box::new(TerminalPage::new_gnss(GNSS_TERM_PAGE_ID, "GNSS",
                                                              smart_sender.clone(),
                                                              self.get_event_receiver(),
-                                                             frame));
+                                                             frame.clone()));
+            self.add_page(gnss_term_page);
+
+            let gnss_page = Box::new(GnssPage::new(GNSS_PAGE_ID,
+                                                     smart_sender.clone(),
+                                                     self.get_event_receiver(),
+                                                     frame,
+                                                     GnssMode::PNP,
+                                                     &self.ui_style));
             self.add_page(gnss_page);
         }
 

@@ -1,11 +1,11 @@
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
-use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition, DIAG_PAGE_ID};
+use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition, DIAG_PAGE_ID, GNSS_PAGE_ID};
 use crate::page_framework::events::{EventReceiver, SmartEventSender};
 use crate::hardware::sensor_manager::SensorManager;
 use crate::hardware::hw_providers::{*};
 use crate::indicators::{Indicator, IndicatorBounds};
-use crate::indicators::text_indicator::{TextIndicator, TextAlignment};
+use crate::indicators::text_indicator::TextIndicator;
 use crate::indicator_builders::{
     build_speedometer_gauge, build_fuel_level_gauge, build_oil_pressure_gauge, build_temperature_gauge, build_voltage_gauge,
     build_oil_pressure_bar, build_fuel_level_bar, build_temperature_bar, build_voltage_bar,
@@ -107,50 +107,49 @@ impl MainPage {
 
         // Digital sensors (12 total)
         for _ in 0..12 {
-            indicators.push(Box::new(TextIndicator::new(
-                0, true, true, TextAlignment::Center,
-                indicator_font.clone(),
-                indicator_font_size, 1.0,
-                indicator_color, indicator_warning_color, indicator_error_color,
-            )));
+            indicators.push(Box::new(
+                TextIndicator::new()
+                    .with_font(indicator_font.clone(), indicator_font_size, 1.0)
+                    .with_colors(indicator_color, indicator_warning_color, indicator_error_color),
+            ));
             indicator_bounds.push(create_bounds_and_advance(&mut col, &mut row));
         }
 
         // Analog sensors (4 total) - with different precision settings
         // 12V (1 decimal place)
-        indicators.push(Box::new(TextIndicator::new(
-            1, true, true, TextAlignment::Center,
-            indicator_font.clone(),
-            indicator_font_size, 1.0,
-            indicator_color, indicator_warning_color, indicator_error_color,
-        )));
+        indicators.push(Box::new(
+            TextIndicator::new()
+                .with_precision(1)
+                .with_font(indicator_font.clone(), indicator_font_size, 1.0)
+                .with_colors(indicator_color, indicator_warning_color, indicator_error_color),
+        ));
         indicator_bounds.push(create_bounds_and_advance(&mut col, &mut row));
 
         // Fuel Level (1 decimal place)
-        indicators.push(Box::new(TextIndicator::new(
-            1, true, true, TextAlignment::Center,
-            indicator_font.clone(),
-            indicator_font_size, 1.0,
-            indicator_color, indicator_warning_color, indicator_error_color,
-        )));
+        indicators.push(Box::new(
+            TextIndicator::new()
+                .with_precision(1)
+                .with_font(indicator_font.clone(), indicator_font_size, 1.0)
+                .with_colors(indicator_color, indicator_warning_color, indicator_error_color),
+        ));
         indicator_bounds.push(create_bounds_and_advance(&mut col, &mut row));
 
         // Oil Pressure (2 decimal places)
-        indicators.push(Box::new(TextIndicator::new(
-            2, true, true, TextAlignment::Center,
-            indicator_font.clone(),
-            indicator_font_size, 1.0,
-            indicator_color, indicator_warning_color, indicator_error_color,
-        )));
+        indicators.push(Box::new(
+            TextIndicator::new()
+                .with_precision(2)
+                .with_font(indicator_font.clone(), indicator_font_size, 1.0)
+                .with_colors(indicator_color, indicator_warning_color, indicator_error_color),
+        ));
         indicator_bounds.push(create_bounds_and_advance(&mut col, &mut row));
 
         // Temperature (1 decimal place)
-        indicators.push(Box::new(TextIndicator::new(
-            1, true, true, TextAlignment::Center,
-            indicator_font.clone(),
-            indicator_font_size, 1.0,
-            indicator_color, indicator_warning_color, indicator_error_color,
-        )));
+        indicators.push(Box::new(
+            TextIndicator::new()
+                .with_precision(1)
+                .with_font(indicator_font.clone(), indicator_font_size, 1.0)
+                .with_colors(indicator_color, indicator_warning_color, indicator_error_color),
+        ));
         indicator_bounds.push(create_bounds_and_advance(&mut col, &mut row));
         IndicatorSet { indicators, inputs, indicator_bounds }
     }
@@ -312,6 +311,10 @@ impl MainPage {
             PageButton::new(ButtonPosition::Left2, "ВИД-".into(), Box::new({
                 let sender = smart_sender.clone();
                 move || sender.send(UIEvent::PreviousIndicatorSet)
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Left3, "НАВ".into(), Box::new({
+                let sender = smart_sender.clone();
+                move || sender.send(UIEvent::SwitchToPage(GNSS_PAGE_ID))
             }) as Box<dyn FnMut()>),
             PageButton::new(ButtonPosition::Left4, "СБРОС".into(), Box::new({
                 let sender = smart_sender.clone();

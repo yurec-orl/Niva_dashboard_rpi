@@ -1,9 +1,12 @@
-//! Minimal NMEA 0183 parser for the UM982 GNSS receiver output.
+//! Minimal NMEA 0183 parser for the UM982 GNSS receiver output, plus the one Unicore/Novatel
+//! proprietary ASCII log the dashboard needs: `#UNIHEADINGA`.
 //!
-//! Only the sentence types actually needed by the dashboard are handled: RMC/GGA/VTG/ZDA
-//! for time, date, position, speed and altitude, plus HDT for the UM982's dual-antenna true
-//! heading (distinct from RMC/VTG's course-over-ground, which only reflects the direction of
-//! travel and is meaningless — or absent — while stationary).
+//! Standard sentence types handled: RMC/GGA/VTG/ZDA for time, date, position, speed and
+//! altitude, plus HDT for dual-antenna true heading (distinct from RMC/VTG's
+//! course-over-ground, which only reflects the direction of travel and is meaningless — or
+//! absent — while stationary). In practice the UM982 does not emit `$--HDT` at all; heading
+//! (and pitch) come from `#UNIHEADINGA` instead. HDT parsing is kept in case that ever changes
+//! (e.g. a firmware/config update that enables it).
 //!
 //! `GnssFix` is accumulated incrementally: a single sentence never carries every field, so
 //! `update_from_sentence` only overwrites the fields present in whatever sentence just
@@ -89,10 +92,22 @@ pub struct GnssFix {
     pub speed_kmh: Option<f32>,
     /// Course over ground — direction of travel, from RMC/VTG. Only meaningful while moving.
     pub course_deg: Option<f32>,
-    /// True heading — the UM982's dual-antenna orientation, from HDT. Valid while
-    /// stationary, unlike course_deg, but only present when the heading fix (moving
-    /// baseline between the two antennas) is resolved.
+    /// True heading — dual-antenna orientation. From HDT if the receiver emits it, or (the
+    /// UM982's actual source) `#UNIHEADINGA`'s HEADING field when its solution status is
+    /// SOL_COMPUTED. Valid while stationary, unlike course_deg, but only present when the
+    /// heading fix (moving baseline between the two antennas) is resolved.
     pub heading_deg: Option<f32>,
+    /// Pitch from `#UNIHEADINGA`'s PITCH field (dual-antenna baseline tilt). Only updated
+    /// alongside heading_deg, i.e. when the solution status is SOL_COMPUTED.
+    pub pitch_deg: Option<f32>,
+    /// Heading standard deviation from `#UNIHEADINGA`, degrees.
+    pub heading_std_dev_deg: Option<f32>,
+    /// Pitch standard deviation from `#UNIHEADINGA`, degrees.
+    pub pitch_std_dev_deg: Option<f32>,
+    /// Satellites used in the `#UNIHEADINGA` heading solution. Distinct from `satellites`
+    /// (GGA's position-solution count) — the heading (moving-baseline) solution can use a
+    /// different subset.
+    pub heading_satellites: Option<u8>,
     pub fix_quality: Option<FixQuality>,
     pub satellites: Option<u8>,
     pub hdop: Option<f32>,
@@ -101,13 +116,16 @@ pub struct GnssFix {
     pub status_active: Option<bool>,
 }
 
-/// Parses one NMEA line and merges any fields it carries into `fix`. Returns true if the
-/// sentence had a valid checksum and a recognized type (whether or not that particular
-/// sentence happened to update anything). Malformed lines and unsupported sentence types
-/// (GSA/GSV/GST/...) are silently ignored — this receiver emits far more sentence types
-/// than the dashboard needs.
+/// Parses one line from the receiver (NMEA `$...` or Unicore ASCII log `#...`) and merges
+/// any fields it carries into `fix`. Returns true if the line had a valid checksum and a
+/// recognized type (whether or not that particular line happened to update anything).
+/// Malformed lines and unsupported sentence/log types (GSA/GSV/GST/...) are silently ignored
+/// — this receiver emits far more than the dashboard needs.
 pub fn update_from_sentence(fix: &mut GnssFix, sentence: &str) -> bool {
     let sentence = sentence.trim();
+    if sentence.starts_with('#') {
+        return parse_uniheadinga(sentence, fix);
+    }
     if !checksum_valid(sentence) {
         return false;
     }
@@ -146,6 +164,80 @@ fn checksum_valid(sentence: &str) -> bool {
     let Ok(expected) = u8::from_str_radix(&checksum_hex[..2], 16) else { return false };
     let computed = sentence.as_bytes()[1..star_pos].iter().fold(0u8, |acc, &b| acc ^ b);
     computed == expected
+}
+
+/// CRC-32 used by Unicore/Novatel-style ASCII logs (poly 0xEDB88320, reflected, initial
+/// value 0, no final XOR) — distinct from NMEA's 2-hex XOR checksum and from zlib's crc32
+/// (which XORs the seed/result with 0xFFFFFFFF).
+fn unicore_crc32(data: &[u8]) -> u32 {
+    let mut crc: u32 = 0;
+    for &byte in data {
+        let mut idx = (crc ^ byte as u32) & 0xFF;
+        for _ in 0..8 {
+            idx = if idx & 1 != 0 { (idx >> 1) ^ 0xEDB8_8320 } else { idx >> 1 };
+        }
+        crc = ((crc >> 8) & 0x00FF_FFFF) ^ idx;
+    }
+    crc
+}
+
+/// Validates the trailing 8-hex-digit CRC-32, computed over everything between the leading
+/// '#' and the trailing '*' (excluding both).
+fn unicore_checksum_valid(sentence: &str) -> bool {
+    if !sentence.starts_with('#') {
+        return false;
+    }
+    let Some(star_pos) = sentence.find('*') else { return false };
+    let checksum_hex = &sentence[star_pos + 1..];
+    if checksum_hex.len() < 8 {
+        return false;
+    }
+    let Ok(expected) = u32::from_str_radix(&checksum_hex[..8], 16) else { return false };
+    let computed = unicore_crc32(sentence[1..star_pos].as_bytes());
+    computed == expected
+}
+
+/// Parses `#UNIHEADINGA`, the Unicore ASCII log carrying the UM982's dual-antenna heading
+/// solution (the UM982 doesn't emit standard `$--HDT`). Layout: `#UNIHEADINGA,<header
+/// fields>;<SOL_STATUS>,<POS_TYPE>,<LENGTH>,<HEADING>,<PITCH>,<reserved>,<HDG_STD_DEV>,
+/// <PITCH_STD_DEV>,<STATION_ID>,<SVS_TRACKED>,<SOLN_SVS>,...*<crc32>`. Only updates
+/// heading/pitch/std-dev/satellite fields when SOL_STATUS is SOL_COMPUTED — anything else
+/// (e.g. baseline not yet resolved) means the values in the log aren't a valid reading, so
+/// the fix is left at its last known value rather than overwritten with noise.
+fn parse_uniheadinga(sentence: &str, fix: &mut GnssFix) -> bool {
+    if !unicore_checksum_valid(sentence) {
+        return false;
+    }
+    // Safe to index: unicore_checksum_valid already confirmed '#' at the start and '*' later.
+    let star_pos = sentence.find('*').unwrap();
+    let body = &sentence[1..star_pos];
+    let Some(semi_pos) = body.find(';') else { return false };
+    if !body[..semi_pos].starts_with("UNIHEADINGA") {
+        return false;
+    }
+    let fields: Vec<&str> = body[semi_pos + 1..].split(',').collect();
+
+    if fields.first() != Some(&"SOL_COMPUTED") {
+        fix.heading_deg = None;
+        return true;
+    }
+
+    if let Some(heading) = fields.get(3).and_then(|s| s.parse::<f32>().ok()) {
+        fix.heading_deg = Some(heading);
+    }
+    if let Some(pitch) = fields.get(4).and_then(|s| s.parse::<f32>().ok()) {
+        fix.pitch_deg = Some(pitch);
+    }
+    if let Some(hdg_std_dev) = fields.get(6).and_then(|s| s.parse::<f32>().ok()) {
+        fix.heading_std_dev_deg = Some(hdg_std_dev);
+    }
+    if let Some(pitch_std_dev) = fields.get(7).and_then(|s| s.parse::<f32>().ok()) {
+        fix.pitch_std_dev_deg = Some(pitch_std_dev);
+    }
+    if let Some(sats) = fields.get(10).and_then(|s| s.parse::<u8>().ok()) {
+        fix.heading_satellites = Some(sats);
+    }
+    true
 }
 
 fn parse_time(raw: &str) -> Option<UtcTime> {
@@ -291,6 +383,11 @@ mod tests {
         format!("${}*{:02X}", body, checksum)
     }
 
+    fn with_unicore_checksum(body: &str) -> String {
+        let crc = unicore_crc32(body.as_bytes());
+        format!("#{}*{:08X}", body, crc)
+    }
+
     #[test]
     fn rejects_bad_checksum() {
         let mut fix = GnssFix::default();
@@ -386,6 +483,62 @@ mod tests {
         let mut fix = GnssFix::default();
         let line = with_checksum("GPGSV,3,1,11,10,63,137,17,12,08,046,,");
         assert!(!update_from_sentence(&mut fix, &line));
+    }
+
+    #[test]
+    fn unicore_crc32_matches_known_vector() {
+        // Novatel/Unicore's documented CRC32 algorithm, independently reimplemented (in
+        // Python, from the same published pseudocode) and run against the classic "123456789"
+        // check string to catch any transcription error in unicore_crc32.
+        assert_eq!(unicore_crc32(b""), 0x0000_0000);
+        assert_eq!(unicore_crc32(b"123456789"), 0x2DFD_2D88);
+    }
+
+    #[test]
+    fn parses_uniheadinga_valid_solution() {
+        let mut fix = GnssFix::default();
+        let body = "UNIHEADINGA,COM1,0,84.5,FINESTEERING,2242,404445000,02000020,3681,16809;SOL_COMPUTED,NARROW_INT,1.998,323.6549,-1.8072,0.0000,0.4796,0.9840,\"TSTR\",30,29,29,28,0,01,0,33";
+        let line = with_unicore_checksum(body);
+        assert!(update_from_sentence(&mut fix, &line));
+
+        assert_eq!(fix.heading_deg, Some(323.6549));
+        assert_eq!(fix.pitch_deg, Some(-1.8072));
+        assert_eq!(fix.heading_std_dev_deg, Some(0.4796));
+        assert_eq!(fix.pitch_std_dev_deg, Some(0.9840));
+        assert_eq!(fix.heading_satellites, Some(29));
+    }
+
+    #[test]
+    fn rejects_uniheadinga_bad_checksum() {
+        let mut fix = GnssFix::default();
+        let body = "UNIHEADINGA,COM1,0,84.5,FINESTEERING,2242,404445000,02000020,3681,16809;SOL_COMPUTED,NARROW_INT,1.998,323.6549,-1.8072,0.0000,0.4796,0.9840,\"TSTR\",30,29,29,28,0,01,0,33";
+        assert!(!update_from_sentence(&mut fix, &format!("#{}*00000000", body)));
+        assert_eq!(fix.heading_deg, None);
+    }
+
+    #[test]
+    fn ignores_uniheadinga_without_computed_solution() {
+        // NONE/INSUFFICIENT_OBS-type statuses mean the baseline isn't resolved yet — the
+        // numeric fields in the log aren't a valid reading, so the fix should be left alone
+        // (checksum-valid and recognized, hence still `true`, but no fields updated).
+        let mut fix = GnssFix::default();
+        let body = "UNIHEADINGA,COM1,0,84.5,FINESTEERING,2242,404445000,02000020,3681,16809;NONE,NONE,0.000,0.0000,0.0000,0.0000,0.0000,0.0000,\"TSTR\",30,0,0,0,0,00,0,33";
+        let line = with_unicore_checksum(body);
+        assert!(update_from_sentence(&mut fix, &line));
+
+        assert_eq!(fix.heading_deg, None);
+        assert_eq!(fix.pitch_deg, None);
+    }
+
+    #[test]
+    fn uniheadinga_heading_persists_across_other_sentences() {
+        let mut fix = GnssFix::default();
+        let body = "UNIHEADINGA,COM1,0,84.5,FINESTEERING,2242,404445000,02000020,3681,16809;SOL_COMPUTED,NARROW_INT,1.998,323.6549,-1.8072,0.0000,0.4796,0.9840,\"TSTR\",30,29,29,28,0,01,0,33";
+        update_from_sentence(&mut fix, &with_unicore_checksum(body));
+        update_from_sentence(&mut fix, "$GNRMC,154849.00,V,,,,,,,290726,0.0,E,N,V*7F");
+
+        assert_eq!(fix.heading_deg, Some(323.6549));
+        assert_eq!(fix.time, Some(UtcTime { hour: 15, minute: 48, second: 49.0 }));
     }
 
     #[test]

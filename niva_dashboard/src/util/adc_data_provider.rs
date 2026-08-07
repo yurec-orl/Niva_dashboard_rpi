@@ -38,6 +38,54 @@ const ADC_USB_HUB_LOCATION: &str = "1-1";
 /// disconnect/reconnect never triggers a physical power cycle.
 const HARD_RESET_STALE_THRESHOLD: Duration = Duration::from_secs(5);
 
+/// Physical channel index within the STM32 ADC frame. After stripping the leading '$'
+/// marker, the frame is a fixed sequence: A0-A3 (analog), TACHO/SPEED (raw inter-pulse
+/// periods), D0-D9 (digital, STM32 pre-normalizes 1=active/0=inactive), then B0-B7
+/// (physical MFD buttons) — see PROJECT_CONTEXT.md's "ADC module connectivity". D5 has no
+/// sensor wired to it currently but the slot still exists in the frame, so it's kept here
+/// rather than skipped, to avoid shifting every channel after it out of sync with the wire
+/// layout.
+///
+/// Single source of truth for this layout: both the real wiring (main.rs's
+/// add_adc_sensor_chains / setup_button_sensors) and the self-test synthetic frame
+/// (TestADCDataProvider::generate_channels, below) index through this enum instead of
+/// separately hand-maintained magic numbers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(usize)]
+#[allow(dead_code)] // D5: frame slot exists but no sensor is wired to it yet
+pub enum AdcChannel {
+    OilPressure = 0,
+    FuelLevel = 1,
+    EngineTemp = 2,
+    Voltage12V = 3,
+    Tacho = 4,
+    Speed = 5,
+    OilPressureLow = 6,
+    FuelLow = 7,
+    AlternatorCharging = 8,
+    ExteriorLightsOn = 9,
+    BrakeFluid = 10,
+    HeadlightsOn = 11,
+    TurnSignalOn = 12,
+    HighBeamOn = 13,
+    ParkBrakeOn = 14,
+    CenterDiffLock = 15,
+    B0 = 16,
+    B1 = 17,
+    B2 = 18,
+    B3 = 19,
+    B4 = 20,
+    B5 = 21,
+    B6 = 22,
+    B7 = 23,
+}
+
+impl AdcChannel {
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+}
+
 /// Errors that can occur when starting the ADC data provider.
 #[derive(Debug)]
 pub enum AdcDataProviderError {
@@ -323,6 +371,10 @@ const SELF_TEST_TICK: Duration = Duration::from_millis(20);
 /// km/h max (see hardware::sensors::SpeedSensor) so the sweep visibly reaches and clamps at
 /// the top of the gauge rather than falling just short of it.
 const SELF_TEST_SPEED_PEAK_KMH: f32 = 200.0;
+/// Peak target rpm for the HwTacho channel's sweep -- comfortably below TachoSensor's 6000
+/// rpm gauge max (unlike SELF_TEST_SPEED_PEAK_KMH, doesn't need to overshoot it: the point
+/// here is just to exercise a realistic idle-to-redline sweep, not to test gauge clamping).
+const SELF_TEST_TACHO_PEAK_RPM: f32 = 6000.0;
 
 /// Populates an ADCFrame with synthetic values instead of reading the STM32 over serial —
 /// mirrors ADCDataProvider's shape (owns an ADCFrame, updates it from a background thread) so
@@ -399,24 +451,28 @@ impl TestADCDataProvider {
         // already varies smoothly with speed, so the post-conversion reading tracks the
         // envelope directly.
         let speed_raw = crate::hardware::sensors::speed_period_raw_from_kmh(level * SELF_TEST_SPEED_PEAK_KMH);
+        // HwTacho reports an inter-pulse period too (see hardware::sensors::TachoSensor),
+        // same rationale as HwSpeed above -- driven through TachoSensor's own inverse
+        // conversion so the synthetic data can't drift out of sync with the real one.
+        let tacho_raw = crate::hardware::sensors::tacho_period_raw_from_rpm(level * SELF_TEST_TACHO_PEAK_RPM);
 
         let mut channels = vec![0u16; 16];
-        channels[0] = analog_raw;  // HwOilPress
-        channels[1] = analog_raw;  // HwFuelLvl
-        channels[2] = analog_raw;  // HwEngineCoolantTemp
-        channels[3] = analog_raw;  // Hw12v
-        channels[4] = digital_raw; // HwTacho (boolean indicator)
-        channels[5] = speed_raw;   // HwSpeed (raw inter-pulse period)
-        channels[6] = digital_raw; // HwOilPressLow (D0)
-        channels[7] = digital_raw; // HwFuelLvlLow (D1)
-        channels[8] = digital_raw; // HwCharge (D2)
-        channels[9] = digital_raw; // HwExtLights / HwInstrIllum (D3)
-        channels[10] = digital_raw; // HwBrakeFluidLvlLow (D4)
-        // channel 11 (D5) unused
-        channels[12] = digital_raw; // HwTurnSignal (D6)
-        channels[13] = digital_raw; // HwHighBeam (D7)
-        channels[14] = digital_raw; // HwParkBrake (D8)
-        channels[15] = digital_raw; // HwDiffLock (D9)
+        channels[AdcChannel::OilPressure.index()] = analog_raw;  // HwOilPress
+        channels[AdcChannel::FuelLevel.index()] = analog_raw;  // HwFuelLvl
+        channels[AdcChannel::EngineTemp.index()] = analog_raw;  // HwEngineCoolantTemp
+        channels[AdcChannel::Voltage12V.index()] = analog_raw;  // Hw12v
+        channels[AdcChannel::Tacho.index()] = tacho_raw;   // HwTacho (raw inter-pulse period)
+        channels[AdcChannel::Speed.index()] = speed_raw;   // HwSpeed (raw inter-pulse period)
+        channels[AdcChannel::OilPressureLow.index()] = digital_raw; // HwOilPressLow
+        channels[AdcChannel::FuelLow.index()] = digital_raw; // HwFuelLvlLow
+        channels[AdcChannel::AlternatorCharging.index()] = digital_raw; // HwCharge
+        channels[AdcChannel::ExteriorLightsOn.index()] = digital_raw; // HwExtLights / HwInstrIllum
+        channels[AdcChannel::BrakeFluid.index()] = digital_raw; // HwBrakeFluidLvlLow
+        // AdcChannel::D5 unused
+        channels[AdcChannel::TurnSignalOn.index()] = digital_raw; // HwTurnSignal
+        channels[AdcChannel::HighBeamOn.index()] = digital_raw; // HwHighBeam
+        channels[AdcChannel::ParkBrakeOn.index()] = digital_raw; // HwParkBrake
+        channels[AdcChannel::CenterDiffLock.index()] = digital_raw; // HwDiffLock
         channels
     }
 }
@@ -435,7 +491,7 @@ mod tests {
     use super::*;
     use crate::hardware::hw_providers::{ADCChannelProvider, HWAnalogProvider, HWInput};
     use crate::hardware::analog_signal_processing::{AnalogSignalProcessor, AnalogSignalProcessorMovingAverage};
-    use crate::hardware::sensors::{AnalogSensor, SpeedSensor};
+    use crate::hardware::sensors::{AnalogSensor, SpeedSensor, TachoSensor};
 
     /// Regression test for a bug where the self-test speed gauge never visibly moved.
     /// Drives the exact same pipeline main.rs's add_adc_sensor_chains wires up for HwSpeed
@@ -446,7 +502,7 @@ mod tests {
     fn self_test_speed_channel_produces_nonzero_reading_within_sweep() {
         let provider = TestADCDataProvider::start();
         let frame = provider.frame();
-        let adc_provider = ADCChannelProvider::new(HWInput::HwSpeed, 5, frame);
+        let adc_provider = ADCChannelProvider::new(HWInput::HwSpeed, frame);
         let mut moving_avg = AnalogSignalProcessorMovingAverage::new(5);
         let mut sensor = SpeedSensor::new();
 
@@ -502,5 +558,56 @@ mod tests {
         }
 
         assert!(checked_a_midrange_sample, "sweep never passed through a mid-range speed to validate against");
+    }
+
+    /// Same regression as self_test_speed_channel_produces_nonzero_reading_within_sweep, for
+    /// the HwTacho channel now that it's also period-based (see hardware::sensors::TachoSensor).
+    #[test]
+    fn self_test_tacho_channel_produces_nonzero_reading_within_sweep() {
+        let provider = TestADCDataProvider::start();
+        let frame = provider.frame();
+        let adc_provider = ADCChannelProvider::new(HWInput::HwTacho, frame);
+        let mut moving_avg = AnalogSignalProcessorMovingAverage::new(5);
+        let mut sensor = TachoSensor::new();
+
+        let start = Instant::now();
+        let mut saw_nonzero_rpm = false;
+        while start.elapsed() < SELF_TEST_DURATION {
+            if let Ok(raw) = adc_provider.read_analog(HWInput::HwTacho) {
+                let averaged = moving_avg.read(raw).unwrap();
+                if sensor.read(averaged).unwrap().as_f32() > 0.0 {
+                    saw_nonzero_rpm = true;
+                    break;
+                }
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        assert!(saw_nonzero_rpm, "self-test tacho channel never produced a nonzero reading within SELF_TEST_DURATION");
+    }
+
+    /// Same round-trip validation as self_test_speed_channel_tracks_envelope_target_speed,
+    /// for the HwTacho channel.
+    #[test]
+    fn self_test_tacho_channel_tracks_envelope_target_rpm() {
+        let mut sensor = TachoSensor::new();
+
+        let mut elapsed = Duration::ZERO;
+        let mut checked_a_midrange_sample = false;
+        while elapsed < SELF_TEST_DURATION {
+            let channels = TestADCDataProvider::generate_channels(elapsed);
+            let rpm = sensor.read(channels[4]).unwrap().as_f32();
+            let target = (TestADCDataProvider::envelope(elapsed) * SELF_TEST_TACHO_PEAK_RPM).min(6000.0);
+
+            if target > 500.0 && target < 5500.0 {
+                assert!((rpm - target).abs() < 50.0,
+                        "at elapsed={:?}, target={:.1} rpm but sensor read {:.1} rpm", elapsed, target, rpm);
+                checked_a_midrange_sample = true;
+            }
+
+            elapsed += SELF_TEST_TICK;
+        }
+
+        assert!(checked_a_midrange_sample, "sweep never passed through a mid-range rpm to validate against");
     }
 }

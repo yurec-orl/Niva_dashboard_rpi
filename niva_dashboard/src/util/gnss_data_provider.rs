@@ -1,4 +1,4 @@
-use crate::util::nmea::{self, GnssFix};
+use crate::util::nmea::{self, FixQuality, GnssFix};
 use crate::util::serial_reader::{LineSerialReader, SerialReader};
 
 use std::collections::VecDeque;
@@ -73,6 +73,15 @@ impl GnssFrame {
     /// Individual fields are `None` until a sentence carrying them has been seen.
     pub fn fix(&self) -> GnssFix {
         *self.fix.lock().unwrap()
+    }
+
+    /// Replaces the frame's fix wholesale and marks it as freshly updated. Used by
+    /// TestGnssDataProvider's synthetic writer, which produces a complete fix per tick rather
+    /// than incrementally merging fields the way `nmea::update_from_sentence` does for real
+    /// NMEA lines.
+    fn set_fix(&self, fix: GnssFix) {
+        *self.fix.lock().unwrap() = fix;
+        *self.last_update.lock().unwrap() = Instant::now();
     }
 
     /// True if no line has been received within GNSS_LINK_MAX_AGE — the OS/serial-level
@@ -222,6 +231,95 @@ impl GnssDataProvider {
 impl Drop for GnssDataProvider {
     fn drop(&mut self) {
         self.stop();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// Sweep period for the synthetic heading rotation — arbitrary but slow enough to watch the
+/// compass tape scroll and confirm the 359°->0° wraparound, fast enough not to make a manual
+/// test tedious.
+const TEST_HEADING_ROTATION_PERIOD: Duration = Duration::from_secs(12);
+/// How often the synthetic frame is refreshed — comfortably faster than the 60Hz render loop
+/// that drives SensorManager reads, same rationale as TestADCDataProvider::SELF_TEST_TICK.
+const TEST_TICK: Duration = Duration::from_millis(50);
+
+/// Populates a GnssFrame with synthetic fix data instead of reading a real receiver over
+/// serial — mirrors TestADCDataProvider's shape (see adc_data_provider.rs): owns a GnssFrame,
+/// updates it from a background thread, so a test mode can exercise the same GnssFrame-
+/// consuming code (GnssChannelProvider, CompassIndicator, GnssPage) as production, differing
+/// only in where the fix comes from. Unlike TestADCDataProvider's single rise/fall sweep
+/// (built for the real startup self-test animation), this runs indefinitely — it's only ever
+/// used from a dedicated test mode rather than the app's normal startup path, so there's no
+/// "hand off to the real provider" moment to sweep towards.
+pub struct TestGnssDataProvider {
+    should_stop: Arc<AtomicBool>,
+    frame: GnssFrame,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl TestGnssDataProvider {
+    /// Starts generating synthetic fixes immediately. The returned handle must be kept alive
+    /// for the sweep to keep animating — dropping it stops the background thread.
+    pub fn start() -> Self {
+        let should_stop = Arc::new(AtomicBool::new(false));
+        let frame = GnssFrame::new();
+        let thread_should_stop = Arc::clone(&should_stop);
+        let thread_frame = frame.clone();
+
+        let thread = thread::Builder::new()
+            .name("test-gnss-data-provider".into())
+            .spawn(move || Self::run_loop(&thread_should_stop, &thread_frame))
+            .ok();
+
+        TestGnssDataProvider { should_stop, frame, thread }
+    }
+
+    /// Returns a cloneable handle to the shared frame, same as GnssDataProvider::frame().
+    pub fn frame(&self) -> GnssFrame {
+        self.frame.clone()
+    }
+
+    fn run_loop(should_stop: &AtomicBool, frame: &GnssFrame) {
+        let start = Instant::now();
+        while !should_stop.load(Ordering::Relaxed) {
+            let elapsed = start.elapsed().as_secs_f32();
+            frame.set_fix(Self::generate_fix(elapsed));
+            thread::sleep(TEST_TICK);
+        }
+    }
+
+    /// Synthetic fix: heading sweeps continuously through the full 0-360° range (so a
+    /// compass/heading-tape test can confirm both smooth rotation and the wraparound), speed
+    /// oscillates gently, and the rest of the fields hold plausible fixed values so pages
+    /// reading the full GnssFix (e.g. GnssPage) have something sensible to show too.
+    fn generate_fix(elapsed: f32) -> GnssFix {
+        let heading = (elapsed / TEST_HEADING_ROTATION_PERIOD.as_secs_f32() * 360.0).rem_euclid(360.0);
+        GnssFix {
+            time: None,
+            date: None,
+            latitude_deg: Some(55.751244),
+            longitude_deg: Some(37.618423),
+            altitude_m: Some(150.0),
+            speed_kmh: Some(40.0 + 20.0 * (elapsed * 0.3).sin()),
+            course_deg: Some(heading),
+            heading_deg: Some(heading),
+            pitch_deg: Some(0.0),
+            heading_std_dev_deg: Some(0.3),
+            pitch_std_dev_deg: Some(0.3),
+            heading_satellites: Some(9),
+            fix_quality: Some(FixQuality::Gps),
+            satellites: Some(9),
+            hdop: Some(1.1),
+            status_active: Some(true),
+        }
+    }
+}
+
+impl Drop for TestGnssDataProvider {
+    fn drop(&mut self) {
+        self.should_stop.store(true, Ordering::SeqCst);
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }

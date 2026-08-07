@@ -170,3 +170,90 @@ impl Decorator for ArcDecorator {
         Ok(())
     }
 }
+
+/// Triangle marker decorator
+/// Vertices are normalized (0..1, 0..1) coordinates, mapped onto the indicator's bounds
+pub struct TriangleDecorator {
+    vertices: [(f32, f32); 3],
+    thickness: f32,
+    color_key: &'static str,
+    filled: bool,
+}
+
+impl TriangleDecorator {
+    pub fn new(
+        vertices: [(f32, f32); 3],
+        thickness: f32,
+        color_key: &'static str,
+        filled: bool,
+    ) -> Self {
+        Self {
+            vertices,
+            thickness,
+            color_key,
+            filled,
+        }
+    }
+}
+
+impl Decorator for TriangleDecorator {
+    fn render(
+        &self,
+        bounds: IndicatorBounds,
+        style: &UIStyle,
+        context: &mut GraphicsContext,
+    ) -> Result<(), String> {
+        let color = style.get_color(self.color_key, (1.0, 0.0, 1.0));
+
+        let points: [(f32, f32); 3] = [
+            (bounds.x + self.vertices[0].0 * bounds.width, bounds.y + self.vertices[0].1 * bounds.height),
+            (bounds.x + self.vertices[1].0 * bounds.width, bounds.y + self.vertices[1].1 * bounds.height),
+            (bounds.x + self.vertices[2].0 * bounds.width, bounds.y + self.vertices[2].1 * bounds.height),
+        ];
+
+        context.render_triangle(points, color, self.filled, self.thickness)?;
+
+        Ok(())
+    }
+}
+
+pub struct BoxDecorator {
+    border_thickness: f32,
+    color_key: &'static str,
+    corner_radius: f32,
+}
+
+impl BoxDecorator {
+    pub fn new(border_thickness: f32, color_key: &'static str, corner_radius: f32) -> Self {
+        BoxDecorator {
+            border_thickness,
+            color_key,
+            corner_radius,
+        }
+    }
+}
+
+impl Decorator for BoxDecorator {
+    fn render(
+        &self,
+        bounds: IndicatorBounds,
+        style: &UIStyle,
+        context: &mut GraphicsContext,
+    ) -> Result<(), String> {
+        let color = style.get_color(self.color_key, (1.0, 0.0, 1.0));
+
+        // Render the box outline
+        context.render_rectangle(
+            bounds.x,
+            bounds.y,
+            bounds.width,
+            bounds.height,
+            color,
+            false,
+            self.border_thickness,
+            self.corner_radius
+        )?;
+
+        Ok(())
+    }
+}

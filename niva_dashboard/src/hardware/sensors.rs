@@ -3,7 +3,8 @@ use rppal::gpio::Level;
 
 use crate::hardware::hw_providers::GNSS_ALTITUDE_OFFSET_M;
 use crate::hardware::sensor_value::{SensorValue, ValueConstraints, ValueMetadata};
-use std::time::{Duration, Instant};
+#[cfg(test)]
+use std::time::Duration;
 
 // Used by all sensor types
 pub trait Sensor {
@@ -272,10 +273,9 @@ impl AnalogSensor for GnssAltitudeSensor {
 const UPS_CURRENT_LSB_MA: f32 = 0.1524;
 
 /// Current draw below this (mA) counts as "discharging" (running on battery, mains absent
-/// or insufficient) — comfortably under a Pi 4's idle draw so routine float-charging near
-/// 0 mA is never misread as on-battery. Shared with UpsMonitor's shutdown-timer decision so
-/// the "on battery" alert and the eventual shutdown agree on what counts as on-battery.
-pub const UPS_ON_BATTERY_CURRENT_THRESHOLD_MA: f32 = -100.0;
+/// or insufficient). UPS reported current at full charge normally floats arount 0..-150 mA 
+// for extended periods, -200 mA threshold accounts for that.
+pub const UPS_ON_BATTERY_CURRENT_THRESHOLD_MA: f32 = -200.0;
 
 /// Bus voltage (V) mapped to state of charge (0-100%), ported from Waveshare's INA219.py
 /// demo (`p = (bus_voltage - 3) / 1.2 * 100`) — a linear estimate between an empty single
@@ -380,41 +380,35 @@ impl AnalogSensor for UpsChargeSensor {
 }
 
 // HwSpeed (channel 5): period-based measurement, replacing the count-based interim approach
-// (see SPEED_TACHO_PULSE_PERIOD_DESIGN.md). STM32 firmware isn't changed yet -- this is
-// built and validated against TestADCDataProvider's simulated period channel first, ahead
-// of the real firmware change, per that doc's Status section.
+// (see SPEED_TACHO_PULSE_PERIOD_DESIGN.md). STM32 firmware now sends inter-pulse periods
+// (SPEED_PERIOD_UNIT_US = 10us/unit, same encoding as HwTacho below).
 
 /// Wheel-speed sensor pulses/revolution (WIRING.md).
 const SPEED_PULSES_PER_REV: f32 = 6.0;
 /// 235/75/15 tire circumference, meters. Width 235mm, aspect ratio 75%, rim 15in ->
 /// diameter = 15in (381mm) + 2*(235mm*0.75) = 733.5mm -> circumference = pi*733.5mm.
 const SPEED_WHEEL_CIRCUMFERENCE_M: f32 = 2.304;
-/// Placeholder timer tick rate for the raw period channel -- the real value is a firmware
-/// decision (see the design doc's wire-format section), not made here. Chosen so a u16 raw
-/// period doesn't wrap before speed drops to a "may as well be stopped" ~1.1 km/h (65535
-/// ticks / 50_000 Hz = 1.31s period), while still giving sub-km/h resolution at highway
-/// speed (100 km/h's 13.82ms inter-pulse period is ~691 ticks at this rate).
-const SPEED_PERIOD_TIMER_HZ: f32 = 50_000.0;
+/// Timer tick rate for the raw period channel: firmware's SPEED_PERIOD_UNIT_US = 10us/unit,
+/// i.e. 1/10us = 100_000 ticks/sec. A u16 raw period doesn't wrap before speed drops to a
+/// "may as well be stopped" ~0.55 km/h (65535 ticks / 100_000 Hz = 0.655s period), while
+/// still giving sub-km/h resolution at highway speed (100 km/h's 13.82ms inter-pulse period
+/// is ~1382 ticks at this rate).
+const SPEED_PERIOD_TIMER_HZ: f32 = 100_000.0;
 /// Raw period value reserved to mean "no pulse observed" (stationary, or no pulse seen yet
 /// since startup) -- distinct from a real, merely long period, which the wire format needs
-/// to be able to represent unambiguously at the low-speed end (see design doc).
+/// to be able to represent unambiguously at the low-speed end (see design doc). The STM32
+/// firmware already latches the last measured period across reports and only reports this
+/// sentinel once SPEED_TIMEOUT_US has elapsed since the last real edge (see main.cpp) -- so
+/// it, not a second Rust-side staleness check, is authoritative for "vehicle stopped."
+/// (An earlier Rust-side staleness timeout keyed off "has the read() input value changed"
+/// was removed: at a perfectly steady speed the raw period legitimately repeats forever,
+/// which that check misread as staleness and zeroed the reading within ~100ms.)
 const SPEED_PERIOD_IDLE_RAW: u16 = 0;
-/// How many multiples of the last known inter-pulse period to wait, once that period value
-/// stops updating, before concluding the vehicle has slowed further (or stopped) and the
-/// latched period no longer reflects the current speed. Scaled to the last observed period
-/// rather than a fixed constant (contrast ADCFrame::is_stale()'s fixed ADC_LINK_MAX_AGE)
-/// since "no new pulse in N ms" means something different at 5 km/h than at 100 km/h.
-const SPEED_STALE_PERIOD_MULTIPLIER: f32 = 3.0;
-/// Floor under the multiplier above so a tiny last-known period (near top speed) can't
-/// produce an implausibly short timeout that flickers to 0 on ordinary pulse-to-pulse jitter.
-const SPEED_MIN_STALE_THRESHOLD: Duration = Duration::from_millis(100);
 
 pub struct SpeedSensor {
     value: SensorValue,
     constraints: ValueConstraints,
     metadata: ValueMetadata,
-    last_raw: u16,
-    last_change: Instant,
 }
 
 impl SpeedSensor {
@@ -423,8 +417,6 @@ impl SpeedSensor {
             value: SensorValue::empty(),
             constraints: ValueConstraints::analog(0.0, 180.0),
             metadata: ValueMetadata::new("км/ч", "СКОР", "speed_sensor"),
-            last_raw: SPEED_PERIOD_IDLE_RAW,
-            last_change: Instant::now(),
         }
     }
 
@@ -483,26 +475,110 @@ impl Sensor for SpeedSensor {
 
 impl AnalogSensor for SpeedSensor {
     fn read(&mut self, input: u16) -> Result<&SensorValue, String> {
-        if input != self.last_raw {
-            self.last_raw = input;
-            self.last_change = Instant::now();
-        }
-
-        let speed_kmh = if self.last_raw == SPEED_PERIOD_IDLE_RAW {
+        let speed_kmh = if input == SPEED_PERIOD_IDLE_RAW {
             0.0
         } else {
-            let last_period_s = self.last_raw as f32 / SPEED_PERIOD_TIMER_HZ;
-            let stale_after = Duration::from_secs_f32(last_period_s * SPEED_STALE_PERIOD_MULTIPLIER)
-                .max(SPEED_MIN_STALE_THRESHOLD);
-            if self.last_change.elapsed() > stale_after {
-                0.0
-            } else {
-                Self::speed_kmh_from_period_raw(self.last_raw)
-            }
+            Self::speed_kmh_from_period_raw(input)
         };
 
         self.value = SensorValue::analog_with_constraints_and_metadata(
             speed_kmh.clamp(self.constraints.min_value, self.constraints.max_value),
+            self.constraints.clone(),
+            self.metadata.clone(),
+        );
+        Ok(&self.value)
+    }
+}
+
+// HwTacho (channel 4): period-based measurement, same wire scheme as HwSpeed above (see
+// SPEED_TACHO_PULSE_PERIOD_DESIGN.md and the STM32 firmware's "Tachometer timing" comment) --
+// replaces the old boolean "engine running" debounce, which was mathematically unable to
+// latch true anywhere in the normal idle range (400-800 rpm) because a pulse-count-per-frame
+// encoding can't represent sub-1-count-per-frame rates.
+
+/// Tachometer pulses/revolution (STM32 firmware: PIN_TACHO, 2 PPR).
+const TACHO_PULSES_PER_REV: f32 = 2.0;
+/// Wire units are TACHO_PERIOD_UNIT_US = 10us/unit on the firmware side, same encoding (and
+/// same 100_000 Hz) as SPEED_PERIOD_TIMER_HZ above.
+const TACHO_PERIOD_TIMER_HZ: f32 = 100_000.0;
+/// Raw period value reserved to mean "no pulse observed" (stalled, or no pulse seen yet
+/// since startup) -- mirrors SPEED_PERIOD_IDLE_RAW, same rationale for trusting the
+/// firmware's own TACHO_TIMEOUT_US latch instead of a second Rust-side staleness check.
+const TACHO_PERIOD_IDLE_RAW: u16 = 0;
+
+pub struct TachoSensor {
+    value: SensorValue,
+    constraints: ValueConstraints,
+    metadata: ValueMetadata,
+}
+
+impl TachoSensor {
+    pub fn new() -> Self {
+        TachoSensor {
+            value: SensorValue::empty(),
+            constraints: ValueConstraints::analog(0.0, 6000.0),
+            metadata: ValueMetadata::new("об/мин", "ТАХОМЕТР", "tacho_sensor"),
+        }
+    }
+
+    /// Inter-pulse period (raw timer ticks) -> rpm. Caller is responsible for excluding
+    /// TACHO_PERIOD_IDLE_RAW before calling this (division by it isn't meaningful).
+    fn rpm_from_period_raw(raw: u16) -> f32 {
+        let period_s = raw as f32 / TACHO_PERIOD_TIMER_HZ;
+        60.0 / (period_s * TACHO_PULSES_PER_REV)
+    }
+}
+
+/// Inverse of rpm_from_period_raw, exposed for TestADCDataProvider's self-test sweep
+/// generator, same rationale as speed_period_raw_from_kmh.
+pub fn tacho_period_raw_from_rpm(rpm: f32) -> u16 {
+    if rpm <= 0.0 {
+        return TACHO_PERIOD_IDLE_RAW;
+    }
+    let period_s = 60.0 / (rpm * TACHO_PULSES_PER_REV);
+    (period_s * TACHO_PERIOD_TIMER_HZ).round().clamp(1.0, u16::MAX as f32) as u16
+}
+
+impl Sensor for TachoSensor {
+    fn id(&self) -> &String {
+        &self.metadata.sensor_id
+    }
+
+    fn name(&self) -> &String {
+        &self.metadata.label
+    }
+
+    fn value(&self) -> Result<&SensorValue, String> {
+        Ok(&self.value)
+    }
+
+    fn constraints(&self) -> &ValueConstraints {
+        &self.constraints
+    }
+
+    fn metadata(&self) -> &ValueMetadata {
+        &self.metadata
+    }
+
+    fn min_value(&self) -> f32 {
+        self.constraints.min_value
+    }
+
+    fn max_value(&self) -> f32 {
+        self.constraints.max_value
+    }
+}
+
+impl AnalogSensor for TachoSensor {
+    fn read(&mut self, input: u16) -> Result<&SensorValue, String> {
+        let rpm = if input == TACHO_PERIOD_IDLE_RAW {
+            0.0
+        } else {
+            Self::rpm_from_period_raw(input)
+        };
+
+        self.value = SensorValue::analog_with_constraints_and_metadata(
+            rpm.clamp(self.constraints.min_value, self.constraints.max_value),
             self.constraints.clone(),
             self.metadata.clone(),
         );
@@ -540,34 +616,19 @@ mod tests {
     #[test]
     fn test_speed_sensor_repeated_same_period_stays_fresh() {
         // A steady speed means the same raw period value keeps being reported every read --
-        // that must NOT be treated as staleness (see SPEED_STALE_PERIOD_MULTIPLIER), or a
-        // sensor cruising at constant speed would incorrectly drop to 0.
+        // that must NOT be treated as staleness -- an earlier Rust-side staleness timeout
+        // keyed off "has the input value changed" misread a steady speed as stale and
+        // zeroed the reading after ~100ms. The STM32 firmware is the sole authority on
+        // "no recent pulse": it latches the period across reports and only reports
+        // SPEED_PERIOD_IDLE_RAW itself once SPEED_TIMEOUT_US has elapsed since the last
+        // real edge, so a sensor cruising at constant speed must read correctly forever.
         let mut sensor = SpeedSensor::new();
         let raw = raw_period_for_100_kmh();
-        for _ in 0..5 {
+        for _ in 0..30 {
             let speed = sensor.read(raw).unwrap().as_f32();
             assert!((speed - 100.0).abs() < 1.0, "expected ~100 km/h, got {}", speed);
+            std::thread::sleep(Duration::from_millis(16));
         }
-    }
-
-    #[test]
-    fn test_speed_sensor_decays_to_zero_once_period_goes_stale() {
-        // A low speed's long inter-pulse period, once it stops being refreshed by a new
-        // pulse for long enough, must decay to 0 rather than reporting the stale speed
-        // forever -- this is what lets the sensor detect the vehicle has slowed further
-        // (or stopped) even though nothing ever explicitly reports SPEED_PERIOD_IDLE_RAW.
-        let mut sensor = SpeedSensor::new();
-        // ~5 km/h implies a period long enough that SPEED_MIN_STALE_THRESHOLD's floor
-        // doesn't dominate, so this actually exercises the multiplier-based timeout.
-        let period_s = SPEED_WHEEL_CIRCUMFERENCE_M / ((5.0 / 3.6) * SPEED_PULSES_PER_REV);
-        let raw = (period_s * SPEED_PERIOD_TIMER_HZ).round() as u16;
-
-        let speed = sensor.read(raw).unwrap().as_f32();
-        assert!(speed > 0.0, "expected a nonzero initial reading, got {}", speed);
-
-        std::thread::sleep(Duration::from_secs_f32(period_s * SPEED_STALE_PERIOD_MULTIPLIER) + Duration::from_millis(50));
-        let speed = sensor.read(raw).unwrap().as_f32();
-        assert_eq!(speed, 0.0, "expected stale period to decay to 0, got {}", speed);
     }
 
     #[test]
@@ -577,6 +638,52 @@ mod tests {
         // 180 km/h max at any plausible SPEED_PERIOD_TIMER_HZ, so this exercises the clamp.
         let speed = sensor.read(1).unwrap().as_f32();
         assert_eq!(speed, 180.0);
+    }
+
+    /// Raw period (in TACHO_PERIOD_TIMER_HZ ticks) that a steady 3000 rpm implies, used by
+    /// several tests below as a known-good reference point.
+    fn raw_period_for_3000_rpm() -> u16 {
+        let period_s = 60.0 / (3000.0 * TACHO_PULSES_PER_REV);
+        (period_s * TACHO_PERIOD_TIMER_HZ).round() as u16
+    }
+
+    #[test]
+    fn test_tacho_sensor_idle_raw_reads_zero() {
+        let mut sensor = TachoSensor::new();
+        let rpm = sensor.read(TACHO_PERIOD_IDLE_RAW).unwrap().as_f32();
+        assert_eq!(rpm, 0.0);
+    }
+
+    #[test]
+    fn test_tacho_sensor_converts_period_to_expected_rpm() {
+        let mut sensor = TachoSensor::new();
+        let raw = raw_period_for_3000_rpm();
+        let rpm = sensor.read(raw).unwrap().as_f32();
+        assert!((rpm - 3000.0).abs() < 10.0, "expected ~3000 rpm, got {}", rpm);
+    }
+
+    #[test]
+    fn test_tacho_sensor_repeated_same_period_stays_fresh() {
+        // A steady rpm means the same raw period value keeps being reported every read --
+        // that must NOT be treated as staleness. Mirrors the SpeedSensor case: the STM32
+        // firmware is the sole authority on "engine stalled" (TACHO_TIMEOUT_US), so a
+        // steady rpm reading must not decay to 0 just because the value stopped changing.
+        let mut sensor = TachoSensor::new();
+        let raw = raw_period_for_3000_rpm();
+        for _ in 0..30 {
+            let rpm = sensor.read(raw).unwrap().as_f32();
+            assert!((rpm - 3000.0).abs() < 10.0, "expected ~3000 rpm, got {}", rpm);
+            std::thread::sleep(Duration::from_millis(16));
+        }
+    }
+
+    #[test]
+    fn test_tacho_sensor_clamps_to_gauge_max() {
+        let mut sensor = TachoSensor::new();
+        // raw=1 is the shortest non-idle period the format allows -- far beyond the gauge's
+        // 6000 rpm max, so this exercises the clamp.
+        let rpm = sensor.read(1).unwrap().as_f32();
+        assert_eq!(rpm, 6000.0);
     }
 
     #[test]

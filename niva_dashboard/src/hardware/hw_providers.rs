@@ -19,7 +19,7 @@
 //   HWAnalogProvider -> analog signal processing (filtering, smoothing) ->
 //   -> AnalogSensor(convert raw data to logical values) -> UI Rendering
 
-use crate::util::adc_data_provider::ADCFrame;
+use crate::util::adc_data_provider::{ADCFrame, AdcChannel};
 use crate::util::gnss_data_provider::GnssFrame;
 use crate::util::ups_i2c_provider::UpsRawFrame;
 
@@ -78,6 +78,47 @@ pub enum HWInput {
     HwGnssLink,
 }
 
+impl HWInput {
+    /// Resolves the fixed STM32 frame position for inputs backed by the ADC (see
+    /// AdcChannel), or None for inputs sourced elsewhere (GNSS, UPS I2C, link-health
+    /// pseudo-sensors) or not currently wired to any hardware (HwCheckEngine). This mapping
+    /// is fixed in the STM32 firmware, not something callers should ever need to override,
+    /// so ADCChannelProvider resolves it here rather than taking a channel argument.
+    ///
+    /// HwExtLights and HwInstrIllum are the one case where two HWInput variants share a
+    /// single physical channel (D3 drives both parking lights and instrument illumination
+    /// on the Niva) — both map to AdcChannel::ExteriorLightsOn.
+    pub fn adc_channel(self) -> Option<AdcChannel> {
+        match self {
+            HWInput::HwOilPress => Some(AdcChannel::OilPressure),
+            HWInput::HwFuelLvl => Some(AdcChannel::FuelLevel),
+            HWInput::HwEngineCoolantTemp => Some(AdcChannel::EngineTemp),
+            HWInput::Hw12v => Some(AdcChannel::Voltage12V),
+            HWInput::HwTacho => Some(AdcChannel::Tacho),
+            HWInput::HwSpeed => Some(AdcChannel::Speed),
+            HWInput::HwOilPressLow => Some(AdcChannel::OilPressureLow),
+            HWInput::HwFuelLvlLow => Some(AdcChannel::FuelLow),
+            HWInput::HwCharge => Some(AdcChannel::AlternatorCharging),
+            HWInput::HwExtLights => Some(AdcChannel::ExteriorLightsOn),
+            HWInput::HwInstrIllum => Some(AdcChannel::ExteriorLightsOn),
+            HWInput::HwBrakeFluidLvlLow => Some(AdcChannel::BrakeFluid),
+            HWInput::HwTurnSignal => Some(AdcChannel::TurnSignalOn),
+            HWInput::HwHighBeam => Some(AdcChannel::HighBeamOn),
+            HWInput::HwParkBrake => Some(AdcChannel::ParkBrakeOn),
+            HWInput::HwDiffLock => Some(AdcChannel::CenterDiffLock),
+            HWInput::HwButton0 => Some(AdcChannel::B0),
+            HWInput::HwButton1 => Some(AdcChannel::B1),
+            HWInput::HwButton2 => Some(AdcChannel::B2),
+            HWInput::HwButton3 => Some(AdcChannel::B3),
+            HWInput::HwButton4 => Some(AdcChannel::B4),
+            HWInput::HwButton5 => Some(AdcChannel::B5),
+            HWInput::HwButton6 => Some(AdcChannel::B6),
+            HWInput::HwButton7 => Some(AdcChannel::B7),
+            _ => None,
+        }
+    }
+}
+
 // Generic interface for reading input data.
 pub trait HWAnalogProvider {
     fn input(&self) -> HWInput;
@@ -118,13 +159,17 @@ impl HWAnalogProvider for UPSDataProvider {
 /// Reads a single ADC channel from the shared ADCFrame.
 pub struct ADCChannelProvider {
     input: HWInput,
-    channel_index: usize,
+    channel: AdcChannel,
     frame: ADCFrame,
 }
 
 impl ADCChannelProvider {
-    pub fn new(input: HWInput, channel_index: usize, frame: ADCFrame) -> Self {
-        ADCChannelProvider { input, channel_index, frame }
+    /// Panics if `input` has no ADC channel mapping (see HWInput::adc_channel) — always a
+    /// static wiring bug caught at startup, not a runtime hardware condition.
+    pub fn new(input: HWInput, frame: ADCFrame) -> Self {
+        let channel = input.adc_channel()
+            .unwrap_or_else(|| panic!("{:?} has no ADC channel mapping", input));
+        ADCChannelProvider { input, channel, frame }
     }
 }
 
@@ -132,7 +177,7 @@ impl HWAnalogProvider for ADCChannelProvider {
     fn input(&self) -> HWInput { self.input }
 
     fn read_analog(&self, _input: HWInput) -> Result<u16, String> {
-        self.frame.get_channel(self.channel_index)
+        self.frame.get_channel(self.channel.index())
     }
 }
 
@@ -140,7 +185,7 @@ impl HWDigitalProvider for ADCChannelProvider {
     fn input(&self) -> HWInput { self.input }
 
     fn read_digital(&self, _input: HWInput) -> Result<Level, String> {
-        self.frame.get_channel(self.channel_index)
+        self.frame.get_channel(self.channel.index())
             .map(|value| if value > 0 { Level::High } else { Level::Low })
     }
 }
