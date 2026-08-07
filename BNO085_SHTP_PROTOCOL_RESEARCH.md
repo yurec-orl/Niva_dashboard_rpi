@@ -124,6 +124,53 @@ the install location is applied. Decide explicitly how the two are meant to rela
 separate sources, or reconciled via a declination constant) before feeding both into one compass
 display.
 
+### Report selection: Rotation Vector for heading and inclination
+
+Decision: drive both the magnetic-heading fallback and the inclination (pitch/roll) indicator from
+a single Rotation Vector (`0x05`) feature stream, rather than also running Game Rotation Vector
+(`0x08`) in parallel.
+
+Rationale:
+
+- The quaternion already encodes full 3D orientation — pitch and roll are extractable from the same
+  14-byte report used for yaw/heading, via the standard quaternion→Euler conversion (ZYX order,
+  consistent with the yaw formula above):
+
+  ```
+  roll  = atan2(2*(real*i + j*k), 1 - 2*(i² + j²))
+  pitch = asin(clamp(2*(real*j - k*i), -1, 1))   // clamp avoids NaN at ±90° (gimbal lock)
+  yaw   = atan2(2*(real*k + i*j), 1 - 2*(j² + k²))   // as above
+  ```
+
+  Which physical axis is "roll" vs "pitch" depends on how the board is mounted relative to the
+  vehicle (same caveat as the yaw/heading axis-alignment note above) — resolve via the same fixed
+  offset or Set Reorientation command once mounting is finalized.
+
+- In standard AHRS fusion design, the accelerometer alone resolves tilt (pitch/roll) against
+  gravity; the magnetometer only supplies the remaining degree of freedom (yaw). So magnetic
+  interference should degrade heading accuracy, not inclination accuracy — meaning there's no
+  fusion-design reason to prefer Game Rotation Vector's pitch/roll over Rotation Vector's for the
+  inclination indicator. **Caveat**: not independently verified against SH-2's actual (closed-box)
+  internals — if inclination readings are ever observed to degrade specifically when the compass
+  accuracy status is low, that would be a signal this assumption doesn't hold for this firmware.
+
+- One report stream means one Set Feature Command, one parse path, and one staleness watchdog
+  (per the "Silent feature staleness" lesson below) instead of two — matches the project's minimal
+  hand-rolled-SHTP scope. Running Game RV in parallel would isolate inclination from any
+  hypothetical magnetometer-related quaternion corruption, at the cost of doubling I2C report
+  traffic and feature-management complexity on a bus already shown to have transient reliability
+  issues (see "I2C clock speed" / "Error handling & recovery strategy" below) — not a free trade,
+  so default to the single-stream approach unless the caveat above is observed in practice.
+
+- Heading fusion with GPS: GNSS `UNIHEADING` (true heading) is authoritative when its solution
+  status indicates a valid fix; BNO085's yaw is magnetic, so correct it to true heading by adding a
+  fixed local declination constant (not the reverse) before comparing/switching. Switch on GNSS
+  solution-status with hysteresis (require N consecutive good/bad fixes), not on speed/movement,
+  since dual-antenna heading is valid even stationary. Expect a small residual disagreement between
+  the two sources even after declination correction (compass drift, coarse declination constant) —
+  worth a short blend/slew-limit at the switchover rather than an instant cut, to avoid a visible
+  heading jump on the display.
+
 ### Minimal implementation scope estimate
 
 An SHTP read/write pair over `rppal::i2c::I2c` (header parse + continuation handling), draining
@@ -154,13 +201,6 @@ continuous Rotation Vector streaming all worked over the existing wiring (I2C on
 Quaternion output changed correctly in response to physically rotating the board. Confirms the
 board, wiring, and I2C address (`0x4B`) are all good — the sensor itself is not in question for
 any future implementation issues.
-
-Three failure modes seen during testing, useful as a checklist for any hand-rolled implementation.
-**Update**: at the Pi's default 100 kHz I2C clock these recurred every ~5-10s during streaming;
-raising the clock to 400 kHz (see "I2C clock speed" below) made them noticeably rarer, but did
-**not** eliminate them — the BNO085's I2C behavior is not fully stable even at 400 kHz, and the
-sensor is clearly sensitive to clock speed. Treat all of the retry/skip/recovery handling in the
-test script as a required part of any real driver, not a workaround for a one-off wiring issue.
 
 - **`KeyError`/`IndexError` crashes in the Adafruit library** from unrecognized report IDs
   (e.g. `0x7B`) and out-of-range channel numbers on parsed packets — see "Implementation patterns"
@@ -298,3 +338,51 @@ causes an out-of-bounds list write. Lesson for the Rust implementation: validate
 against the known range *before* using it to index anything, and treat an unrecognized report ID
 as "skip these bytes" rather than a hard error. Both library bugs stemmed from trusting field
 values without bounds-checking them, not from any I2C-level malfunction.
+
+## Calibration
+
+General SH-2 firmware behavior, from the SH-2 reference manual — **not yet exercised against this
+hardware** (unlike the rest of this doc, which is backed by `scripts/test_bno085.py` runs against
+the real board). Recorded here as a reference for whenever calibration behavior needs to be relied
+on or debugged.
+
+**Automatic, always-on**: accel/gyro/mag are continuously calibrated in the background by the
+onboard Cortex-M0+ as the sensor experiences normal motion. There's no explicit "calibration mode"
+to enter.
+
+- **Magnetometer** converges faster with varied orientation (rotation through multiple axes). A
+  yaw-only rotation (e.g. driving in a circle) only calibrates the horizontal-plane response, not
+  the full 3D hard/soft-iron model — acceptable here since a dashboard-mounted sensor never sees
+  other tilt angles anyway, and this is exactly the standard automotive "compass swing" procedure
+  (calibrating against the vehicle's own magnetic distortion specifically at driving attitude).
+- **Gyroscope** bias nulls out during detected stillness (parked/idling), not rotation — a 360°
+  turn does nothing for it.
+- **Accelerometer** wants varied tilt angles (6-position: flat, each side, inverted) to fully
+  converge — essentially unachievable with a fixed dashboard mount. Expect it to stay at whatever
+  calibration it had from the factory/last full calibration; no realistic in-vehicle fix if it
+  degrades.
+
+**Per-report accuracy status**: every SH-2 sensor report carries a 2-bit status field (0=unreliable,
+1=low, 2=medium, 3=high accuracy). Check this before trusting a reading, same idea as checking a GPS
+fix quality flag — most useful right after boot, before dynamic calibration has reconverged.
+
+**Externally triggerable** (still driving the same internal algorithm — not a manual override of
+calibration coefficients):
+
+- **ME Calibration Command** — enable/disable dynamic calibration per sensor (accel/gyro/mag
+  individually).
+- **Save DCD (Dynamic Calibration Data)** — persists converged calibration to the chip's
+  non-volatile storage, surviving power cycles. Worth issuing once accuracy status reaches "high" so
+  the vehicle doesn't start every trip needing to reconverge from scratch.
+- **Tare / Set Reorientation** — not sensor calibration; sets a reference orientation to correct for
+  mounting-axis mismatch (board silkscreen forward ≠ vehicle forward/level). This is the mechanism
+  to use for the axis-alignment correction flagged above (both for yaw/heading and for roll/pitch),
+  rather than a manual offset computed in application code.
+
+**Not supported**: no way to inject externally-computed hard-iron/soft-iron magnetometer
+coefficients directly — the fusion algorithm is closed-box firmware, unlike a bare magnetometer chip
+where the host computes and applies its own calibration matrix.
+
+**Open questions for implementation**: when to issue Save DCD (once at first high-confidence
+calibration? on every transition to high accuracy?), and how to detect "calibration degraded enough
+to prompt the driver to do a compass swing" from the dashboard UI. Not yet designed.
