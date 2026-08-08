@@ -23,7 +23,7 @@ Surveyed directly on this Pi on 2026-07-29:
 | 6  | uhubctl sudoers entry                           | `/etc/sudoers.d/niva-uhubctl`                                                    | No       | No        |
 | 7  | earlyoom package + config                       | apt package + `/etc/default/earlyoom`                                            | No       | No        |
 | 8  | Boot-time service disables (6 units)            | applied via `systemctl disable`, described in `/home/user/boot-optimizations.md` | No (doc lives outside repo) | No |
-| 9  | I2C bus enablement + clock speed                | `dtparam=i2c_arm=on` and `dtparam=i2c_arm_baudrate=400000` in `/boot/firmware/config.txt` | No       | No        |
+| 9  | I2C bus enablement                              | `dtparam=i2c_arm=on`                                                             | No       | No        |
 | 10 | `/etc/niva_dashboard/ui_style.json`             | `/etc/niva_dashboard/`                                                           | No       | Orphaned — load call is commented out at `main.rs:523`, so this file currently does nothing |
 | 11 | Hardcoded absolute font/style paths             | baked into `niva_dashboard/src/graphics/ui_style.rs` (`/home/user/Work/Niva_Dashboard_Rpi/...`) | In repo, but wrong — ties to one dev machine's clone path | N/A |
 
