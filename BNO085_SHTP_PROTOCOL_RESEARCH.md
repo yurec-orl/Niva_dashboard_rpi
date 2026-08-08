@@ -227,41 +227,25 @@ cannot change this at runtime — `busio.I2C(..., frequency=...)` is silently ig
 (`RuntimeWarning: I2C frequency is not settable in python, ignoring!`); the clock speed is fixed by
 the device tree at boot.
 
-Fix applied: added `dtparam=i2c_arm_baudrate=400000` to `/boot/firmware/config.txt`, rebooted.
-**Result**: the errors that had been recurring every 5-10 seconds during streaming at 100 kHz
-became noticeably rarer at 400 kHz, but still occur occasionally. Conclusion: **the BNO085's I2C
-interface is not fully stable and is clearly sensitive to I2C clock speed** — 400 kHz is
-meaningfully better than 100 kHz and should be the default, but any implementation (this test
-script or a future Rust driver) still needs to tolerate transport/parsing errors as normal,
-expected operation, not as a rare edge case that a faster clock makes go away entirely.
+Tried: added `dtparam=i2c_arm_baudrate=400000` to `/boot/firmware/config.txt`, rebooted. A couple
+of early test runs at 400 kHz were stable, which initially looked like a fix. **That turned out to
+be coincidental** — subsequent runs at the same 400 kHz setting failed just as badly as at
+100 kHz, often running only a few seconds before errors and corrupt packets resumed. Retracting
+the earlier conclusion that 400 kHz is meaningfully more reliable than 100 kHz: across the range
+tested, clock speed alone does not reliably explain or fix the instability. Any implementation
+still needs to tolerate transport/parsing errors as normal, expected operation regardless of bus
+speed.
 
 Note `i2c-1` is shared with the UPS HAT (INA219 at `0x43`, onboard MCU at `0x2D` — see
-`ups_i2c_provider.rs`/`ups_monitor.rs`); the speed change applies to the whole bus, not just the
-BNO085. No issues observed with the UPS HAT at 400 kHz in this testing, but worth keeping in mind
-if UPS communication issues ever show up after this change.
+`ups_i2c_provider.rs`/`ups_monitor.rs`); no issues observed with the UPS HAT at 400 kHz in this
+testing.
 
-### I2C clock speed
-
-The Adafruit tutorial states the BNO085 "performs optimally" on the Pi at 400 kHz. This system's
-`i2c-1` bus was running at the Pi's default 100 kHz (`/boot/firmware/config.txt` had
-`dtparam=i2c_arm=on` but no baudrate override; confirmed via
-`/sys/firmware/devicetree/base/soc/i2c@7e804000/clock-frequency` = `100000`). Note that Blinka
-cannot change this at runtime — `busio.I2C(..., frequency=...)` is silently ignored on Linux
-(`RuntimeWarning: I2C frequency is not settable in python, ignoring!`); the clock speed is fixed by
-the device tree at boot.
-
-Fix: added `dtparam=i2c_arm_baudrate=400000` to `/boot/firmware/config.txt`, rebooted. **Confirmed
-effective**: the `KeyError`/`IndexError`/`RuntimeError`/`OSError` errors that had been recurring
-every 5-10 seconds during streaming at 100 kHz stopped entirely after the switch to 400 kHz. So
-despite the SH-2/SHTP protocol being nominally clock-speed-agnostic, this sensor in practice needs
-the faster clock for reliable operation on this Pi — worth carrying into the Rust implementation
-as a hard prerequisite (verify/set the 400 kHz dtoverlay as part of setup), not just a "nice to
-have" the way the tutorial's wording implied.
-
-Note `i2c-1` is shared with the UPS HAT (INA219 at `0x43`, onboard MCU at `0x2D` — see
-`ups_i2c_provider.rs`/`ups_monitor.rs`); the speed change applies to the whole bus, not just the
-BNO085. No issues observed with the UPS HAT at 400 kHz in this testing, but worth keeping in mind
-if UPS communication issues ever show up after this change.
+Tried: `dtparam=i2c_arm_baudrate=10000` (10 kHz) — the opposite direction from the Adafruit
+tutorial's advice, but widens the BSC controller's clock-stretch timeout window instead of
+narrowing it (see the 400 kHz result above, which narrows it and turned out not to help).
+**Result**: continuous run of over an hour with no sensor resets and heading stable throughout —
+the most reliable result observed across all clock speeds tested so far. Single long run, not yet
+repeated.
 
 ### Error handling & recovery strategy in the test script
 
@@ -386,3 +370,190 @@ where the host computes and applies its own calibration matrix.
 **Open questions for implementation**: when to issue Save DCD (once at first high-confidence
 calibration? on every transition to high accuracy?), and how to detect "calibration degraded enough
 to prompt the driver to do a compass swing" from the dashboard UI. Not yet designed.
+
+## Field testing against the Rust implementation (bench, 2026-08-07)
+
+Testing `Bno085DataProvider`/`Bno085` (bno085_data_provider.rs, bno085_protocol.rs) on the actual
+board, on a table (not installed in the vehicle). Two symptom clusters observed: intermittent I2C
+connection drops, and poor/degrading heading accuracy. Investigated together since they turned out
+to be entangled. Original hypothesis going in ("the sensor unit is faulty or unreliable by design")
+does not hold up cleanly against the evidence below — several more likely, and fixable, causes exist
+— but isn't fully ruled out either.
+
+### Confirmed from logs
+
+- **Connection drops were initially thought to correlate with I2C clock speed** (see "I2C clock
+  speed" above) — retracted: later testing at 400 kHz failed just as badly as at 100 kHz, so clock
+  speed is not treated as a confirmed factor.
+- **The sensor's internal fusion state does not survive a connection drop.** In every captured
+  reconnect, the first fresh report after `connect_and_init()` shows `accuracy=Unreliable` and
+  `heading_accuracy` at exactly ±180.0° (Q12's max-uncertainty value) — the firmware's own
+  freshly-booted/unconverged signature — even when the drop happened with the board sitting
+  completely still and no wires touched. If this were purely a Pi-side I2C controller glitch with
+  the sensor's own MCU continuing to run uninterrupted, the fusion state should survive and resume
+  near its pre-drop confidence, not reset to baseline. This is evidence the sensor's own MCU is
+  actually resetting, not just that the bus transaction is failing.
+- **Garbage `heading_accuracy` values appear around drops**: e.g. `±-449.5°`, `±-0.0°` — outside the
+  field's valid range (heading uncertainty can't be negative or exceed ±180°) and a magnitude
+  consistent with a torn/misaligned I2C read landing raw noise in bytes 12-13 of the Rotation Vector
+  report, not a value the firmware would legitimately send. Points to a signal-integrity/bus event
+  coinciding with the drop, not (only) a clean higher-level reset notification.
+- **Heading accuracy also degrades during uninterrupted, no-reset operation.** Continuous stationary
+  run, no reconnects logged: `heading_accuracy` went ±30.0° → ±35.0° → ±40.0° over 42 seconds
+  (Medium status throughout), while the heading *value* itself stayed essentially flat (56.0° →
+  55.8° → 55.7°). So the confidence estimate can erode even when nothing resets and the output value
+  hasn't (yet) visibly degraded — the connection-drop/reset issue above does not explain this by
+  itself.
+- **Not correlated with physically moving/flexing the signal wires** in either failure mode — argues
+  against a loose SDA/SCL mechanical connection as the (sole) cause of either symptom.
+
+### Unconfirmed hypotheses (plausible, not yet tested)
+
+- **Power delivery marginality** (insufficient decoupling at the breakout, thin/long jumper wire off
+  the Pi's 3.3V GPIO pin, or a poor ground return) causing brief brownout resets of the sensor's own
+  MCU. Would explain both the reset-signature-after-drop and the drop's lack of correlation with
+  wire flexing. Not weakened by "everything else on the Pi (STM32, display) works fine" — those are
+  digital loads on different rails/interfaces with different margins, not evidence the BNO085's
+  supply is adequate.
+- **Ambient magnetic interference from the project's own bench hardware** (Pi, STM32 over USB, GNSS
+  receiver, display, any nearby PSUs) — not ruled out just because testing is on a table rather than
+  in the vehicle; a bench full of running electronics isn't magnetically quiet either.
+- **Thermal drift** in the magnetometer/hard-iron offset as the board or nearby components self-heat
+  after power-on — could produce a slow accuracy-metric decay over the first minutes of operation
+  independent of any interference or fault.
+- **SH-2's confidence/covariance estimator may need periodic rotational stimulus** to hold its
+  accuracy rating, and could decay on its own during a long stationary hold even with nothing
+  actually wrong — speculative, no firmware documentation found confirming this behavior.
+- Whether the reported heading *value* (not just the accuracy/confidence number) ever meaningfully
+  drifts during an extended unconverged/low-accuracy period, or stays practically usable regardless
+  of what the confidence metric says.
+
+### Things to check next
+
+1. Measure VCC at the BNO085's power pins with a multimeter/scope, ideally under bus activity; add
+   local decoupling if the breakout's own isn't adequate; try powering from a separate bench supply
+   instead of the Pi's 3.3V GPIO pin, and see if drop frequency changes.
+2. Check `dmesg`/`journalctl` at the timestamp of a connection drop for kernel-level I2C bus-fault
+   messages — presence/absence helps distinguish a kernel/controller-level fault from the sensor
+   itself going silent.
+3. Extended stationary run (10+ minutes), logging both heading value and accuracy/status throughout:
+   does `heading_accuracy` plateau or climb indefinitely, and does the heading value itself ever
+   start drifting once accuracy bottoms out, or stay put regardless.
+4. Repeat the same extended stationary run in a maximally magnetically clean spot — a meter or more
+   from the Pi, other project hardware, and any phone/laptop — and compare degradation rate.
+5. Repeat after 10-15 minutes of powered warm-up before starting the clock, to test the thermal-drift
+   hypothesis.
+6. If a second BNO085 unit/breakout becomes available, run the identical stationary test side by
+   side as a swap-test — the most direct way to isolate a genuinely marginal individual unit from an
+   environmental or setup cause.
+7. Not yet tried: a single retry of the failed I2C transaction before tearing down and reconnecting
+   (`run_loop`'s `Err(e) => { ...; sensor = None; }` in bno085_data_provider.rs currently reconnects
+   unconditionally on any I2C error) — would help distinguish a one-off transient bus error from an
+   actual sensor-side reset, and avoid a full re-init cycle for the former.
+
+### Reconnect signature refinement: clean reconnects don't reset the chip, crash-triggered ones do
+
+A follow-up test ran four separate short (few-second) program launches spread over ~30 minutes,
+each doing its own clean `open()` → `init()` → `enable_feature()` sequence. Across all three
+resulting reconnects, `heading` stayed within about 1° (23.3° → 23.6° → 23.7° → 24.0°) and
+`heading_accuracy` climbed *smoothly* across the reconnects rather than resetting
+(±58.9° → ±112.8° → ±144.0° → ±176.4°, `Low` degrading to `Unreliable`) — i.e. a **graceful,
+program-initiated reconnect does not perturb the chip's internal fusion state**. A later longer run
+then hit an actual I2C error mid-stream and forced an unplanned reconnect; that one showed the full
+reset signature again (heading jumped to 276.0°, unrelated to the ~24° it had been holding;
+`heading_accuracy` snapped to exactly ±180.0°).
+
+This refines (and partly corrects) the earlier reading of "reconnect ⇒ reset" from the first field
+test session: it's not reconnecting itself that resets the chip, only whatever specifically happens
+during the failure that forces an *unplanned* reconnect in an active-polling session. That points
+more specifically at something occurring during sustained/active I2C communication as the crash
+trigger — but is equally consistent with a Pi-side controller issue (e.g. clock-stretch mishandling
+under sustained transaction volume corrupting a transfer badly enough to wedge/reset the sensor's I2C
+peripheral) or a sensor-firmware-side issue that only surfaces after enough traffic — the two are
+indistinguishable from application-level logs alone. Diagnostics that would actually separate them:
+capturing the failing transaction with an I2C logic analyzer/sniffer, or reproducing the same
+sustained-polling test from a different I2C master (rules the Pi's controller in or out directly).
+
+### Extended-duration runs (2026-08-08): no crashes observed
+
+Two further runs, both with the dashboard's `test=bno085` mode continuously polling orientation +
+acceleration (same 50 Hz Rotation Vector + Accelerometer feature config as all prior tests), while a
+second dashboard process ran concurrently in normal mode polling the UPS HAT (INA219 `0x43`, onboard
+MCU `0x2D`) on the same shared `i2c-1` bus — active bus contention, not an idle bus:
+
+- 30-minute run: clean throughout, no I2C errors, no reconnects, no reset-signature jumps.
+- 1.5-hour run: same — clean throughout.
+
+This complicates the "sustained active polling reliably triggers the crash-resets" reading from the
+reconnect-signature test above: 1.5 hours of continuous 50 Hz polling with a second process
+contending for the same bus produced zero crashes, while earlier sessions saw multiple crash-resets
+within single-digit minutes of active polling. Two ways to reconcile, neither confirmed:
+
+- The crash trigger may be a genuinely rare/probabilistic event (an occasional bus glitch, power
+  transient, or similar) rather than something that reliably fires once enough I2C volume
+  accumulates — a handful of short earlier runs catching several crashes and two much longer runs
+  catching zero would be unremarkable for a low-probability, not volume-proportional, event.
+- Something in the physical setup may differ between the crash-prone earlier tests and these clean
+  runs (wiring reseated, different power source/routing, ambient conditions) that hasn't been pinned
+  down yet.
+
+Net effect: doesn't support "sustained active I2C traffic reliably triggers resets" as a simple
+volume-based mechanism, and doesn't rule out the sensor/setup being marginal either — the crash-reset
+cause still looks intermittent rather than cleanly duration- or load-triggered. More long runs, and
+confirming whether anything physically changed between sessions, would help narrow this further.
+
+### Clock speed identified as the likely differentiator (2026-08-08)
+
+The one thing that changed between the crash-prone tests and the two crash-free extended runs above:
+`/boot/firmware/config.txt` currently has `dtparam=i2c_arm_baudrate=10000` — 10 kHz, well below the
+Pi's 100 kHz default and far below the 400 kHz set earlier in this doc's "I2C clock speed" section.
+Confirmed via `cat`, system rebooted after setting it. The board was physically moved/rotated during
+both extended runs, same handling as during the earlier crash-prone tests — so this isn't explained
+by reduced physical disturbance either.
+
+(`/sys/firmware/devicetree/base/soc/i2c@7e804000/clock-frequency` returned nothing via `cat` this
+time — that path holds a raw big-endian 32-bit integer, not text, so a blank `cat` result isn't
+necessarily meaningful either way; `od -An -tu4 <path>` would give a reliable readback if this needs
+reconfirming.)
+
+**Working hypothesis**: dropping the bus clock this far reduces or avoids a signal-integrity /
+clock-stretch-timing-margin problem specific to this physical setup (wiring length/quality, pull-up
+values, breadboard capacitance) that produces the chip-reset failure mode. Worth noting this looks
+like a *different* failure mode from the torn/malformed-read parsing errors documented earlier
+("Hardware verification result" / Python prototype phase) — those were traced to blind fixed-timer
+polling racing the sensor's internal buffer swap, and were already independently fixed by adding
+HINT-gated reads (bno085_protocol.rs). So the earlier "100 kHz produced more parse errors than
+400 kHz" result doesn't contradict this: different bug, different code path (no HINT gating existed
+yet), different symptom (garbled reports vs. full chip resets). A slower clock plausibly helps the
+reset failure mode by giving more timing margin against a marginal physical layer, independent of
+whether it was relevant to the older polling-race problem.
+
+**Confirmed (2026-08-08)**: control test run — `dtparam=i2c_arm_baudrate` reverted to the 100 kHz
+default, rebooted, same physical setup and handling (board moved/rotated during testing, as in every
+prior run). The earlier crash/reset and error behavior came back. Clean A/B result: 10 kHz → zero
+crashes across ~2 hours combined runtime; 100 kHz → crashes returned, nothing else changed. This
+confirms I2C clock speed — not board/wiring handling, not sensor calibration or magnetic
+environment — is the operative variable behind the connection-drop/reset failure mode.
+
+**Verdict on the original "faulty sensor" hypothesis (connection-drop symptom specifically)**:
+not supported. A defective individual unit would not be expected to reliably stop resetting purely
+because the host talks to it slower. The clock-speed dependency points at a signal-integrity/timing-
+margin limitation in this physical setup (wiring, pull-up values, bus capacitance, or a PHY-level
+mismatch between this Pi's I2C controller and this sensor at standard speeds) — a solvable
+configuration/wiring issue, not a hardware defect. The separate heading-accuracy-decays-while-
+stationary behavior documented above is still open and not addressed by this finding — worth
+revisiting once 10 kHz is settled as the operating speed, to see if extended clean runs (no resets)
+also show accuracy eventually stabilizing/recovering, or continue degrading regardless of connection
+stability.
+
+**If confirmed**: check whether the UPS HAT (sharing `i2c-1`, INA219 `0x43` + onboard MCU `0x2D`)
+tolerates 10 kHz without its own issues before committing to this as the permanent bus speed — no
+problems were observed with it during the two extended runs, but that's the same
+evidence-so-far-but-not-yet-stress-tested caveat as the BNO085 side of this finding.
+
+This continues to weigh against "faulty/inaccurate by design" as the framing for the connection
+issue specifically: a genuinely defective individual unit wouldn't be expected to reliably stop
+resetting just because the bus clock dropped. A clock-speed-dependent fix points at a signal-timing
+margin issue in this setup — wiring, pull-ups, bus capacitance, or a PHY-level compatibility
+mismatch between this Pi's I2C controller and this sensor at higher speeds — which is a solvable
+configuration/wiring issue, not a hardware-defect verdict.
