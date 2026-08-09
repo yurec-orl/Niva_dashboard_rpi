@@ -7,5 +7,6 @@ pub mod analog_signal_processing;
 pub mod sensors;
 pub mod sensor_manager;
 pub mod sensor_value;
+pub mod heading_fusion_sensor;
 
 pub use gpio_input::GpioInput;

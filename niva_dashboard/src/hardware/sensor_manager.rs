@@ -56,7 +56,7 @@
 //! let brake_active = manager.read_digital_sensor(HWInput::ParkBrake(Level::Low))?;
 //! ```
 
-use crate::hardware::sensors::{AnalogSensor, DigitalSensor};
+use crate::hardware::sensors::{AnalogSensor, DigitalSensor, FusedAnalogSensor};
 use crate::hardware::hw_providers::{HWInput, HWAnalogProvider, HWDigitalProvider};
 use crate::hardware::analog_signal_processing::AnalogSignalProcessor;
 use crate::hardware::digital_signal_processing::DigitalSignalProcessor;
@@ -109,9 +109,35 @@ impl SensorAnalogInputChain {
     }
 }
 
+// Multi-source analog chain: N independently-read HWAnalogProviders feeding one
+// FusedAnalogSensor that arbitrates between them (see SENSOR_FUSION_CHAIN_DESIGN.md).
+// `output` is the HWInput the fused result is stored under in SensorManager::sensor_values --
+// distinct from any individual provider's own `input()`, since the whole point is combining
+// several raw readings into one logical value that isn't any single provider's own channel.
+pub struct SensorFusedAnalogInputChain {
+    output: HWInput,
+    hw_providers: Vec<Box<dyn HWAnalogProvider + Send>>,
+    sensor: Box<dyn FusedAnalogSensor + Send>,
+}
+
+impl SensorFusedAnalogInputChain {
+    /// `hw_providers` order is significant: it's the same order FusedAnalogSensor::read
+    /// receives them in, so callers and the sensor implementation must agree on it (see e.g.
+    /// heading_fusion_sensor::new_heading_fusion_chain, which fixes the order at
+    /// construction so call sites can't get it wrong).
+    pub fn new(
+        output: HWInput,
+        hw_providers: Vec<Box<dyn HWAnalogProvider + Send>>,
+        sensor: Box<dyn FusedAnalogSensor + Send>,
+    ) -> Self {
+        SensorFusedAnalogInputChain { output, hw_providers, sensor }
+    }
+}
+
 pub struct SensorManager {
     digital_sensors: Vec<SensorDigitalInputChain>,
     analog_sensors: Vec<SensorAnalogInputChain>,
+    fused_analog_sensors: Vec<SensorFusedAnalogInputChain>,
     sensor_values: HashMap<HWInput, SensorValue>,
     // Optional handle to the shared ADC frame, set by callers whose chains include
     // ADCChannelProviders. Lets adc_link_down() report link status directly from the
@@ -125,6 +151,7 @@ impl SensorManager {
         SensorManager {
             digital_sensors: Vec::new(),
             analog_sensors: Vec::new(),
+            fused_analog_sensors: Vec::new(),
             sensor_values: HashMap::new(),
             adc_frame: None,
         }
@@ -136,6 +163,10 @@ impl SensorManager {
 
     pub fn add_analog_sensor_chain(&mut self, chain: SensorAnalogInputChain) {
         self.analog_sensors.push(chain);
+    }
+
+    pub fn add_fused_analog_sensor_chain(&mut self, chain: SensorFusedAnalogInputChain) {
+        self.fused_analog_sensors.push(chain);
     }
 
     /// Registers the ADC frame this manager's chains read from, so adc_link_down() can
@@ -190,6 +221,23 @@ impl SensorManager {
         Err("Analog sensor chain not found".to_string())
     }
 
+    fn read_fused_analog_sensor(&mut self, output: HWInput) -> Result<SensorValue, String> {
+        for chain in &mut self.fused_analog_sensors {
+            if chain.output != output {
+                continue;
+            }
+            // Each provider is read independently -- a failed read becomes None rather than
+            // aborting the whole chain, so the sensor can still arbitrate using whichever
+            // sources succeeded this cycle (see FusedAnalogSensor::read's doc).
+            let inputs: Vec<Option<u16>> = chain.hw_providers.iter()
+                .map(|provider| provider.read_analog(provider.input()).ok())
+                .collect();
+
+            return Ok(chain.sensor.read(&inputs)?.clone());
+        }
+        Err("Fused analog sensor chain not found".to_string())
+    }
+
     // Should be called periodically from event loop to update all sensors
     //
     // Chains are read independently — one chain failing (e.g. a GNSS field with no current
@@ -209,6 +257,9 @@ impl SensorManager {
         let analog_inputs: Vec<HWInput> = self.analog_sensors.iter()
             .map(|chain| chain.hw_provider.input())
             .collect();
+        let fused_analog_inputs: Vec<HWInput> = self.fused_analog_sensors.iter()
+            .map(|chain| chain.output)
+            .collect();
 
         // Last error is reported to the caller (for logging) but never stops the loop —
         // every remaining chain still gets a chance to update sensor_values.
@@ -223,6 +274,13 @@ impl SensorManager {
 
         for input in analog_inputs {
             match self.read_analog_sensor(input) {
+                Ok(value) => { self.sensor_values.insert(input, value); }
+                Err(e) => last_error = Some(e),
+            }
+        }
+
+        for input in fused_analog_inputs {
+            match self.read_fused_analog_sensor(input) {
                 Ok(value) => { self.sensor_values.insert(input, value); }
                 Err(e) => last_error = Some(e),
             }
@@ -246,7 +304,7 @@ impl SensorManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hardware::hw_providers::{TestDigitalDataProvider, TestAnalogDataProvider};
+    use crate::hardware::hw_providers::{TestDigitalDataProvider, TestAnalogDataProvider, TestMiddleAnalogDataProvider};
     use crate::hardware::digital_signal_processing::DigitalSignalDebouncer;
     use crate::hardware::analog_signal_processing::AnalogSignalProcessorMovingAverage;
     use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor};
@@ -480,5 +538,62 @@ mod tests {
                "a chain ordered after a failing one must still be read");
 
         log::info!("✓ read_all_sensors resilience test passed");
+    }
+
+    /// Records exactly the `inputs` slice it was called with (as Option<u16>, preserving
+    /// position/None) so tests can assert on provider-read arbitration -- e.g. that a failed
+    /// provider became None rather than aborting the chain -- without needing a real
+    /// arbitration policy like HeadingFusionSensor's.
+    struct RecordingFusedSensor {
+        value: crate::hardware::sensor_value::SensorValue,
+        last_inputs: Vec<Option<u16>>,
+    }
+
+    impl crate::hardware::sensors::Sensor for RecordingFusedSensor {
+        fn id(&self) -> &String { &self.value.metadata.sensor_id }
+        fn name(&self) -> &String { &self.value.metadata.label }
+        fn value(&self) -> Result<&SensorValue, String> { Ok(&self.value) }
+        fn constraints(&self) -> &ValueConstraints { &self.value.constraints }
+        fn metadata(&self) -> &crate::hardware::sensor_value::ValueMetadata { &self.value.metadata }
+        fn min_value(&self) -> f32 { self.value.constraints.min_value }
+        fn max_value(&self) -> f32 { self.value.constraints.max_value }
+    }
+
+    impl FusedAnalogSensor for RecordingFusedSensor {
+        fn read(&mut self, inputs: &[Option<u16>]) -> Result<&SensorValue, String> {
+            self.last_inputs = inputs.to_vec();
+            let sum: u16 = inputs.iter().filter_map(|v| *v).sum();
+            self.value = GenericAnalogSensor::new("recording".to_string(), "Recording".to_string(), "".to_string(),
+                                                  ValueConstraints::analog(0.0, 1000.0), 1.0)
+                .read(sum)?.clone();
+            Ok(&self.value)
+        }
+    }
+
+    #[test]
+    fn test_fused_analog_chain_reads_all_providers_and_survives_a_failing_one() {
+        log::info!("=== Testing SensorFusedAnalogInputChain arbitration input ===");
+
+        let mut manager = SensorManager::new();
+
+        let chain = SensorFusedAnalogInputChain::new(
+            HWInput::HwHeading,
+            vec![
+                Box::new(AlwaysFailingAnalogDataProvider { input: HWInput::HwBno085Heading }),
+                Box::new(TestMiddleAnalogDataProvider::new(HWInput::HwGnssHeading)),
+            ],
+            Box::new(RecordingFusedSensor {
+                value: SensorValue::empty(),
+                last_inputs: Vec::new(),
+            }),
+        );
+        manager.add_fused_analog_sensor_chain(chain);
+
+        let result = manager.read_fused_analog_sensor(HWInput::HwHeading);
+        assert!(result.is_ok(), "fused chain should succeed even though one provider failed");
+        assert_eq!(result.unwrap().as_f32(), 512.0,
+                   "fused sensor should have seen the second provider's value (512, TestMiddleAnalogDataProvider)");
+
+        log::info!("✓ Fused analog chain arbitration input test passed");
     }
 }

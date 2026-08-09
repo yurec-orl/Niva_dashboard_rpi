@@ -19,7 +19,10 @@ use crate::hardware::digital_signal_processing::DigitalSignalDebouncer;
 use crate::hardware::analog_signal_processing::AnalogSignalProcessorMovingAverage;
 use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor, SpeedSensor, TachoSensor, EngineTemperatureSensor, GnssAltitudeSensor};
 use crate::hardware::sensor_value::ValueConstraints;
+use crate::hardware::heading_fusion_sensor;
 use crate::util::adc_data_provider::{ADCDataProvider, ADCFrame, TestADCDataProvider, SELF_TEST_DURATION};
+use crate::util::bno085_data_provider::{Bno085DataProvider, Bno085Frame};
+use crate::util::bno085_protocol::SH2_REPORT_ROTATION_VECTOR;
 use crate::util::gnss_data_provider::{GnssDataProvider, GnssFrame};
 use crate::util::logging::init_logging;
 use crate::util::ups_monitor::UpsMonitor;
@@ -60,8 +63,11 @@ fn setup_self_test_sensors() -> (SensorManager, TestADCDataProvider) {
     (mgr, test_adc)
 }
 
-fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>, gnss: Option<GnssFrame>) -> SensorManager {
+fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>, gnss: Option<GnssFrame>, bno: Option<Bno085Frame>) -> SensorManager {
     let mut mgr = SensorManager::new();
+    // Cloned before the GNSS scalar-chain block below consumes `gnss` -- needed again for the
+    // heading fusion chain further down.
+    let gnss_for_fusion = gnss.clone();
     // Lets adc_link_down() suppress "channel not in frame" log spam while the ADC
     // reconnect loop is doing its thing (see AdcDataProvider).
     mgr.set_adc_frame(adc.clone());
@@ -87,6 +93,18 @@ fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>, gnss: Option<G
                                            Level::High, ValueConstraints::digital_warning())),
     );
     mgr.add_digital_sensor_chain(gnss_link_chain);
+
+    // BNO085 link-health chain — added unconditionally for the same reason as ADC/GNSS
+    // above. Independent of the heading fusion chain below: this reports raw connectivity
+    // (feeds the GNSS page's "ИНС" status box), while the fusion chain separately decides
+    // what to do about a stale/missing BNO085 reading.
+    let bno085_link_chain = SensorDigitalInputChain::new(
+        Box::new(Bno085LinkStatusProvider::new(bno.clone())),
+        vec![],
+        Box::new(GenericDigitalSensor::new("HwBno085Link".to_string(), "ИНС LINK".to_string(),
+                                           Level::High, ValueConstraints::digital_critical())),
+    );
+    mgr.add_digital_sensor_chain(bno085_link_chain);
 
     // GNSS scalar sensor chains — independent of the ADC link, same as UPS below.
     if let Some(gnss_frame) = gnss {
@@ -139,6 +157,24 @@ fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>, gnss: Option<G
         log::info!("✓ GNSS sensor chains added");
     } else {
         log::info!("GNSS data provider unavailable — GNSS sensor chains omitted");
+    }
+
+    // Heading fusion chain — combines BNO085 (primary) and GNSS (fallback) heading readings
+    // into one HwHeading value; see hardware::heading_fusion_sensor and
+    // SENSOR_FUSION_CHAIN_DESIGN.md. Requires both sources' frames to exist (i.e. both
+    // background threads spawned, regardless of whether either device is actually connected
+    // yet — see Bno085ChannelProvider/GnssChannelProvider, which report per-read failures
+    // for "not connected"/"no fix" independently of this).
+    match (bno, gnss_for_fusion) {
+        (Some(bno_frame), Some(gnss_frame)) => {
+            mgr.add_fused_analog_sensor_chain(
+                heading_fusion_sensor::new_heading_fusion_chain(bno_frame, gnss_frame)
+            );
+            log::info!("✓ Heading fusion sensor chain added (BNO085 + GNSS)");
+        }
+        _ => {
+            log::info!("BNO085 or GNSS data provider unavailable — heading fusion chain omitted");
+        }
     }
 
     // UPS sensor chains — added unconditionally alongside the ADC link chain, since the UPS
@@ -405,6 +441,17 @@ fn setup_ups_i2c_provider() -> Result<UpsI2CDataProvider, String> {
     Ok(provider)
 }
 
+fn setup_bno085_data_provider() -> Result<Bno085DataProvider, String> {
+    // BNO085 connects via I2C directly (owned by the provider's own background thread, no
+    // serial device path) -- see bno085_data_provider.rs. Rotation Vector alone is enough
+    // for heading fusion (gyro+accel+mag, with an absolute-heading accuracy estimate); the
+    // other report types (Game/Geomagnetic RV, Accelerometer) exist only for the "heading"/
+    // "bno085" test modes' source comparison, not for this chain.
+    let mut provider = Bno085DataProvider::new(&[SH2_REPORT_ROTATION_VECTOR]);
+    provider.run().map_err(|e| e.to_string())?;
+    Ok(provider)
+}
+
 fn show_help() {
     log::info!("Available test modes:");
     log::info!("1. Rotating needle gauge test (circular gauge with numbers)");
@@ -499,6 +546,20 @@ fn main() -> std::process::ExitCode {
     };
     let gnss_frame = gnss.as_ref().map(|p| p.frame());
 
+    // Kept alive for the process lifetime, same as `gnss` — its Drop impl stops the
+    // background thread cleanly on shutdown.
+    let bno085 = match setup_bno085_data_provider() {
+        Ok(provider) => {
+            log::info!("✓ BNO085 data provider started");
+            Some(provider)
+        }
+        Err(e) => {
+            log::info!("BNO085 data provider unavailable: {}", e);
+            None
+        }
+    };
+    let bno_frame = bno085.as_ref().map(|p| p.frame());
+
     // Temporary diagnostic: log raw ADC frame contents once a second to verify
     // the serial reader thread is actually receiving data from the STM32 module.
     // if let Some(frame) = adc_frame.clone() {
@@ -516,7 +577,7 @@ fn main() -> std::process::ExitCode {
     // setup consumes the rest of their clones.
     let adc_frame_for_diag = adc_frame.clone();
     let gnss_frame_for_diag = gnss_frame.clone();
-    let sensors = setup_sensors(adc_frame, ups_frame, gnss_frame);
+    let sensors = setup_sensors(adc_frame, ups_frame, gnss_frame, bno_frame);
     let ui_style = setup_ui_style();
     // Starts disabled: alerts (e.g. engine temp, oil pressure) must not fire against the
     // synthetic self-test sensor sweep. Enabled once the self-test sequence hands off to

@@ -43,7 +43,7 @@ const RECONNECT_INTERVAL: Duration = Duration::from_millis(200);
 /// falsely flagging routine jitter, while still catching a genuinely wedged/silently-reset
 /// sensor (research doc, "Silent feature staleness": a reset can stop new reports without any
 /// error ever surfacing) far faster than an arbitrary round-number timeout would.
-const READING_MAX_AGE: Duration = Duration::from_millis(150);
+const READING_MAX_AGE: Duration = Duration::from_millis(250);
 
 /// Decoded orientation from the latest Rotation Vector report. `heading_deg` is magnetic
 /// heading (not true heading — see research doc, "Design note" on reconciling with GNSS

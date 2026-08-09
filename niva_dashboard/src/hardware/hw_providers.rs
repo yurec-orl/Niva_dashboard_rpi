@@ -20,6 +20,7 @@
 //   -> AnalogSensor(convert raw data to logical values) -> UI Rendering
 
 use crate::util::adc_data_provider::{ADCFrame, AdcChannel};
+use crate::util::bno085_data_provider::Bno085Frame;
 use crate::util::gnss_data_provider::GnssFrame;
 use crate::util::ups_i2c_provider::UpsRawFrame;
 
@@ -76,6 +77,16 @@ pub enum HWInput {
     HwGnssFixQuality,
     // GNSS link health (see GnssLinkStatusProvider, mirrors HwAdcLink) — not a physical sensor
     HwGnssLink,
+    // BNO085 IMU heading (see Bno085ChannelProvider) — raw sensor reading, distinct from
+    // HwHeading below, which is the fused value indicators should actually consume.
+    HwBno085Heading,
+    // BNO085 link health (see Bno085LinkStatusProvider, mirrors HwAdcLink/HwGnssLink) — not
+    // a physical sensor.
+    HwBno085Link,
+    // Fused heading (see hardware::heading_fusion_sensor): combines HwBno085Heading and
+    // HwGnssHeading via a SensorFusedAnalogInputChain, preferring BNO085 when available and
+    // falling back to GNSS. Not backed by any single HWAnalogProvider itself.
+    HwHeading,
 }
 
 impl HWInput {
@@ -290,6 +301,60 @@ impl HWDigitalProvider for GnssLinkStatusProvider {
         let stale = match &self.frame {
             Some(frame) => frame.is_stale(),
             None => true, // GNSS receiver never connected — link is down by definition
+        };
+        Ok(if stale { Level::High } else { Level::Low })
+    }
+}
+
+/// Reads the BNO085's latest decoded heading from the shared Bno085Frame, fixed-point encoded
+/// to u16 with the same GNSS_HEADING_SCALE as GnssChannelProvider — so HeadingFusionSensor
+/// (hardware::heading_fusion_sensor) can decode either source identically. Mirrors
+/// GnssChannelProvider's frame-wrapping pattern; a stale frame (never connected, or a live
+/// link that died) reports an error the same way GNSS reports "no fix" — the fused chain
+/// treats a failed read as "this source unavailable this cycle," not a hard failure.
+pub struct Bno085ChannelProvider {
+    input: HWInput,
+    frame: Bno085Frame,
+}
+
+impl Bno085ChannelProvider {
+    pub fn new(input: HWInput, frame: Bno085Frame) -> Self {
+        Bno085ChannelProvider { input, frame }
+    }
+}
+
+impl HWAnalogProvider for Bno085ChannelProvider {
+    fn input(&self) -> HWInput { self.input }
+
+    fn read_analog(&self, _input: HWInput) -> Result<u16, String> {
+        if self.frame.is_stale() {
+            return Err("BNO085 frame stale".to_string());
+        }
+        let heading_deg = self.frame.orientation().heading_deg;
+        Ok((heading_deg * GNSS_HEADING_SCALE).round().clamp(0.0, u16::MAX as f32) as u16)
+    }
+}
+
+/// Reports Level::High ("problem") when the BNO085 hasn't reported a fresh orientation/
+/// acceleration reading recently — mirrors AdcLinkStatusProvider/GnssLinkStatusProvider
+/// exactly, covering both "never connected" (frame is None) and "a live link went stale."
+pub struct Bno085LinkStatusProvider {
+    frame: Option<Bno085Frame>,
+}
+
+impl Bno085LinkStatusProvider {
+    pub fn new(frame: Option<Bno085Frame>) -> Self {
+        Bno085LinkStatusProvider { frame }
+    }
+}
+
+impl HWDigitalProvider for Bno085LinkStatusProvider {
+    fn input(&self) -> HWInput { HWInput::HwBno085Link }
+
+    fn read_digital(&self, _input: HWInput) -> Result<Level, String> {
+        let stale = match &self.frame {
+            Some(frame) => frame.is_stale(),
+            None => true, // BNO085 never connected — link is down by definition
         };
         Ok(if stale { Level::High } else { Level::Low })
     }

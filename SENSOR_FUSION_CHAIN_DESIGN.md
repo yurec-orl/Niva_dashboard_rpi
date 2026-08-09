@@ -83,17 +83,5 @@ express "proceed" or "abort," not "proceed with a degraded input."
   GNSS-only reading for diagnostics/the terminal page) — the fused value is what a compass
   indicator would actually consume for display.
 
-## Prerequisite, not yet in place
-BNO085 would connect over I2C. `I2CProvider` (`hardware/hw_providers.rs`) is currently a dead
-stub (`read_analog`/`read_digital` unconditionally return 0/`Level::Low`), already flagged in
-CLAUDE.md's TODO as needing a decision — wire `hardware/gpio_input.rs`'s real I2C wrapper into
-the provider traits, or drop the stub. That's a separate, blocking prerequisite for the
-BNO085 side of this design, independent of the chain-type plumbing described above.
-
-## Status
-Design only — not implemented. The `SensorFusedAnalogInputChain`/`FusedAnalogSensor`
-scaffolding could be added and validated with a GNSS-only single-source case (no real fusion
-decision yet) ahead of the I2C/BNO085 work landing.
-
 ---
 *Created: July 29, 2026*

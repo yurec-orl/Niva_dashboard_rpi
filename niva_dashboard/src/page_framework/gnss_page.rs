@@ -30,8 +30,9 @@ struct PnpMode {
     compass_indicator: CompassIndicator,
     heading_indicator: TextIndicator,
     hdop_indicator: HdopIndicator,
-    /// BNO085 IMU link status box, bottom-left of the compass. Always shown red — the
-    /// BNO085 isn't wired up yet, so there's no "ok" state to report.
+    /// BNO085 IMU link status box, bottom-left of the compass. Green when the BNO085 has
+    /// reported a fresh orientation reading recently, red otherwise (see
+    /// Bno085LinkStatusProvider / HwBno085Link).
     ins_link_indicator: TextIndicator,
     /// GNSS link status box, bottom-right of the compass. Green when the link is up and a
     /// fix is held, red otherwise.
@@ -102,7 +103,7 @@ impl GnssPage {
             hdop_indicator: HdopIndicator::new(),
             ins_link_indicator: TextIndicator::new()
                 .with_font(status_label_font.clone(), STATUS_LABEL_FONT_SIZE, 1.0)
-                .with_colors((1.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+                .with_colors((0.0, 1.0, 0.0), (1.0, 0.0, 0.0), (1.0, 0.0, 0.0))
                 .with_parameters(TextAlignment::Center, false, true, false),
             gnss_link_indicator: TextIndicator::new()
                 .with_font(status_label_font.clone(), STATUS_LABEL_FONT_SIZE, 1.0)
@@ -177,15 +178,15 @@ impl GnssPage {
     }
 
     fn date_str(fix: &GnssFix) -> String {
-        match (fix.date) {
-            (Some(d)) => format!("{:02}.{:02}.{}", d.day, d.month, d.year),
+        match fix.date {
+            Some(d) => format!("{:02}.{:02}.{}", d.day, d.month, d.year),
             _ => Self::na(),
         }
     }
 
     fn time_str(fix: &GnssFix) -> String {
-        match (fix.time) {
-            (Some(t)) => format!("{:02}:{:02}:{:02}", t.hour, t.minute, t.second as u8),
+        match fix.time {
+            Some(t) => format!("{:02}:{:02}:{:02}", t.hour, t.minute, t.second as u8),
             _ => Self::na(),
         }
     }
@@ -303,7 +304,7 @@ impl GnssPage {
     fn render_pnp_mode(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
         use crate::hardware::sensor_value::{SensorValue, ValueConstraints, ValueMetadata};
 
-        let header_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (1.0, 1.0, 1.0));;
+        let header_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (1.0, 1.0, 1.0));
         let text_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (0.8, 0.8, 0.8));
         let warning_color = ui_style.get_color(TEXT_WARNING_COLOR, (1.0, 1.0, 0.0));
 
@@ -324,14 +325,24 @@ impl GnssPage {
 
         self.render_info_lines(&lines, (w * 0.75, TITLE_Y), context, &[text_color, warning_color, header_color], &font, font_size)?;
 
-        // if let Some(heading_value) = sensor_manager.get_sensor_value(&HWInput::HwGnssHeading) {
-        //     self.pnp_mode.compass_indicator.render(heading_value, bounds, &ui_style, context)?;
-        // }
-        
         let fix = active_frame.fix();
-        let heading = fix.heading_deg.unwrap_or(0.0);
-        let mut heading_value = SensorValue::analog(0.0, 0.0, 359.999, "\u{00B0}", "Курс", "test_heading");
-        heading_value.value = crate::hardware::sensor_value::ValueData::Analog(heading);
+
+        // The fused HwHeading sensor (BNO085 + GNSS, see hardware::heading_fusion_sensor)
+        // always reads the *real* GNSS frame, not this page's synthetic test_provider frame
+        // -- so while test mode is on, bypass it and read the test frame's heading directly,
+        // the same way the rest of this page's fields already fall back to active_frame().
+        // TestGnssDataProvider sweeps heading through the full 0-360° range specifically to
+        // exercise the compass, so this keeps the "ТЕСТ" button doing what it's for.
+        let heading_value = if self.test_provider.is_some() {
+            SensorValue::analog(fix.heading_deg.unwrap_or(0.0), 0.0, 359.999, "\u{00B0}", "КУРС", "gnss_test_heading")
+        } else {
+            match sensor_manager.get_sensor_value(&HWInput::HwHeading) {
+                Some(value) if value.value != crate::hardware::sensor_value::ValueData::Empty => value.clone(),
+                // No BNO085 or GNSS heading available -- park the compass at 0° rather than
+                // feed NaN (SensorValue::empty().as_f32()) into CompassIndicator::render.
+                _ => SensorValue::analog(0.0, 0.0, 359.999, "\u{00B0}", "КУРС", "heading_fused"),
+            }
+        };
 
         // Heading indicator sits directly above the compass's drawn arc, centered over the
         // same horizontal span, derived from the compass's own geometry so the two can't
@@ -354,7 +365,6 @@ impl GnssPage {
         let outer_r = radius - self.pnp_mode.compass_indicator.ring_margin();
         let half_angle_rad = self.pnp_mode.compass_indicator.visible_half_angle_deg().to_radians();
         let compass_bottom_y = cy - outer_r * half_angle_rad.cos();
-        let tip_x_offset = outer_r * half_angle_rad.sin();
 
         let status_font = ui_style.get_string(COMPASS_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
         let status_box_height = context.get_line_height_with_font(1.0, &status_font, STATUS_LABEL_FONT_SIZE)? ;
@@ -363,12 +373,17 @@ impl GnssPage {
         let ins_box_width = context.calculate_text_width_with_font("ИНС", 1.0, &status_font, STATUS_LABEL_FONT_SIZE)?;
         let gnss_box_width = context.calculate_text_width_with_font("ГНСС", 1.0, &status_font, STATUS_LABEL_FONT_SIZE)?;
 
-        let ins_bounds = IndicatorBounds::new((cx - ins_box_width / 2.0 - w / 8.0), status_box_y, ins_box_width, status_box_height);
-        let gnss_bounds = IndicatorBounds::new((cx - gnss_box_width / 2.0 + w / 8.0), status_box_y, gnss_box_width, status_box_height);
+        let ins_bounds = IndicatorBounds::new(cx - ins_box_width / 2.0 - w / 8.0, status_box_y, ins_box_width, status_box_height);
+        let gnss_bounds = IndicatorBounds::new(cx - gnss_box_width / 2.0 + w / 8.0, status_box_y, gnss_box_width, status_box_height);
 
-        // BNO085 isn't wired up yet — there's no "ok" state to report, so this is always red.
+        // Red when the BNO085 link is down (never connected, or a live link went stale) --
+        // see Bno085LinkStatusProvider. Independent of test mode: BNO085 is real hardware
+        // with no synthetic-frame stand-in, unlike the GNSS box below.
+        let ins_problem = sensor_manager.get_sensor_value(&HWInput::HwBno085Link)
+            .map(|v| v.is_active())
+            .unwrap_or(true);
         let ins_value = SensorValue::digital_with_constraints_and_metadata(
-            true, ValueConstraints::digital_critical(), ValueMetadata::new("", "ИНС", "ins_link"));
+            ins_problem, ValueConstraints::digital_critical(), ValueMetadata::new("", "ИНС", "ins_link"));
         // Red for either "no serial link" (frame stale) or "link up but no fix yet"
         // (fix_quality Invalid or never seen) — both mean the heading/position aren't trustworthy.
         let gnss_problem = active_frame.is_stale() || fix.fix_quality.map_or(true, |q| q == FixQuality::Invalid);
