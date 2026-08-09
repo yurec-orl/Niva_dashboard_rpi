@@ -598,6 +598,7 @@ impl PageManager {
                 self.sensor_manager.set_external_value(HWInput::HwHeading, fusion_output.heading);
                 self.sensor_manager.set_external_value(HWInput::HwHeadingConfidence, fusion_output.confidence);
                 self.sensor_manager.set_external_value(HWInput::HwHeadingAccuracy, fusion_output.accuracy);
+                self.sensor_manager.set_external_value(HWInput::HwDeadReckoningElapsed, fusion_output.dead_reckoning_elapsed);
             }
 
             self.alert_manager.check_watchdogs(&self.sensor_manager);

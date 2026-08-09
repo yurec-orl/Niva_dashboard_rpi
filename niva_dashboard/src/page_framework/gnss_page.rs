@@ -49,7 +49,7 @@ enum InfoBlocks {
     FixQuality,
     Position,
     Movement,
-    TimeAndDate
+    TimeAndDate,
 }
 
 /// Structured GNSS status page: parsed fix (position/speed/heading/time) pulled straight
@@ -191,7 +191,41 @@ impl GnssPage {
         }
     }
 
-    fn get_info_text(&self, frame: &GnssFrame, blocks: &[InfoBlocks]) -> Vec<(String, bool, bool)> {
+    fn hdg_sensor_str(sensor_manager: &SensorManager) -> String {
+        match sensor_manager.get_sensor_value(&HWInput::HwHeadingConfidence) {
+            Some(sensor_value) => 
+                match sensor_value.as_f32() {
+                    1.0 => "УСТ".to_string(),
+                    2.0 => "ИНС".to_string(),
+                    3.0 => "ГНСС".to_string(),
+                    _ => Self::na(),
+                },
+            None => Self::na(),
+        }
+    }
+
+    fn dead_reckoning_elapsed_str(sensor_manager: &SensorManager) -> String {
+        let seconds = sensor_manager.get_sensor_value(&HWInput::HwDeadReckoningElapsed);
+
+        match seconds {
+            Some(seconds) => {
+                let total_seconds = seconds.as_f32() as u32;
+
+                if total_seconds > 0 {
+                    let hours = total_seconds / 3600;
+                    let minutes = (total_seconds % 3600) / 60;
+                    let secs = total_seconds % 60;
+
+                    format!("{:02}:{:02}:{:02}", hours, minutes, secs)
+                } else {
+                    Self::na()
+                }
+            },
+            None => Self::na(),
+        }
+    }
+
+    fn get_info_text(&self, sensor_manager: &SensorManager, frame: &GnssFrame, blocks: &[InfoBlocks]) -> Vec<(String, bool, bool)> {
         let stale = frame.is_stale();
         let fix = frame.fix();
 
@@ -211,7 +245,7 @@ impl GnssPage {
             match block {
                 InfoBlocks::LinkStatus => {
                     lines.append(&mut vec![
-                        (format!("ГНСС:   {}", link_str), false, stale),
+                        (format!("ГНСС:    {}", link_str), false, stale),
                     ]);
                     if self.test_provider.is_some() {
                         lines.push(("ТЕСТ".to_string(), false, true));
@@ -220,32 +254,34 @@ impl GnssPage {
                 },
                 InfoBlocks::FixQuality => {
                     lines.append(&mut vec![
-                        (format!("Фикс:    {}", quality_str), false, false),
-                        (format!("Спутн:   {}", satellites_str), false, false),
-                        (format!("HDOP:    {}", hdop_str), false, false),
+                        (format!("Фикс:     {}", quality_str), false, false),
+                        (format!("Спутн:    {}", satellites_str), false, false),
+                        (format!("HDOP:     {}", hdop_str), false, false),
                         (String::new(), false, false),
                     ]);
                 },
                 InfoBlocks::Position => {
                     lines.append(&mut vec![
-                        (format!("Шир:     {}", Self::lat_str(&fix)), false, false),
-                        (format!("Дол:     {}", Self::lon_str(&fix)), false, false),
-                        (format!("Выс:     {}", alt_str), false, false),
+                        (format!("Шир:      {}", Self::lat_str(&fix)), false, false),
+                        (format!("Дол:      {}", Self::lon_str(&fix)), false, false),
+                        (format!("Выс:      {}", alt_str), false, false),
                         (String::new(), false, false),
                     ]);
                 },
                 InfoBlocks::Movement => {
                     lines.append(&mut vec![
-                        (format!("Скор:    {}", speed_str), false, false),
-                        (format!("Курс:    {}", heading_str), false, false),
-                        (format!("СКО кур: {}", heading_std_dev_str), false, false),
+                        (format!("Скор:     {}", speed_str), false, false),
+                        (format!("Курс:     {}", heading_str), false, false),
+                        (format!("СКО кур:  {}", heading_std_dev_str), false, false),
+                        (format!("КУРС ДАТЧ:{}", Self::hdg_sensor_str(sensor_manager)), false, false),
+                        (format!("ОТ ИНС:   {}", Self::dead_reckoning_elapsed_str(sensor_manager)), false, false),
                         (String::new(), false, false),
                     ]);
                 },
                 InfoBlocks::TimeAndDate => {
                     lines.append(&mut vec![
-                        (format!("UTC:     {}", Self::time_str(&fix)), false, false),
-                        (format!("         {}", Self::date_str(&fix)), false, false),
+                        (format!("UTC:      {}", Self::time_str(&fix)), false, false),
+                        (format!("          {}", Self::date_str(&fix)), false, false),
                         (String::new(), false, false),
                     ]);
                 },
@@ -270,7 +306,7 @@ impl GnssPage {
         Ok(())
     }
 
-    fn render_info_mode(&self, context: &mut GraphicsContext, _sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
+    fn render_info_mode(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
         let title_font = ui_style.get_string(TEXT_PRIMARY_FONT, DEFAULT_GLOBAL_FONT_PATH);
         let title_font_size = ui_style.get_integer(TEXT_PRIMARY_FONT_SIZE, 24);
         let title_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (1.0, 1.0, 1.0));
@@ -292,7 +328,7 @@ impl GnssPage {
         // time/date are composite fields GnssChannelProvider doesn't carry (see
         // hw_providers.rs), so this page is the sole consumer of the full GnssFix.
 
-        let lines = self.get_info_text(&self.active_frame(), &[InfoBlocks::LinkStatus, InfoBlocks::FixQuality, InfoBlocks::Position, InfoBlocks::Movement, InfoBlocks::TimeAndDate]);
+        let lines = self.get_info_text(sensor_manager, &self.active_frame(), &[InfoBlocks::LinkStatus, InfoBlocks::FixQuality, InfoBlocks::Position, InfoBlocks::Movement, InfoBlocks::TimeAndDate]);
 
         self.render_info_lines(&lines, (CONTENT_X_MARGIN, y), context, &[text_color, warning_color, header_color], &font, font_size)?;
 
@@ -315,11 +351,11 @@ impl GnssPage {
 
         let active_frame = self.active_frame();
 
-        let lines = self.get_info_text(&active_frame, &[InfoBlocks::LinkStatus, InfoBlocks::Position, InfoBlocks::FixQuality]);
+        let lines = self.get_info_text(sensor_manager, &active_frame, &[InfoBlocks::LinkStatus, InfoBlocks::Position, InfoBlocks::FixQuality]);
 
         self.render_info_lines(&lines, (CONTENT_X_MARGIN, TITLE_Y), context, &[text_color, warning_color, header_color], &font, font_size)?;
 
-        let lines = self.get_info_text(&active_frame, &[InfoBlocks::TimeAndDate, InfoBlocks::Movement]);
+        let lines = self.get_info_text(sensor_manager, &active_frame, &[InfoBlocks::TimeAndDate, InfoBlocks::Movement]);
 
         self.render_info_lines(&lines, (w * 0.75, TITLE_Y), context, &[text_color, warning_color, header_color], &font, font_size)?;
 

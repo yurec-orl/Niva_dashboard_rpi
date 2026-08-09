@@ -83,21 +83,14 @@ pub enum HWInput {
     // BNO085 link health (see Bno085LinkStatusProvider, mirrors HwAdcLink/HwGnssLink) — not
     // a physical sensor.
     HwBno085Link,
-    // Fused heading (see hardware::heading_fusion_sensor, HEADING_FUSION_DESIGN.md): a Game
-    // Rotation Vector-backed dead-reckoning tracker, anchored/corrected by validated GNSS
-    // course_deg/heading_deg fixes. Not backed by any HWAnalogProvider -- HeadingFusionSensor
-    // reads GnssFrame/Bno085Frame directly and writes this in via
-    // SensorManager::set_external_value, since the arbitration logic needs several
-    // concurrently-consistent fields per source (see the design doc), not a single u16.
+    // Fused heading (see hardware::heading_fusion_sensor, HEADING_FUSION_DESIGN.md)
     HwHeading,
-    // Confidence tier for HwHeading (see hardware::heading_fusion_sensor::HeadingConfidence),
-    // coded the same way HwGnssFixQuality codes FixQuality -- an enum surfaced as a plain
-    // analog value rather than growing SensorValue a dedicated field for one consumer.
+    // Confidence tier for HwHeading (see hardware::heading_fusion_sensor::HeadingConfidence)
     HwHeadingConfidence,
-    // Estimated HwHeading accuracy in degrees (see hardware::heading_fusion_sensor) -- reset to
-    // the validated GNSS/manual anchor's own accuracy on each correction, degraded by the
-    // BNO085's rated Game RV drift while dead-reckoning. Empty until the first anchor.
+    // Estimated HwHeading accuracy in degrees (see hardware::heading_fusion_sensor)
     HwHeadingAccuracy,
+    // Elapsed time in dead reckoning mode, in seconds
+    HwDeadReckoningElapsed,
 }
 
 impl HWInput {
