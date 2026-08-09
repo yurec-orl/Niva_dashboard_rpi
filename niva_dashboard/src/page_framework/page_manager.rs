@@ -9,6 +9,7 @@ use crate::page_framework::terminal_page::TerminalPage;
 use crate::page_framework::gnss_page::{GnssPage, GnssMode};
 use crate::hardware::sensor_manager::SensorManager;
 use crate::hardware::hw_providers::HWInput;
+use crate::hardware::heading_fusion_sensor::HeadingFusionSensor;
 use crate::alerts::alert_manager::{AlertManager, Severity};
 use crate::alerts::watchdog::Watchdog;
 use crate::util::adc_data_provider::ADCFrame;
@@ -223,6 +224,12 @@ pub struct PageManager {
     // page. None when the GNSS data provider failed to start.
     gnss_frame: Option<GnssFrame>,
 
+    // Reads GnssFrame/Bno085Frame directly and is ticked once per loop iteration below,
+    // independent of `sensor_manager`'s self-test/real handoff -- see
+    // hardware::heading_fusion_sensor. None when either source's data provider failed to
+    // start (see main.rs::setup_sensors).
+    heading_fusion: Option<HeadingFusionSensor>,
+
     fps_counter: FpsCounter,
     start_time: Instant,
 
@@ -246,7 +253,7 @@ impl PageManager {
     pub fn new(context: GraphicsContext, sensor_manager: SensorManager, ui_style: UIStyle,
                input_sources: Vec<Box<dyn InputSource>>, ups_monitor: UpsMonitor,
                adc_frame: Option<ADCFrame>, gnss_frame: Option<GnssFrame>,
-               alert_manager: AlertManager) -> Self {
+               alert_manager: AlertManager, heading_fusion: Option<HeadingFusionSensor>) -> Self {
         let mut buttons_map = HashMap::new();
         buttons_map.insert('1', ButtonPosition::Left1);
         buttons_map.insert('2', ButtonPosition::Left2);
@@ -283,6 +290,7 @@ impl PageManager {
             ups_monitor,
             adc_frame,
             gnss_frame,
+            heading_fusion,
             fps_counter: FpsCounter::new(),
             start_time: Instant::now(),
             last_cpu_stat: None,
@@ -581,6 +589,17 @@ impl PageManager {
                     log::error!("Sensor read error: {}", e);
                 }
             }
+            // Ticked directly rather than through a sensor chain -- see
+            // hardware::heading_fusion_sensor's module doc for why -- and independent of
+            // sensor_manager's self-test/real handoff, so its state (anchor, confidence,
+            // persistence timer) isn't disturbed by that swap.
+            if let Some(heading_fusion) = &mut self.heading_fusion {
+                let fusion_output = heading_fusion.tick();
+                self.sensor_manager.set_external_value(HWInput::HwHeading, fusion_output.heading);
+                self.sensor_manager.set_external_value(HWInput::HwHeadingConfidence, fusion_output.confidence);
+                self.sensor_manager.set_external_value(HWInput::HwHeadingAccuracy, fusion_output.accuracy);
+            }
+
             self.alert_manager.check_watchdogs(&self.sensor_manager);
             self.ups_monitor.check(&self.sensor_manager);
 

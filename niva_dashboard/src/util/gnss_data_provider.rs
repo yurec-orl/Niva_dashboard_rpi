@@ -93,6 +93,20 @@ impl GnssFrame {
     }
 }
 
+#[cfg(test)]
+impl GnssFrame {
+    /// Builds a frame with no background thread attached, for tests that need to inject
+    /// exact fixes at exact moments (e.g. heading_fusion_sensor's state machine tests) rather
+    /// than race a synthetic writer thread like TestGnssDataProvider's.
+    pub(crate) fn for_test() -> Self {
+        Self::new()
+    }
+
+    pub(crate) fn set_fix_for_test(&self, fix: GnssFix) {
+        self.set_fix(fix);
+    }
+}
+
 /// Owns the GNSS serial connection's lifecycle within the background thread's read loop,
 /// mirroring AdcConnection (see adc_data_provider.rs) minus the STM32-specific hard-reset
 /// path — a wedged GNSS receiver has no known equivalent recovery, so only OS-level

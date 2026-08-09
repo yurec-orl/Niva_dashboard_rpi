@@ -201,7 +201,6 @@ impl GnssPage {
         let hdop_str = fix.hdop.map(|v| format!("{:.2}", v)).unwrap_or_else(Self::na);
         let alt_str = fix.altitude_m.map(|v| format!("{:.0} м", v)).unwrap_or_else(Self::na);
         let speed_str = fix.speed_kmh.map(|v| format!("{:.1} км/ч", v)).unwrap_or_else(Self::na);
-        let course_str = fix.course_deg.map(|v| format!("{:.1}\u{00B0}", v)).unwrap_or_else(Self::na);
         let heading_sats_str = fix.heading_satellites.map(|s| format!(" [{}]", s)).unwrap_or_default();
         let heading_str = fix.heading_deg.map(|v| format!("{:.1}\u{00B0}{}", v, heading_sats_str)).unwrap_or_else(Self::na);
         let heading_std_dev_str = fix.heading_std_dev_deg.map(|v| format!("{:.2}\u{00B0}", v)).unwrap_or_else(Self::na);
@@ -221,33 +220,32 @@ impl GnssPage {
                 },
                 InfoBlocks::FixQuality => {
                     lines.append(&mut vec![
-                        (format!("Фикс:   {}", quality_str), false, false),
-                        (format!("Спутн:  {}", satellites_str), false, false),
-                        (format!("HDOP:   {}", hdop_str), false, false),
+                        (format!("Фикс:    {}", quality_str), false, false),
+                        (format!("Спутн:   {}", satellites_str), false, false),
+                        (format!("HDOP:    {}", hdop_str), false, false),
                         (String::new(), false, false),
                     ]);
                 },
                 InfoBlocks::Position => {
                     lines.append(&mut vec![
-                        (format!("Шир:    {}", Self::lat_str(&fix)), false, false),
-                        (format!("Дол:    {}", Self::lon_str(&fix)), false, false),
-                        (format!("Выс:    {}", alt_str), false, false),
+                        (format!("Шир:     {}", Self::lat_str(&fix)), false, false),
+                        (format!("Дол:     {}", Self::lon_str(&fix)), false, false),
+                        (format!("Выс:     {}", alt_str), false, false),
                         (String::new(), false, false),
                     ]);
                 },
                 InfoBlocks::Movement => {
                     lines.append(&mut vec![
-                        (format!("Скор:   {}", speed_str), false, false),
-                        (format!("Курс:   {}", course_str), false, false),
-                        (format!("Азимут: {}", heading_str), false, false),
-                        (format!("СКО аз: {}", heading_std_dev_str), false, false),
+                        (format!("Скор:    {}", speed_str), false, false),
+                        (format!("Курс:    {}", heading_str), false, false),
+                        (format!("СКО кур: {}", heading_std_dev_str), false, false),
                         (String::new(), false, false),
                     ]);
                 },
                 InfoBlocks::TimeAndDate => {
                     lines.append(&mut vec![
-                        (format!("UTC:    {}", Self::time_str(&fix)), false, false),
-                        (format!("        {}", Self::date_str(&fix)), false, false),
+                        (format!("UTC:     {}", Self::time_str(&fix)), false, false),
+                        (format!("         {}", Self::date_str(&fix)), false, false),
                         (String::new(), false, false),
                     ]);
                 },

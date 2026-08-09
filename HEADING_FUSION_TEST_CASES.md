@@ -14,7 +14,7 @@ in `SENSOR_FUSION_CHAIN_DESIGN.md`). These cases assume something shaped like:
 
 ```rust
 struct HeadingFusionState {
-    confidence: Confidence,          // Unknown | PersistedPrior | DeadReckoning(Duration) | GpsCorrected | Manual
+    confidence: Confidence,          // Unknown | PersistedPrior | DeadReckoning(Duration) | GnssCorrected | Manual
     anchor_heading_deg: f32,
     game_rv_at_anchor_deg: f32,
 }
@@ -69,8 +69,8 @@ should be resolved during implementation, not guessed at here.
 | ID | Given | When | Then |
 |----|-------|------|------|
 | MAN-01 | `confidence = DeadReckoning`, arbitrary anchor | Manual heading input = 45.0° | `anchor_heading = 45.0°`, `game_rv_at_anchor` = current Game RV reading, `confidence = Manual`, snaps instantly (not slew-limited — design doc only specifies slew-limiting for GNSS corrections, not manual entry; confirm this reading during implementation) |
-| MAN-02 | `confidence = GpsCorrected` | Manual heading input arrives | Overrides the GNSS-derived anchor; `confidence = Manual` |
-| MAN-03 | `confidence = Manual`, no further input | A validated GNSS fix arrives afterward | Per design doc's `GpsCorrected`-tier re-anchoring rule, `Manual` is not listed as re-anchor-eligible in the transitions section — clarify during implementation whether a validated fix pulls `Manual` back to `GpsCorrected`, or whether `Manual` is sticky until the next manual/reboot event. Write this test once decided |
+| MAN-02 | `confidence = GnssCorrected` | Manual heading input arrives | Overrides the GNSS-derived anchor; `confidence = Manual` |
+| MAN-03 | `confidence = Manual`, no further input | A validated GNSS fix arrives afterward | Per design doc's `GnssCorrected`-tier re-anchoring rule, `Manual` is not listed as re-anchor-eligible in the transitions section — clarify during implementation whether a validated fix pulls `Manual` back to `GnssCorrected`, or whether `Manual` is sticky until the next manual/reboot event. Write this test once decided |
 
 ## C. Validation gate — `course_deg`
 
@@ -91,29 +91,29 @@ should be resolved during implementation, not guessed at here.
 | GATE-07 | `heading_std_dev_deg = None` (field absent from fix) | `tick()` | Treated as gate failure, not as "no opinion" / pass-through |
 | GATE-08 | `speed_kmh` high (car moving) and `heading_std_dev_deg` also passes | `tick()` | Confirm `heading_deg` is still eligible while moving (design doc says no minimum-speed requirement for it) — not just a stationary-only path |
 
-## E. Anchor update / re-anchoring while `GpsCorrected`
+## E. Anchor update / re-anchoring while `GnssCorrected`
 
 | ID | Given | When | Then |
 |----|-------|------|------|
-| REANCHOR-01 | `confidence = GpsCorrected`, car moving | New validated `course_deg` fix arrives, differs slightly from current `tracked_heading` | Anchor + `game_rv_at_anchor` update immediately (per design doc: re-anchor on *every* new validated fix while already `GpsCorrected`, no additional settling wait) |
-| REANCHOR-02 | `confidence = GpsCorrected` via `course_deg` (moving) | Car stops; `course_deg` fails speed gate but `heading_deg` starts passing its own gate | Re-anchoring source switches to `heading_deg` with no explicit mode-switch step or confidence drop in between (implicit handoff per design doc) |
-| REANCHOR-03 | `confidence = GpsCorrected` | Both `course_deg` and `heading_deg` pass their gates simultaneously with **conflicting** values | Design doc doesn't specify tie-breaking between the two simultaneously-valid sources — needs a decision (e.g. prefer `course_deg` while moving) before this case can get a concrete `Then`; flag as a gap alongside the "Open decisions" list |
+| REANCHOR-01 | `confidence = GnssCorrected`, car moving | New validated `course_deg` fix arrives, differs slightly from current `tracked_heading` | Anchor + `game_rv_at_anchor` update immediately (per design doc: re-anchor on *every* new validated fix while already `GnssCorrected`, no additional settling wait) |
+| REANCHOR-02 | `confidence = GnssCorrected` via `course_deg` (moving) | Car stops; `course_deg` fails speed gate but `heading_deg` starts passing its own gate | Re-anchoring source switches to `heading_deg` with no explicit mode-switch step or confidence drop in between (implicit handoff per design doc) |
+| REANCHOR-03 | `confidence = GnssCorrected` | Both `course_deg` and `heading_deg` pass their gates simultaneously with **conflicting** values | Design doc doesn't specify tie-breaking between the two simultaneously-valid sources — needs a decision (e.g. prefer `course_deg` while moving) before this case can get a concrete `Then`; flag as a gap alongside the "Open decisions" list |
 
 ## F. Gate loss → stepping down to `DeadReckoning`
 
 | ID | Given | When | Then |
 |----|-------|------|------|
-| DROP-01 | `confidence = GpsCorrected` | GNSS link lost entirely (no fix at all) | `confidence → DeadReckoning(0)`; `anchor_heading`/`game_rv_at_anchor` unchanged; `elapsed` starts at 0 and increases each subsequent tick |
-| DROP-02 | `confidence = GpsCorrected` via `course_deg` | Car decelerates below `MIN_SPEED`, no `heading_deg` fix available to take over | `confidence → DeadReckoning(0)` (both sources now fail their gates) |
-| DROP-03 | `confidence = GpsCorrected` via `heading_deg` | `heading_std_dev_deg` degrades past `STD_DEV_MAX` | `confidence → DeadReckoning(0)`, even though a `heading_deg` value is still being reported by the receiver |
+| DROP-01 | `confidence = GnssCorrected` | GNSS link lost entirely (no fix at all) | `confidence → DeadReckoning(0)`; `anchor_heading`/`game_rv_at_anchor` unchanged; `elapsed` starts at 0 and increases each subsequent tick |
+| DROP-02 | `confidence = GnssCorrected` via `course_deg` | Car decelerates below `MIN_SPEED`, no `heading_deg` fix available to take over | `confidence → DeadReckoning(0)` (both sources now fail their gates) |
+| DROP-03 | `confidence = GnssCorrected` via `heading_deg` | `heading_std_dev_deg` degrades past `STD_DEV_MAX` | `confidence → DeadReckoning(0)`, even though a `heading_deg` value is still being reported by the receiver |
 | DROP-04 | `confidence = DeadReckoning(elapsed=5s)` | Another tick passes with still no valid fix | `elapsed` increases monotonically; `tracked_heading` keeps updating via Game RV integration off the unchanged anchor |
-| DROP-05 | `confidence = DeadReckoning(elapsed=T)` | A validated fix arrives again | Per design doc's transition table: from `DeadReckoning` this goes through the slew-limited correction path (not an instant re-anchor like `REANCHOR-01`, which only applies from an already-`GpsCorrected` state) |
+| DROP-05 | `confidence = DeadReckoning(elapsed=T)` | A validated fix arrives again | Per design doc's transition table: from `DeadReckoning` this goes through the slew-limited correction path (not an instant re-anchor like `REANCHOR-01`, which only applies from an already-`GnssCorrected` state) |
 
 ## G. Correction dynamics (slew limiting)
 
 | ID | Given | When | Then |
 |----|-------|------|------|
-| SLEW-01 | `tracked_heading = 100°`, a validated fix at `150°` arrives, `SLEW_RATE` injected as e.g. 30°/s | Ticks advance over the correction | `tracked_heading` ramps 100° → 150° at ≤ `SLEW_RATE`, not an instant jump; confidence flips to `GpsCorrected` only once settled (per transition table: "once settled, anchor/`game_rv_at_anchor` update") |
+| SLEW-01 | `tracked_heading = 100°`, a validated fix at `150°` arrives, `SLEW_RATE` injected as e.g. 30°/s | Ticks advance over the correction | `tracked_heading` ramps 100° → 150° at ≤ `SLEW_RATE`, not an instant jump; confidence flips to `GnssCorrected` only once settled (per transition table: "once settled, anchor/`game_rv_at_anchor` update") |
 | SLEW-02 | Mid-ramp from SLEW-01 | A genuine physical turn happens (Game RV shows real rotation) concurrently with the ramp | Design doc flags this as the reason no numeric rate is proposed yet — needs a case that distinguishes "ramp toward corrected value" from "vehicle actually turning" once a rate is chosen; write concretely once `SLEW_RATE` is picked, but the *shape* of this test (inject a Game RV delta during an active slew and check it isn't absorbed into or fights the ramp) should exist regardless of the final number |
 | SLEW-03 | Correction target is behind by 350° vs. 10° (i.e., wraps through 0°/360°) | Ramp proceeds | Ramps the short way (10° gap), not the long way (350°) — a shortest-angular-path bug here would be an easy, silent mistake |
 
@@ -123,7 +123,7 @@ should be resolved during implementation, not guessed at here.
 |----|-------|------|------|
 | PERSIST-01 | Anchor updates (any tier transition that touches anchor) | — | `(tracked_heading, timestamp)` written to disk at that point, not only at shutdown |
 | PERSIST-02 | Process killed abruptly (models `earlyoom`, per CLAUDE.md TODO — dashboard binary deliberately unprotected) mid-session, no clean shutdown hook runs | Process restarts | Last periodically-persisted value is loaded as `PersistedPrior` — not lost, not treated as `Unknown` |
-| PERSIST-03 | Persisted value exists from a *previous* boot's `GpsCorrected` state | Fresh boot | Loaded as `PersistedPrior`, **never** directly as `GpsCorrected` — must go through the validation gate again before being trusted (design doc is explicit about this) |
+| PERSIST-03 | Persisted value exists from a *previous* boot's `GnssCorrected` state | Fresh boot | Loaded as `PersistedPrior`, **never** directly as `GnssCorrected` — must go through the validation gate again before being trusted (design doc is explicit about this) |
 | PERSIST-04 | Vehicle started and driven before the dashboard process finishes booting (heading changed while the process was down) | Dashboard starts, loads stale `PersistedPrior`, Game RV starts dead-reckoning from it | First validated fix corrects it via the normal slew-limited ramp (SLEW-01), same code path as any other correction — no special-cased "cold start" branch should exist |
 
 ## I. Confidence tier / UI signal
@@ -131,8 +131,8 @@ should be resolved during implementation, not guessed at here.
 | ID | Given | When | Then |
 |----|-------|------|------|
 | UI-01 | `confidence = DeadReckoning(elapsed)` | `elapsed` grows | Exposed confidence value reflects growing `elapsed` each tick (for e.g. UI dimming scaled by elapsed, per design doc) |
-| UI-02 | `confidence = DeadReckoning(elapsed=large)` | A validated fix arrives and passes the gate | `elapsed` resets / tier changes to `GpsCorrected`— `elapsed` must not keep counting once corrected |
-| UI-03 | Every tier (`Unknown`, `PersistedPrior`, `DeadReckoning`, `GpsCorrected`, `Manual`) | Read via whatever accessor the UI layer will use | Confidence is exposed as a distinct field from the numeric heading — never inferred by the UI from GNSS's own `Accuracy`/`heading_std_dev_deg`, which the design doc explicitly distrusts as a display signal |
+| UI-02 | `confidence = DeadReckoning(elapsed=large)` | A validated fix arrives and passes the gate | `elapsed` resets / tier changes to `GnssCorrected`— `elapsed` must not keep counting once corrected |
+| UI-03 | Every tier (`Unknown`, `PersistedPrior`, `DeadReckoning`, `GnssCorrected`, `Manual`) | Read via whatever accessor the UI layer will use | Confidence is exposed as a distinct field from the numeric heading — never inferred by the UI from GNSS's own `Accuracy`/`heading_std_dev_deg`, which the design doc explicitly distrusts as a display signal |
 
 ## J. Robustness / edge inputs
 
@@ -154,7 +154,7 @@ should be resolved during implementation, not guessed at here.
 | Boot, no persisted prior | BOOT-01 |
 | Manual input, any time | MAN-01, MAN-02, MAN-03 |
 | Validated fix from Unknown/PersistedPrior/DeadReckoning | GATE-05b, DROP-05, SLEW-01 |
-| Validated fix while already GpsCorrected | REANCHOR-01, REANCHOR-02 |
+| Validated fix while already GnssCorrected | REANCHOR-01, REANCHOR-02 |
 | Both sources fail gate simultaneously | DROP-02 |
 | GNSS becomes unavailable / fails gate | DROP-01, DROP-03, DROP-04 |
 | Shutdown / periodic persistence tick | PERSIST-01, PERSIST-02 |
@@ -162,7 +162,7 @@ should be resolved during implementation, not guessed at here.
 Gaps not yet resolvable into concrete `Then` clauses without an implementation decision:
 **GATE-05/06 ambiguity** (self-consistency vs. anchor-agreement), **REANCHOR-03** (tie-break
 between simultaneously-valid `course_deg`/`heading_deg`), **MAN-03** (does a validated fix pull
-`Manual` back to `GpsCorrected`), **EDGE-04** (does `fix_quality` participate in the gate at all).
+`Manual` back to `GnssCorrected`), **EDGE-04** (does `fix_quality` participate in the gate at all).
 These four should be settled during implementation and this table updated to point at the
 resulting concrete test, rather than the placeholder cases above.
 

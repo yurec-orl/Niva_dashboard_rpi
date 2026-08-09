@@ -71,7 +71,7 @@ pub enum HWInput {
     // date/time are composite values, read directly from GnssFrame by whatever eventually
     // displays them rather than forced through the u16 HWAnalogProvider boundary.
     HwGnssSpeed,
-    HwGnssHeading,
+    HwGnssMovingHeading,
     HwGnssAltitude,
     HwGnssSatellites,
     HwGnssFixQuality,
@@ -83,10 +83,21 @@ pub enum HWInput {
     // BNO085 link health (see Bno085LinkStatusProvider, mirrors HwAdcLink/HwGnssLink) — not
     // a physical sensor.
     HwBno085Link,
-    // Fused heading (see hardware::heading_fusion_sensor): combines HwBno085Heading and
-    // HwGnssHeading via a SensorFusedAnalogInputChain, preferring BNO085 when available and
-    // falling back to GNSS. Not backed by any single HWAnalogProvider itself.
+    // Fused heading (see hardware::heading_fusion_sensor, HEADING_FUSION_DESIGN.md): a Game
+    // Rotation Vector-backed dead-reckoning tracker, anchored/corrected by validated GNSS
+    // course_deg/heading_deg fixes. Not backed by any HWAnalogProvider -- HeadingFusionSensor
+    // reads GnssFrame/Bno085Frame directly and writes this in via
+    // SensorManager::set_external_value, since the arbitration logic needs several
+    // concurrently-consistent fields per source (see the design doc), not a single u16.
     HwHeading,
+    // Confidence tier for HwHeading (see hardware::heading_fusion_sensor::HeadingConfidence),
+    // coded the same way HwGnssFixQuality codes FixQuality -- an enum surfaced as a plain
+    // analog value rather than growing SensorValue a dedicated field for one consumer.
+    HwHeadingConfidence,
+    // Estimated HwHeading accuracy in degrees (see hardware::heading_fusion_sensor) -- reset to
+    // the validated GNSS/manual anchor's own accuracy on each correction, degraded by the
+    // BNO085's rated Game RV drift while dead-reckoning. Empty until the first anchor.
+    HwHeadingAccuracy,
 }
 
 impl HWInput {
@@ -263,7 +274,7 @@ impl HWAnalogProvider for GnssChannelProvider {
             HWInput::HwGnssSpeed => fix.speed_kmh
                 .map(|v| (v * GNSS_SPEED_SCALE).round().clamp(0.0, u16::MAX as f32) as u16)
                 .ok_or_else(|| "no GNSS speed in current fix".to_string()),
-            HWInput::HwGnssHeading => fix.heading_deg
+            HWInput::HwGnssMovingHeading => fix.heading_deg
                 .map(|v| (v * GNSS_HEADING_SCALE).round().clamp(0.0, u16::MAX as f32) as u16)
                 .ok_or_else(|| "no GNSS heading in current fix".to_string()),
             HWInput::HwGnssAltitude => fix.altitude_m

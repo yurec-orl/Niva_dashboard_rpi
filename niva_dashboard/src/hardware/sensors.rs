@@ -36,16 +36,6 @@ pub trait AnalogSensor: Sensor {
     fn read(&mut self, input: u16) -> Result<&SensorValue, String>;
 }
 
-// Analog sensor trait for multi-source fusion (see SENSOR_FUSION_CHAIN_DESIGN.md). Unlike
-// AnalogSensor's single u16 input, this sees one Option<u16> per configured hardware
-// provider, in the same order they were added to the chain -- None means that provider's
-// read failed or had nothing available this cycle. The arbitration ("which source do I
-// trust right now") is a judgment call about data meaning, so it belongs here rather than
-// aborting the whole chain the way a single-provider chain's `?` would on any failure.
-pub trait FusedAnalogSensor: Sensor {
-    fn read(&mut self, inputs: &[Option<u16>]) -> Result<&SensorValue, String>;
-}
-
 pub struct GenericDigitalSensor {
     value: SensorValue,
     active_level: Level,

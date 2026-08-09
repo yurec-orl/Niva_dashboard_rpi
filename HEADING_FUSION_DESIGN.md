@@ -46,10 +46,32 @@ A second, orthogonal piece of state — since nothing in the raw sensor data can
 3. **DeadReckoning(elapsed)** — anchor was validated at some point, but neither `course_deg` nor
    `heading_deg` is currently available and passing its gate. `elapsed` = time since last
    correction.
-4. **GpsCorrected** — a currently-agreeing, validated `course_deg` or `heading_deg` fix just
+4. **GnssCorrected** — a currently-agreeing, validated `course_deg` or `heading_deg` fix just
    updated the anchor.
 5. **Manual** — anchor set by direct user input, treated as trusted (equivalent to
-   `GpsCorrected` for tracking purposes, labeled separately for the UI).
+   `GnssCorrected` for tracking purposes, labeled separately for the UI).
+
+## Accuracy estimate
+A third, numeric piece of state — an estimated current heading error in degrees — orthogonal to
+the confidence tier above (which says *how* the heading was last obtained, not *how wrong* it
+might currently be).
+
+- Reset outright (not blended toward) to the source's own accuracy on every anchor update:
+  - `GnssCorrected` via `heading_deg` — the fix's own `heading_std_dev_deg`, already known tight
+    enough to have passed the validation gate above.
+  - `GnssCorrected` via `course_deg` — `course_deg` has no reported accuracy figure of its own
+    (unlike `heading_deg`), so a fixed, provisional constant stands in (see Open decisions).
+  - `Manual` — treated as a perfect reference, 0°, per the same "trusted equivalent to
+    `GnssCorrected`" precedent as the confidence tier.
+- Degrades while dead-reckoning (no validated correction lands on a given tick) at the BNO085
+  datasheet's Game Rotation Vector drift rate — 0.5°/minute in pure-inertial operation — but only
+  across a tick where the raw Game RV reading actually changed. Empirically the BNO085
+  re-calibrates itself with no observed drift while genuinely stationary, so a car sitting
+  through a GNSS outage doesn't accrue drift it never experienced.
+- Left unset (no accuracy figure, same as `Unknown`) until the first anchor — including through
+  `PersistedPrior`: only the heading and a timestamp are persisted, not an accuracy alongside it,
+  so there's nothing to carry over from the previous run. Re-validating a persisted heading
+  against live GNSS at boot is exactly what turns it into a known accuracy.
 
 ## Transitions
 
@@ -60,10 +82,12 @@ A second, orthogonal piece of state — since nothing in the raw sensor data can
   reading, confidence := `Manual`.
 - **Validated GNSS fix** (`course_deg` while moving, or `heading_deg` while stationary — see gate
   below for each) arrives:
-  - From `Unknown` / `PersistedPrior` / `DeadReckoning`: slew-limited correction (see below)
-    toward the validated value; once settled, anchor/`game_rv_at_anchor` update, confidence :=
-    `GpsCorrected`.
-  - While already `GpsCorrected`: keep re-anchoring on each new validated fix, so drift never
+  - From `Unknown` / `PersistedPrior` / `DeadReckoning`: anchor/`game_rv_at_anchor` update and
+    confidence := `GnssCorrected` immediately, with no wait for convergence -- confidence
+    reflects whether a validated source is currently backing the anchor, not whether the
+    on-screen display has finished catching up. The *displayed* heading is a separate,
+    slew-limited chase of the anchor (see below) so the needle doesn't visibly jump.
+  - While already `GnssCorrected`: keep re-anchoring on each new validated fix, so drift never
     gets the chance to accumulate while GNSS is good. A moving car re-anchors off `course_deg`;
     a car that stops re-anchors off `heading_deg` once it passes that source's own gate — the
     handoff between the two is implicit in which gate the current reading happens to pass, not a
@@ -72,7 +96,7 @@ A second, orthogonal piece of state — since nothing in the raw sensor data can
     fix) drops confidence to `DeadReckoning(0)`.
 - **GNSS fix becomes unavailable, drops below the minimum-speed gate (`course_deg`), fails its
   std-dev threshold (`heading_deg`), or fails the sustained-agreement check**: confidence steps
-  down from `GpsCorrected` to `DeadReckoning(0)`. Anchor and `game_rv_at_anchor` are unchanged —
+  down from `GnssCorrected` to `DeadReckoning(0)`. Anchor and `game_rv_at_anchor` are unchanged —
   only the confidence label changes, and `elapsed` starts accumulating.
 - **Shutdown, or periodic tick**: persist `(tracked_heading, timestamp)`.
 
@@ -95,17 +119,30 @@ A second, orthogonal piece of state — since nothing in the raw sensor data can
   `course_deg` can't cover.
 
 ## Correction dynamics
-Slew-rate-limited convergence toward a newly validated anchor, not an instant snap — an instant
-jump would read as a glitch on a needle-style heading indicator. The rate needs tuning against
-plausible real turn rates so a genuine fast turn mid-ramp isn't misread as a slew artifact; no
-numeric rate is proposed here.
+The anchor itself updates instantly on a validated fix (see Transitions above) — but the
+*displayed* heading is a separate value that slew-rate-limits its convergence toward the anchor,
+not an instant snap, since an instant jump would read as a glitch on a needle-style heading
+indicator. Real Game RV rotation is never subject to this limit, only the discontinuity a
+correction introduces. The rate needs tuning against plausible real turn rates so a genuine fast
+turn mid-ramp isn't misread as a slew artifact; no numeric rate is proposed here.
 
 ## Persistence
-- Written periodically (e.g. on every anchor update, or every N seconds) — not only at clean
-  shutdown. A hard power loss or the documented `earlyoom` kill-and-restart behavior (see
-  CLAUDE.md TODO — deliberately not protecting the dashboard binary) can skip a clean-shutdown
-  hook entirely.
-- Loaded as `PersistedPrior`, never as `GpsCorrected` — it goes through the same validation gate
+- Written on two triggers only: a manual heading correction (immediately — it's a deliberate,
+  infrequent user action, not a hot path), and process shutdown (via `Drop for
+  HeadingFusionSensor`, which fires on a clean SIGTERM/SIGINT exit, a binary-update or SIGUSR1
+  restart, and a panic unwind alike). No periodic or motion-triggered writes: an earlier
+  every-10s-while-anchored version put constant, mostly-redundant load on the SD card while
+  driving without meaningfully improving crash coverage (a crash between writes could still
+  lose up to a full interval of heading drift), and a proposed motion-stopped trigger was
+  dropped as solving only the same narrow edge case (crash while stationary) that a periodic
+  timer already covered.
+- Consequently, a hard power loss, a SIGKILL (e.g. `earlyoom` configured to kill rather than
+  send SIGTERM — see CLAUDE.md TODO, which deliberately doesn't protect the dashboard binary
+  either way), or any other exit path that skips normal unwind loses whatever heading drift
+  happened since the last manual correction. Accepted: the persisted value is only ever loaded
+  as `PersistedPrior` and re-validated against live GNSS before being trusted (see below), so
+  the cost of losing it is a slower re-anchor after restart, not a wrong reading.
+- Loaded as `PersistedPrior`, never as `GnssCorrected` — it goes through the same validation gate
   as any other anchor before being trusted. This is what makes a car being started and turned
   before the dashboard finishes booting self-healing rather than a special case: Game RV
   dead-reckons through that gap on a possibly-wrong baseline, and the first validated GNSS fix
@@ -115,9 +152,10 @@ numeric rate is proposed here.
   persisted value is handled identically to a fresh one; age doesn't change the gating.
 
 ## UI-facing signal
-Expose the confidence tier alongside the numeric heading (e.g. dimming or annotating a
-compass/HSI needle during `DeadReckoning`, scaled by `elapsed`), since neither underlying
-sensor's own accuracy field can be trusted as that signal.
+Expose the confidence tier and the accuracy estimate (see above) alongside the numeric heading
+(e.g. dimming or annotating a compass/HSI needle during `DeadReckoning`, scaled by `elapsed` or
+by the accuracy figure), since neither underlying sensor's own accuracy field can be trusted as
+that signal on its own.
 
 ## Deferred / explicitly excluded
 - **BNO085 Rotation Vector / Geomagnetic RV**: excluded entirely — magnetometer-fused error was
@@ -128,13 +166,27 @@ sensor's own accuracy field can be trusted as that signal.
   hour-long GPS-denied stretch.
 
 ## Relationship to `SENSOR_FUSION_CHAIN_DESIGN.md`
-That doc's `HeadingFusionSensor` concrete use case sketches a simpler fallback policy ("trust
-BNO085 when available, else GNSS heading"). This design supersedes that policy specifically — the
-anchor/validate/correct logic above is what `FusedAnalogSensor::read` should implement once
-built. The chain-type plumbing described there (`SensorFusedAnalogInputChain`,
-`Option<u16>`-per-provider) is still the intended mechanism; only the arbitration policy changes.
-Also still blocking, per that doc: `I2CProvider` (`hardware/hw_providers.rs`) is a dead stub, so
-BNO085 isn't wired into the provider traits yet.
+That doc's `HeadingFusionSensor` concrete use case sketched a simpler fallback policy ("trust
+BNO085 when available, else GNSS heading"), built on a `FusedAnalogSensor`/
+`SensorFusedAnalogInputChain` chain type (`Option<u16>`-per-provider in, one `SensorValue` out).
+This design supersedes that policy, and outgrew that plumbing along with it: the
+anchor/validate/correct/confidence logic above needs several concurrently-consistent fields
+per source in one read (GNSS `course_deg`, `heading_deg`, `heading_std_dev_deg`, `speed_kmh` —
+all from one atomic `GnssFrame::fix()` snapshot, not independently-read `u16` channels) and
+produces multiple independent outputs (heading, confidence tier, accuracy estimate), none of
+which the old chain type's shape supports. `HeadingFusionSensor` (`hardware/heading_fusion_sensor.rs`)
+now holds `GnssFrame`/`Bno085Frame` directly instead — same precedent `hw_providers.rs` already
+used for GNSS position/date-time ("composite values... read directly from GnssFrame... rather
+than forced through the u16 HWAnalogProvider boundary") — and is ticked once per event-loop
+iteration by `PageManager`, writing `HwHeading`, `HwHeadingConfidence`, and `HwHeadingAccuracy`
+into `SensorManager` via `set_external_value` rather than through any chain. `SensorFusedAnalogInputChain`/
+`FusedAnalogSensor` had no other consumer, so that scaffolding was deleted (see
+SENSOR_FUSION_CHAIN_DESIGN.md's status note) rather than kept unused.
+
+BNO085 connectivity itself no longer blocks on `I2CProvider`/the provider-trait stubs
+mentioned in that doc — the BNO085 background thread (`util/bno085_data_provider.rs`) already
+runs independently of the `HWAnalogProvider`/`HWDigitalProvider` chain framework, the same way
+GNSS does, and `HeadingFusionSensor` reads its `Bno085Frame` directly.
 
 ## Open decisions / needs real-world numbers
 - Minimum speed threshold and sustained-agreement window (sample count / duration / tolerance)
@@ -148,10 +200,34 @@ BNO085 isn't wired into the provider traits yet.
 - Persistence write cadence.
 - How confidence tier is rendered in the UI — display design, not fusion logic.
 - Long-duration Game RV drift characterization.
+- Assumed accuracy for a `course_deg`-sourced anchor (`course_deg` has no reported accuracy
+  figure of its own, unlike `heading_deg`'s `heading_std_dev_deg`) — needs a real moving trial,
+  same as the `course_deg` gate itself.
+- The 0.5°/minute inertial drift rate used to degrade the accuracy estimate is the BNO085
+  datasheet's spec figure, not yet checked against this project's own long-duration drift data
+  (see the point above) — could be too optimistic or too conservative once that trial happens.
+- How the accuracy estimate is rendered in the UI — display design, not fusion logic, same as
+  the confidence tier.
 
 ## Status
-Design only — not implemented. Depends on `SENSOR_FUSION_CHAIN_DESIGN.md`'s chain-type
-scaffolding (also not yet implemented) as the mechanism this policy would run inside.
+Implemented in `hardware/heading_fusion_sensor.rs` (`HeadingFusionSensor`, ticked once per
+event-loop iteration by `PageManager` — see "Relationship to SENSOR_FUSION_CHAIN_DESIGN.md"
+above for the plumbing this ended up using instead of that doc's chain type). The mechanism
+covers every transition in this doc: continuous Game RV integration, the course_deg/heading_deg
+validation gates with sustained-agreement windows, slew-limited correction, the five confidence
+tiers, the accuracy estimate (reset-on-anchor, drift-while-dead-reckoning), and disk persistence
+(`HeadingFusionSensor::new`/`persist`).
+
+Every numeric constant at the top of that file (`MIN_SPEED_FOR_COURSE_KMH`,
+`HEADING_STD_DEV_MAX_DEG`, `AGREEMENT_WINDOW`/`AGREEMENT_MIN_SAMPLES`/`AGREEMENT_TOLERANCE_DEG`,
+`SLEW_RATE_DEG_PER_SEC`, `PERSIST_MIN_DELTA_DEG`, `INERTIAL_DRIFT_DEG_PER_MIN`,
+`COURSE_ANCHOR_ACCURACY_DEG`) is still a placeholder pending the real-world data listed in "Open
+decisions" above — none of it has been validated against an actual moving trial or a
+long-duration drift test yet. Also still open: how the confidence tier and accuracy estimate are
+rendered in the UI — `HeadingFusionSensor` exposes them via `HwHeadingConfidence`/
+`HwHeadingAccuracy` and `dead_reckoning_elapsed()`, but no indicator consumes any of the three
+yet. `set_manual_heading` exists per the "Manual input" transition but has no UI entry point
+wired to it yet either.
 
 ---
 *Created: August 8, 2026*

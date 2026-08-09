@@ -125,6 +125,27 @@ impl Bno085Frame {
         self.last_update.lock().unwrap().elapsed() > READING_MAX_AGE
     }
 
+    /// Directly injects a Game RV heading for tests that need exact values at exact moments
+    /// (e.g. heading_fusion_sensor's state machine tests), bypassing the quaternion decoding
+    /// set_game_orientation does for real reports -- constructing a GameRotationVectorReport
+    /// for an arbitrary target heading would just re-derive this same value the long way.
+    #[cfg(test)]
+    pub(crate) fn set_game_heading_for_test(&self, heading_deg: f32) {
+        *self.game_orientation.lock().unwrap() = Bno085Orientation {
+            heading_deg: heading_deg.rem_euclid(360.0),
+            pitch_deg: 0.0,
+            roll_deg: 0.0,
+            heading_accuracy_deg: 0.0,
+            accuracy: None,
+        };
+        *self.last_update.lock().unwrap() = Instant::now();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test() -> Self {
+        Self::new()
+    }
+
     fn set_orientation(&self, report: RotationVectorReport) {
         Self::store_rotation_vector(&self.orientation, report);
         *self.last_update.lock().unwrap() = Instant::now();

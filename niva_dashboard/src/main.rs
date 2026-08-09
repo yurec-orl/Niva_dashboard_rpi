@@ -22,7 +22,7 @@ use crate::hardware::sensor_value::ValueConstraints;
 use crate::hardware::heading_fusion_sensor;
 use crate::util::adc_data_provider::{ADCDataProvider, ADCFrame, TestADCDataProvider, SELF_TEST_DURATION};
 use crate::util::bno085_data_provider::{Bno085DataProvider, Bno085Frame};
-use crate::util::bno085_protocol::SH2_REPORT_ROTATION_VECTOR;
+use crate::util::bno085_protocol::{SH2_REPORT_ROTATION_VECTOR, SH2_REPORT_GAME_ROTATION_VECTOR};
 use crate::util::gnss_data_provider::{GnssDataProvider, GnssFrame};
 use crate::util::logging::init_logging;
 use crate::util::ups_monitor::UpsMonitor;
@@ -63,7 +63,7 @@ fn setup_self_test_sensors() -> (SensorManager, TestADCDataProvider) {
     (mgr, test_adc)
 }
 
-fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>, gnss: Option<GnssFrame>, bno: Option<Bno085Frame>) -> SensorManager {
+fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>, gnss: Option<GnssFrame>, bno: Option<Bno085Frame>) -> (SensorManager, Option<heading_fusion_sensor::HeadingFusionSensor>) {
     let mut mgr = SensorManager::new();
     // Cloned before the GNSS scalar-chain block below consumes `gnss` -- needed again for the
     // heading fusion chain further down.
@@ -117,9 +117,9 @@ fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>, gnss: Option<G
         mgr.add_analog_sensor_chain(gnss_speed_chain);
 
         let gnss_heading_chain = SensorAnalogInputChain::new(
-            Box::new(GnssChannelProvider::new(HWInput::HwGnssHeading, gnss_frame.clone())),
+            Box::new(GnssChannelProvider::new(HWInput::HwGnssMovingHeading, gnss_frame.clone())),
             vec![],
-            Box::new(GenericAnalogSensor::new("gnss_heading".to_string(), "КУРС".to_string(), "°".to_string(),
+            Box::new(GenericAnalogSensor::new("gnss_heading".to_string(), "АЗИМУТ".to_string(), "°".to_string(),
                                               ValueConstraints::analog(0.0, 359.9), 1.0 / GNSS_HEADING_SCALE)),
         );
         mgr.add_analog_sensor_chain(gnss_heading_chain);
@@ -159,23 +159,23 @@ fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>, gnss: Option<G
         log::info!("GNSS data provider unavailable — GNSS sensor chains omitted");
     }
 
-    // Heading fusion chain — combines BNO085 (primary) and GNSS (fallback) heading readings
-    // into one HwHeading value; see hardware::heading_fusion_sensor and
-    // SENSOR_FUSION_CHAIN_DESIGN.md. Requires both sources' frames to exist (i.e. both
-    // background threads spawned, regardless of whether either device is actually connected
-    // yet — see Bno085ChannelProvider/GnssChannelProvider, which report per-read failures
-    // for "not connected"/"no fix" independently of this).
-    match (bno, gnss_for_fusion) {
+    // Heading fusion sensor — reads GnssFrame/Bno085Frame directly rather than through a
+    // sensor chain (see hardware::heading_fusion_sensor, HEADING_FUSION_DESIGN.md); ticked
+    // once per event-loop iteration by PageManager, independent of this SensorManager's
+    // self-test/real handoff. Requires both sources' frames to exist (i.e. both background
+    // threads spawned, regardless of whether either device is actually connected yet — see
+    // Bno085ChannelProvider/GnssChannelProvider, which report per-read failures for "not
+    // connected"/"no fix" independently of this).
+    let heading_fusion = match (bno, gnss_for_fusion) {
         (Some(bno_frame), Some(gnss_frame)) => {
-            mgr.add_fused_analog_sensor_chain(
-                heading_fusion_sensor::new_heading_fusion_chain(bno_frame, gnss_frame)
-            );
-            log::info!("✓ Heading fusion sensor chain added (BNO085 + GNSS)");
+            log::info!("✓ Heading fusion sensor added (BNO085 + GNSS)");
+            Some(heading_fusion_sensor::HeadingFusionSensor::new(gnss_frame, bno_frame))
         }
         _ => {
-            log::info!("BNO085 or GNSS data provider unavailable — heading fusion chain omitted");
+            log::info!("BNO085 or GNSS data provider unavailable — heading fusion sensor omitted");
+            None
         }
-    }
+    };
 
     // UPS sensor chains — added unconditionally alongside the ADC link chain, since the UPS
     // HAT is separate I2C hardware and its availability doesn't depend on the STM32 ADC link.
@@ -201,13 +201,13 @@ fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>, gnss: Option<G
 
     let Some(frame) = adc else {
         log::info!("ADC unavailable — real sensor set will be empty");
-        return mgr;
+        return (mgr, heading_fusion);
     };
 
     add_adc_sensor_chains(&mut mgr, frame);
     log::info!("✓ Sensor manager initialized with ADC sensor chains");
 
-    mgr
+    (mgr, heading_fusion)
 }
 
 // STM32 frame layout (after stripping '$'):
@@ -443,11 +443,14 @@ fn setup_ups_i2c_provider() -> Result<UpsI2CDataProvider, String> {
 
 fn setup_bno085_data_provider() -> Result<Bno085DataProvider, String> {
     // BNO085 connects via I2C directly (owned by the provider's own background thread, no
-    // serial device path) -- see bno085_data_provider.rs. Rotation Vector alone is enough
-    // for heading fusion (gyro+accel+mag, with an absolute-heading accuracy estimate); the
-    // other report types (Game/Geomagnetic RV, Accelerometer) exist only for the "heading"/
-    // "bno085" test modes' source comparison, not for this chain.
-    let mut provider = Bno085DataProvider::new(&[SH2_REPORT_ROTATION_VECTOR]);
+    // serial device path) -- see bno085_data_provider.rs. Rotation Vector feeds the raw
+    // diagnostic HwBno085Heading reading (Bno085ChannelProvider); Game Rotation Vector feeds
+    // heading_fusion_sensor's continuously-integrated backbone (see HEADING_FUSION_DESIGN.md
+    // -- the full Rotation Vector's magnetometer fusion was excluded from the fusion policy
+    // itself as too error-prone in testing, but stays wired for the raw comparison reading).
+    // Geomagnetic RV/Accelerometer exist only for the "heading"/"bno085" test modes' source
+    // comparison, not for this chain.
+    let mut provider = Bno085DataProvider::new(&[SH2_REPORT_ROTATION_VECTOR, SH2_REPORT_GAME_ROTATION_VECTOR]);
     provider.run().map_err(|e| e.to_string())?;
     Ok(provider)
 }
@@ -577,14 +580,14 @@ fn main() -> std::process::ExitCode {
     // setup consumes the rest of their clones.
     let adc_frame_for_diag = adc_frame.clone();
     let gnss_frame_for_diag = gnss_frame.clone();
-    let sensors = setup_sensors(adc_frame, ups_frame, gnss_frame, bno_frame);
+    let (sensors, heading_fusion) = setup_sensors(adc_frame, ups_frame, gnss_frame, bno_frame);
     let ui_style = setup_ui_style();
     // Starts disabled: alerts (e.g. engine temp, oil pressure) must not fire against the
     // synthetic self-test sensor sweep. Enabled once the self-test sequence hands off to
     // the real sensor set (PageManager's UIEvent::SwitchSensorSet handler).
     let alert_manager = AlertManager::new(false, &ui_style);
 
-    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag, gnss_frame_for_diag, alert_manager);
+    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag, gnss_frame_for_diag, alert_manager, heading_fusion);
 
     mgr.setup().expect("Failed to setup page manager");
 
