@@ -222,6 +222,130 @@ Isolated events, seen once each, neither recurring nor visibly affecting the log
 - test5: one `Serial read error: stream did not contain valid UTF-8` on the GNSS link at connect
   time, self-recovered (reconnected within the same tick, &lt;10ms).
 
+## Results: GNSS stationary convergence, balcony location (10 trials, 2026-08-09)
+
+Antennas relocated from the window sill to the balcony and mounted with free space on all sides
+— unlike the window sill setup, where each antenna sat close to a building corner. 10 trials,
+GNSS power-cycled (USB unplug/replug) before each; antenna cabling swapped (a 180° baseline
+rotation) for half the trials.
+
+Every trial converged to one of two headings, 1° accuracy, within seconds:
+
+- Antennas in original orientation: **110°**
+- Antennas swapped: **291°**
+
+10/10, no non-convergence and no confidently-wrong outcomes — a sharp contrast with the window
+sill Phase 1 results above, where only 2 of 5 trials converged near the true reference and the
+other 3 either failed to converge (test1) or converged fast and confidently to headings 82–122°
+off (test2, test5).
+
+The 181° gap between the two clusters matches the swap's expected 180° flip, and both values sit
+close to the 112° true reference from Ground Truth: 110° is 2° off, and 291° is 1° off from
+112° + 180° = 292°. Convergence time (seconds) is also far better than anything seen at the
+window sill (2–6 minutes for the trials that converged at all there) and well inside the
+10–15 minute pass/fail bar this doc set for practical usability.
+
+**Working hypothesis: the window sill's near-corner antenna placement, not the receiver or
+solution algorithm, was the source of Phase 1's non-convergence and confidently-wrong outcomes**
+— plausibly multipath/reflection off the adjacent walls, or partial sky obstruction, corrupting
+the moving-baseline solution while still reporting a tight `heading_std_dev_deg` (the same
+false-confidence pattern noted in Phase 1). Not yet confirmed by a controlled A/B at the same
+site — this is a siting change plus a result, not an isolated variable — but the balcony's 10/10
+clean result against the window sill's 2/5 is a large enough gap to treat corner/wall proximity
+as the leading suspect for any future non-convergence.
+
+## Results: GNSS hand rotation, balcony location (3 trials, 2026-08-09)
+
+Ad hoc test, not the Phase 2 procedure above (no rigid base, no fixture) — single continuous
+power-on, both sensors left running, antenna assembly rotated **by hand** partway through the
+log and (in the first two trials) placed back in its original position. Logs in
+`Compass_test/gnss_rotation_{1,2,3}.txt`, analyzed with `Compass_test/analyze_heading_log.py
+<log> --bucket-seconds 5 --tail-minutes 0.5` (finer buckets than Phase 1's, since the whole event
+fits in under a minute).
+
+| Trial              | Rotation                                    | GNSS response                                                                    | BNO085 (RV/GAME/GEO)  |
+|---------------------|----------------------------------------------|-----------------------------------------------------------------------------------|------------------------|
+| gnss_rotation_1 | ~90°, ~5–7s, back to start                  | 110°→**199.8°** peak→back to 110° in ~11s, sat count 19→5→19                     | flat, no response      |
+| gnss_rotation_2 | ~90° opposite direction, ~5–7s, back to start | 108°→**32.8°** trough→back to ~107–109° in ~8s, sat count 19→7→16                | flat, no response      |
+| gnss_rotation_3 | ~180°, same direction as trial 1, over 15–20s, **not** returned to start | 108°→142.6°→brief signal loss→**318.2°** (std 214°!)→wandered 339°→19°→126° over 35s, still unsettled (std 31–75°) when the log ends | flat, no response       |
+
+**Trials 1 and 2 confirm the GNSS heading solution tracks a real hand rotation, both magnitude
+and direction, and cleanly recovers.** Trial 1's heading swings positive (toward/past 199.8°)
+and trial 2 — rotated the opposite way — swings negative (down to 32.8°), each from the same
+~108–111° baseline; both fully reconverge to within 1–3° of their starting heading in 8–11s of
+visible disturbance, with satellite count and `heading_std_dev_deg` dipping during the move and
+recovering afterward. This is the first direct confirmation (rather than inference from repeated
+stationary trials) that the moving-baseline solution responds correctly to an actual antenna
+rotation, in both directions, at the balcony site.
+
+**Trial 3 (180° in 15–20s) broke the solution instead of just producing a bigger version of
+trials 1/2.** Sequence: heading starts moving the expected direction (108°→142.6°, matching
+trial 1's sign), then the solution briefly reports no heading value at all for ~2.7s
+(`GNSS= --- ` with `fix_quality` still `Some(Gps)`), then reacquires at 318.2° with
+`heading_std_dev_deg` = **214.21°** — a self-reported uncertainty wider than the entire compass
+— and spends the rest of the 35s-long log wandering through 339°→19°→35°→...→126°, std staying
+in the tens of degrees the whole time, never settling before the log ends. Unlike trials 1/2,
+this is not "slower to reconverge," it's the receiver having lost the integer ambiguity solution
+mid-rotation and still searching for a new one when logging stopped — the antennas were also
+left in the rotated (not original) position for this trial, so there's no return-to-baseline
+leg to confirm recovery even given more time. Plausible cause: a 180° rotation over 15–20s
+sweeps through relative antenna geometries fast enough, or far enough, to desync the carrier-
+phase tracking in a way a quick ~90°-and-back motion doesn't — worth retesting with a
+180° rotation done more slowly, or in smaller steps, to see if the loss-of-lock threshold is
+about total angular distance, rotation speed, or both.
+
+**BNO085 (RV, GAME, GEO) shows no response in any of the three trials**, as expected — only the
+GNSS antenna assembly was rotated by hand, not the BNO085 board. RV holds flat at 12.9–13.2°
+and GAME at 226.1–226.4° throughout all three logs, including through trial 3's GNSS lock loss.
+GEO wanders 179–199° in all three, but the drift is continuous before, during, and after each
+rotation event with no step at the rotation's onset — the same ordinary uncalibrated-magnetometer
+noise pattern already documented above, not a tracked response. BNO085 frame staleness remained
+at the same ~45–55% rate seen in every other test in this doc.
+
+### Follow-up: gnss_rotation_4 — same 180° rotation, round trip, given time to fully settle
+
+Retest of trial 3's 180° rotation (same direction, similarly slow), but this time **rotated back
+to the original position** (round trip, like trials 1/2) and the log left running for 226.6s —
+over 4x trial 3's 53s — specifically to see whether a large/slow rotation eventually recovers
+given enough time rather than being fundamentally broken.
+
+Timeline (`Compass_test/gnss_rotation_4.txt`):
+
+| Phase | Time | GNSS behavior |
+|---|---|---|
+| Baseline | t=0–19s | steady 108.5–110.6°, std ~1.0–1.5°, sat 14–19 |
+| Rotation onset | t=19.4–21.4s | climbs 127.4°→141.4° (same direction as trial 1/3), std rising, sat 12→6 |
+| **Total signal loss** | t=21.4–34.3s (~13s) | `GNSS= --- ` continuously, `fix_quality` still `Some(Gps)`, sat stuck at 6 |
+| Chaotic reacquisition | t=34.5–44.9s (~10s) | reappears at 13.0° with std=**113.32°** (nonsense-wide), wanders 13.5°→17.8°→13.7° while std slowly narrows 51°→24°, sat climbing 8→17 |
+| **Instantaneous snap** | t=45.5s (one 200ms tick) | jumps directly from 13.7° (std=24.4°) to **109.3° (std=1.18°)** — not a gradual glide back |
+| Settled | t=45.5–226.6s (~181s) | rock-stable 106.4–110.5°, std ~1.0–1.2° |
+
+The final settled value (109°) matches the original pre-rotation baseline, which is the
+**correct** outcome here since the antennas were returned to their starting position (confirmed
+with the user) — unlike trial 3, which was a one-way rotation whose end state was never
+independently verifiable against a return-to-baseline leg.
+
+**Given enough time, the moving-baseline solution does recover correctly from a large/slow
+rotation, but recovery is not a smooth reconvergence like trials 1/2's** — it's total signal
+loss (~13s), followed by a chaotic low-confidence wander (~10s) that never looks like it's
+trending toward the right answer, followed by an abrupt single-tick jump straight to the
+correct, tightly-toleranced value. Total elapsed time from rotation onset to the correct lock
+was ~26s, roughly 2–3x trials 1/2's 8–11s for a much smaller/faster ~90° rotation — but the
+shape of the recovery, not just its duration, is qualitatively different: an instant snap after
+an extended blackout/garbage period, not a gradual narrowing.
+
+This retroactively reframes trial 3: it showed the identical failure signature (signal loss,
+low-sat reacquisition with garbage std, chaotic wander) and was simply stopped at 53s — only
+~30s past its rotation onset — while still in that wandering phase, before whatever snap this
+trial's t=45.5s event represents had a chance to happen. Trial 3 cannot be confirmed to have
+recovered correctly (it was left in the rotated position with no return leg to check against),
+but it's now plausible it would have, given the same additional ~15–20s this trial needed past
+where trial 3's log ends. The `heading_std_dev_deg` field did stay informative throughout this
+failure mode in both trials — unlike Phase 1's silent false-confidence problem, it climbed to
+tens/hundreds of degrees during the bad stretch here, so a consumer thresholding on std (not
+just watching for a value swing) would correctly reject the wandering readings and wait for the
+post-snap std to drop back under ~2° before trusting the heading.
+
 ## Results: BNO085 power-on orientation sensitivity (5 trials)
 
 Not the Phase 2 relative-rotation procedure above (which rotates once, continuously, within a
