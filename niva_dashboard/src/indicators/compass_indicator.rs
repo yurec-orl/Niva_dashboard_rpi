@@ -19,7 +19,7 @@ static MARKS_VBO_INIT: Once = Once::new();
 /// Screen-space angle (radians) pointing straight up, in this codebase's convention where
 /// angle 0 = +x (right) and angle increases clockwise (screen y grows downward, so a
 /// positive sin() moves a point down the screen).
-const UP_ANGLE: f32 = -PI / 2.0;
+pub(crate) const UP_ANGLE: f32 = -PI / 2.0;
 
 /// Rotating compass heading scale: a semi-circular tape of heading marks (major every 10°,
 /// minor every 5°, labeled every 30°) that rotates as the sensor value (heading, degrees)

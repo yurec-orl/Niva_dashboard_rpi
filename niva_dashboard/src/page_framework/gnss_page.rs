@@ -7,9 +7,11 @@ use crate::hardware::sensor_manager::SensorManager;
 use crate::hardware::hw_providers::HWInput;
 use crate::util::gnss_data_provider::GnssFrame;
 use crate::util::nmea::{FixQuality, GnssFix};
-use crate::indicators::compass_indicator::{CompassHeadingMarkerDecorator, CompassIndicator, HdopIndicator};
+use crate::indicators::compass_indicator::{CompassHeadingMarkerDecorator, CompassIndicator, HdopIndicator, UP_ANGLE};
 use crate::indicators::indicator::{Indicator, IndicatorBounds};
 use crate::indicators::text_indicator::{TextIndicator, TextAlignment};
+use crate::indicators::needle_indicator::NeedleIndicator;
+use crate::indicators::needle_shape::MarkNeedleShape;
 use crate::indicators::decorator::*;
 use crate::util::gnss_data_provider::TestGnssDataProvider;
 
@@ -19,6 +21,11 @@ const TITLE_CONTENT_GAP: f32 = 10.0;
 /// Matches CompassIndicator's own (hardcoded, not style-driven) tape label size, so the
 /// INS/GNSS status boxes below the compass read as part of the same label family.
 const STATUS_LABEL_FONT_SIZE: u32 = 32;
+/// Half-width of the heading-accuracy marks' angular swing: heading_std_dev_deg/2 beyond
+/// this is visually clamped to the mark's max spread. Matches CompassIndicator's default
+/// minor-mark spacing (5°) so a maxed-out mark reaches one minor tick's width from the
+/// lubber line.
+const HEADING_ACCURACY_MAX_HALF_SPREAD_DEG: f32 = 5.0;
 
 pub enum GnssMode {
     Info,
@@ -30,6 +37,10 @@ struct PnpMode {
     compass_indicator: CompassIndicator,
     heading_indicator: TextIndicator,
     hdop_indicator: HdopIndicator,
+    /// Renders a single small tick mark at heading_deg ± heading_std_dev_deg/2 (rendered
+    /// twice per frame, once per side) to visualize GNSS heading uncertainty -- a
+    /// NeedleIndicator with a MarkNeedleShape in place of the default blade.
+    heading_accuracy_needle: NeedleIndicator,
     /// BNO085 IMU link status box, bottom-left of the compass. Green when the BNO085 has
     /// reported a fresh orientation reading recently, red otherwise (see
     /// Bno085LinkStatusProvider / HwBno085Link).
@@ -87,14 +98,31 @@ impl GnssPage {
         let visible_half_angle_deg = 120.0;
         let ring_margin = 24.0;
         let major_mark_length = 18.0;
+        // Matches CompassIndicator::new()'s own default minor_mark_length -- duplicated
+        // here the same way major_mark_length/ring_margin above are, since the accuracy
+        // marks' shape is baked in at construction rather than read back from the indicator.
+        let minor_mark_length = 10.0;
+        // Matches CompassHeadingMarkerDecorator::new()'s own default arrow_width, made
+        // explicit (via with_arrow_width below) so the accuracy marks' width can share it
+        // instead of silently drifting if that default ever changes.
+        let heading_marker_arrow_width = 3.0;
 
         let heading_label_color = ui_style.get_color(COMPASS_HEADING_COLOR, (0.9, 0.9, 1.0));
         let heading_label_font = ui_style.get_string(COMPASS_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
         let status_label_font = ui_style.get_string(COMPASS_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
 
+        let accuracy_start_angle = UP_ANGLE - HEADING_ACCURACY_MAX_HALF_SPREAD_DEG.to_radians();
+        let accuracy_end_angle = UP_ANGLE + HEADING_ACCURACY_MAX_HALF_SPREAD_DEG.to_radians();
+
         PnpMode {
             compass_indicator: CompassIndicator::new().with_decorators(vec![
-                Box::new(CompassHeadingMarkerDecorator::new(visible_half_angle_deg, ring_margin, major_mark_length))]),
+                Box::new(CompassHeadingMarkerDecorator::new(visible_half_angle_deg, ring_margin, major_mark_length)
+                    .with_arrow_width(heading_marker_arrow_width))]),
+            heading_accuracy_needle: NeedleIndicator::new(
+                accuracy_start_angle, accuracy_end_angle, 1.0,
+                heading_marker_arrow_width, heading_marker_arrow_width,
+                COMPASS_ARROW_COLOR,
+            ).with_shape(Box::new(MarkNeedleShape::new(heading_marker_arrow_width, minor_mark_length))),
             heading_indicator: TextIndicator::new().with_font(heading_label_font, 36, 1.0).with_colors(heading_label_color, (1.0, 1.0, 0.0), (1.0, 0.0, 0.0)).
                 with_parameters(TextAlignment::Center, false, false, true).with_decorators(vec![
                     Box::new(BoxDecorator::new(2.0, COMPASS_HEADING_COLOR, 0.0)),
@@ -387,16 +415,37 @@ impl GnssPage {
         let heading_font_width = context.calculate_text_width_with_font("0000", 1.0, &heading_font, 36)?;
 
         let (cx, cy, radius) = CompassIndicator::geometry(bounds, self.pnp_mode.compass_indicator.visible_half_angle_deg());
-        let compass_top_y = cy - (radius - self.pnp_mode.compass_indicator.ring_margin());
+        let outer_r = radius - self.pnp_mode.compass_indicator.ring_margin();
+        let compass_top_y = cy - outer_r;
         let heading_bounds = IndicatorBounds::new((w - heading_font_width) / 2.0, (compass_top_y - heading_font_height - 20.0).max(0.0), heading_font_width, heading_font_height);
 
         self.pnp_mode.heading_indicator.render(&heading_value, heading_bounds, &ui_style, context)?;
         self.pnp_mode.compass_indicator.render(&heading_value, bounds, &ui_style, context)?;
         self.pnp_mode.hdop_indicator.render(cx, cy, fix.hdop, &ui_style, context)?;
 
+        // Two small marks flanking the lubber line at heading_deg ± heading_std_dev_deg/2,
+        // visualizing GNSS heading uncertainty. Skipped (not shown at 0 spread) when no std
+        // dev is reported, since a collapsed mark would misleadingly read as "perfect fix".
+        if let Some(heading_std_dev_deg) = fix.heading_std_dev_deg {
+            if heading_std_dev_deg > 5.0 {
+                let half_dev_deg = heading_std_dev_deg / 2.0;
+                let accuracy_radius = outer_r - self.pnp_mode.compass_indicator.major_mark_length();
+                let accuracy_bounds = IndicatorBounds::new(
+                    cx - accuracy_radius, cy - accuracy_radius, accuracy_radius * 2.0, accuracy_radius * 2.0,
+                );
+                let plus_value = SensorValue::analog(
+                    half_dev_deg, -HEADING_ACCURACY_MAX_HALF_SPREAD_DEG, HEADING_ACCURACY_MAX_HALF_SPREAD_DEG,
+                    "\u{00B0}", "", "heading_accuracy_plus");
+                let minus_value = SensorValue::analog(
+                    -half_dev_deg, -HEADING_ACCURACY_MAX_HALF_SPREAD_DEG, HEADING_ACCURACY_MAX_HALF_SPREAD_DEG,
+                    "\u{00B0}", "", "heading_accuracy_minus");
+                self.pnp_mode.heading_accuracy_needle.render(&plus_value, accuracy_bounds, &ui_style, context)?;
+                self.pnp_mode.heading_accuracy_needle.render(&minus_value, accuracy_bounds, &ui_style, context)?;
+            }
+        }
+
         // INS/GNSS link status boxes, tucked under the compass's two side tips (derived from
         // the same geometry as the compass itself, so they track it if bounds ever change).
-        let outer_r = radius - self.pnp_mode.compass_indicator.ring_margin();
         let half_angle_rad = self.pnp_mode.compass_indicator.visible_half_angle_deg().to_radians();
         let compass_bottom_y = cy - outer_r * half_angle_rad.cos();
 

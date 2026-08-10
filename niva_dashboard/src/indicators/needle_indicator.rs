@@ -3,6 +3,7 @@ use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::UIStyle;
 use crate::hardware::sensor_value::{SensorValue, ValueData};
 use crate::indicators::decorator::Decorator;
+use crate::indicators::needle_shape::{NeedleShape, ArrowNeedleShape};
 use std::f32::consts::PI;
 use std::sync::Once;
 use gl;
@@ -29,10 +30,8 @@ pub struct NeedleIndicator {
     end_angle: f32,
     /// Length of the needle from center to tip
     needle_length: f32,
-    /// Width of the needle at the base (near center)
-    needle_base_width: f32,
-    /// Width of the needle at the tip
-    needle_tip_width: f32,
+    /// Geometry generator for the rendered needle; defaults to a tapered blade.
+    shape: Box<dyn NeedleShape>,
     /// Color of the needle (R, G, B)
     needle_color_key: &'static str,
     /// Base indicator functionality
@@ -61,13 +60,18 @@ impl NeedleIndicator {
             start_angle,
             end_angle,
             needle_length,
-            needle_base_width,
-            needle_tip_width,
+            shape: Box::new(ArrowNeedleShape::new(needle_base_width, needle_tip_width)),
             needle_color_key,
             base: IndicatorBase {
                 decorators: Vec::new(),
             },
         }
+    }
+
+    /// Override the needle's rendered geometry (default: tapered blade from `new`).
+    pub fn with_shape(mut self, shape: Box<dyn NeedleShape>) -> Self {
+        self.shape = shape;
+        self
     }
 
     unsafe fn get_needle_shader() -> u32 {
@@ -118,8 +122,8 @@ void main() {
     }
 
     /// Return the persistent VBO used for needle geometry, allocating it on first call.
-    /// The needle always uploads exactly 6 vertices × 5 floats, so one global VBO
-    /// is sufficient regardless of how many NeedleIndicator instances exist.
+    /// Vertex count depends on the active NeedleShape; the buffer is resized in place
+    /// via GL_DYNAMIC_DRAW — no new buffer object is needed regardless of shape.
     unsafe fn get_needle_vbo() -> u32 {
         NEEDLE_VBO_INIT.call_once(|| {
             gl::GenBuffers(1, &raw mut NEEDLE_VBO);
@@ -149,76 +153,30 @@ void main() {
                             needle_angle: f32, color: (f32, f32, f32),
                             screen_w: f32, screen_h: f32, shader_program: u32) {
         gl::UseProgram(shader_program);
-        
-        let cos_a = needle_angle.cos();
-        let sin_a = needle_angle.sin();
-        
-        // Base needle parameters
-        let tip_x = center_x + cos_a * length;
-        let tip_y = center_y + sin_a * length;
 
-        // Width values are in pixels (absolute)
-        let base_width = self.needle_base_width;
-        let tip_width = self.needle_tip_width;
+        let vertices = self.shape.vertices(center_x, center_y, length, needle_angle,
+                                            color, screen_w, screen_h);
+        let vertex_count = (vertices.len() / 5) as i32; // 5 floats per vertex
 
-        // Base vertices (perpendicular to needle direction)
-        let base_perp_cos = (-sin_a) * base_width * 0.5;
-        let base_perp_sin = cos_a * base_width * 0.5;
-        
-        let base1_x = center_x + base_perp_cos;
-        let base1_y = center_y + base_perp_sin;
-        let base2_x = center_x - base_perp_cos;
-        let base2_y = center_y - base_perp_sin;
-        
-        // Tip vertices (perpendicular to needle direction at tip)
-        let tip_perp_cos = (-sin_a) * tip_width * 0.5;
-        let tip_perp_sin = cos_a * tip_width * 0.5;
-        
-        let tip1_x = tip_x + tip_perp_cos;
-        let tip1_y = tip_y + tip_perp_sin;
-        let tip2_x = tip_x - tip_perp_cos;
-        let tip2_y = tip_y - tip_perp_sin;
-        
-        // Convert to normalized coordinates
-        let base1_nx = base1_x / screen_w * 2.0 - 1.0;
-        let base1_ny = 1.0 - base1_y / screen_h * 2.0;
-        let base2_nx = base2_x / screen_w * 2.0 - 1.0;
-        let base2_ny = 1.0 - base2_y / screen_h * 2.0;
-        let tip1_nx = tip1_x / screen_w * 2.0 - 1.0;
-        let tip1_ny = 1.0 - tip1_y / screen_h * 2.0;
-        let tip2_nx = tip2_x / screen_w * 2.0 - 1.0;
-        let tip2_ny = 1.0 - tip2_y / screen_h * 2.0;
-        
-        let vertices = [
-            // First triangle: base1 -> base2 -> tip1
-            base1_nx, base1_ny, color.0, color.1, color.2,
-            base2_nx, base2_ny, color.0, color.1, color.2,
-            tip1_nx, tip1_ny, color.0, color.1, color.2,
-            // Second triangle: base2 -> tip2 -> tip1
-            base2_nx, base2_ny, color.0, color.1, color.2,
-            tip2_nx, tip2_ny, color.0, color.1, color.2,
-            tip1_nx, tip1_ny, color.0, color.1, color.2,
-        ];
-        
         // Reuse the persistent VBO — no glGenBuffers/glDeleteBuffers per frame.
-        // GL_DYNAMIC_DRAW signals the driver to optimise for frequent data updates.
+        // GL_DYNAMIC_DRAW handles the size varying by NeedleShape; no new buffer object needed.
         let vbo = Self::get_needle_vbo();
         gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
         gl::BufferData(gl::ARRAY_BUFFER, (vertices.len() * std::mem::size_of::<f32>()) as isize, vertices.as_ptr() as *const _, gl::DYNAMIC_DRAW);
-        
+
         let pos_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr());
         let color_attr = gl::GetAttribLocation(shader_program, b"color\0".as_ptr());
-        
+
         gl::EnableVertexAttribArray(pos_attr as u32);
         gl::VertexAttribPointer(pos_attr as u32, 2, gl::FLOAT, gl::FALSE, 20, std::ptr::null());
         gl::EnableVertexAttribArray(color_attr as u32);
         gl::VertexAttribPointer(color_attr as u32, 3, gl::FLOAT, gl::FALSE, 20, (8) as *const _);
-        
+
         // Enable additive blending for glow effect
         gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-        
-        gl::DrawArrays(gl::TRIANGLES, 0, 6);
-        
+
+        gl::DrawArrays(gl::TRIANGLES, 0, vertex_count);
+
         // Restore normal blending mode
         gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
     }

@@ -320,7 +320,7 @@ impl TestGnssDataProvider {
             course_deg: Some(heading),
             heading_deg: Some(heading),
             pitch_deg: Some(0.0),
-            heading_std_dev_deg: Some(0.3),
+            heading_std_dev_deg: Some(10.5),
             pitch_std_dev_deg: Some(0.3),
             heading_satellites: Some(9),
             fix_quality: Some(FixQuality::Gps),
