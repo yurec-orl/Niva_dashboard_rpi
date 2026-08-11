@@ -101,18 +101,20 @@ typically ±20%, worse over automotive temperature range).
   on the bench to set the confirmation delay and target hold time with real numbers instead of
   estimates.
 - Final `ON_BATTERY_SHUTDOWN_DELAY` value (candidate: 3-5s).
-- R1/R2/C1 values — target hold time should be roughly `confirmation delay + shutdown time +
-  margin`; for the gate-decay time constant, time-to-threshold ≈ `R2 · C1 · ln(V_ignition / 2V)`.
-  Watch for electrolytic self-leakage dominating the discharge if R2 is pushed into the MΩ range
-  — may need a low-leakage cap or a more moderate R2/larger C1 pairing.
-  **Bench-test starting point (not final):** C1 = 1000 µF / 25V, R2 = 10 kΩ (swap for a
-  20-50 kΩ trimmer pot during bench tuning), R1 = 1 kΩ — gives t ≈ 18s nominal
-  (`10kΩ · 1000µF · ln(12V/2V) ≈ 18s`), comfortably clear of the 3-5s confirmation delay plus an
-  estimated few-second Pi shutdown, using round/on-hand part values. Retune once actual shutdown
-  time is measured.
+- R1/R2/C1 values — **bench-validated final values:** C1 = 1000 µF / 25V, R2 = 51 kΩ, R1 = 1 kΩ —
+  measured discharge to below Vgs(th) (<2.1V) in ~1m 25s.
 - D1/Q1 part selection — D1 needs to tolerate automotive line transients (general-purpose
   rectifier, e.g. 1N4001, rather than a small-signal diode); Q1 just needs Vgs(th) comfortably
   below ignition voltage minus the diode drop (most small-signal N-MOSFETs qualify).
+- **2N7000 ESD sensitivity:** this part has no internal gate protection diode/Zener, and its gate
+  is an extremely high-impedance node — ordinary breadboard handling without anti-static
+  precautions can cause soft gate-oxide breakdown. Symptom is subtle: the part still charges and
+  switches normally, but develops abnormal gate leakage (effectively a parallel resistance in the
+  tens-of-kΩ range) that shows up as a faster-than-predicted RC discharge, easily mistaken for a
+  capacitor or resistor problem. Diagnosed on the bench by comparing discharge time with Q1
+  connected vs. disconnected (34s vs 17s at the same R2) — a healthy part should show no
+  meaningful difference. Ground yourself before handling, and if a part's discharge timing looks
+  anomalously fast, suspect the MOSFET before re-tuning R2/C1.
 - Whether to socket/breadboard this for bench validation of the hold timing before committing to
   a permanent install.
 
