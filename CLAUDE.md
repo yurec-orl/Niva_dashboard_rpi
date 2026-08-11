@@ -122,10 +122,11 @@ Boot reduced from ~16.8s to ~5.1s by disabling unused systemd services (`Network
 - [In progress] GNSS connectivity and indicators
 - [In progress] HSI (horizontal situation indicator) styled indicator - heading, speed, altitude, manually set waypoints, etc.
 - Nav page map mode - need to decide on which map data to use and how to render
-- BNO085 connectivity and related indicators
+- [Done] BNO085 connectivity and related indicators
 - [Done] Out of memory protection: `earlyoom` installed and enabled (OS-level, not part of this repo — a fresh SD flash needs it reinstalled: `apt install earlyoom`). Kills the largest memory consumer before the kernel OOM killer lets the system thrash into unresponsiveness. Config in `/etc/default/earlyoom` avoids killing `sshd` (so remote recovery stays possible) but deliberately does *not* protect the dashboard binary — if it leaks and gets killed, the startup script restarts it fresh, which is the desired behavior.
 - Improve sensor->watchdog->alert construction: currently, it is a multi-step process involving a lot of parameters, and it's easy to mismatch one of the parameters which can cause the alert to never trigger.
 - [Done] ADC firmware design flaw: STM32 used to report counted pulses since last data frame for HwSpeed/HwTacho, which gave low resolution and visible jitter (or, for HwTacho, couldn't latch "engine running" at all in the normal idle range) since expected counts/tick are rarely integers. Fixed by measuring inter-pulse period instead of counting, on both the STM32 firmware side (10us/unit wire encoding, 100_000 ticks/sec) and the Rust side (`hardware::sensors::SpeedSensor`/`TachoSensor`, `main.rs`'s analog chains, self-test simulation). See `SPEED_TACHO_PULSE_PERIOD_DESIGN.md` for the original analysis (100 km/h worked example, wire-format options, Rust-side conversion design).
+- [Done] UPS auto power on/off on ignition: pull UPS power switch pin to GND when ignition is on (UPS ON position). Float UPS switch pin after timeout (~1 m 30 s) when ignition off (UPS OFF position). Timeout is large enough to allow Pi to shut down gracefully. See `UPS_AUTO_POWER_ON_OFF_DESIGN.md`.
 
 ## PiOS login
 `user` / `@Niva21#`; `root` password is standard password with a single numeric character.

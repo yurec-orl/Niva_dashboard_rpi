@@ -311,7 +311,7 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
 
     let voltage_12v_chain = SensorAnalogInputChain::new(
         Box::new(ADCChannelProvider::new(HWInput::Hw12v, frame.clone())),
-        vec![Box::new(AnalogSignalProcessorMovingAverage::new(10))],
+        vec![Box::new(AnalogSignalProcessorMovingAverage::new(60))],
         Box::new(GenericAnalogSensor::new("Hw12v".to_string(), "БОРТ СЕТЬ".to_string(), "В".to_string(),
                                           ValueConstraints::analog_with_thresholds(0.0, 20.0, Some(11.0), Some(13.0), Some(14.7), Some(15.0)), 0.02)),
     );
@@ -319,7 +319,7 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
 
     let fuel_level_chain = SensorAnalogInputChain::new(
         Box::new(ADCChannelProvider::new(HWInput::HwFuelLvl, frame.clone())),
-        vec![Box::new(AnalogSignalProcessorMovingAverage::new(15))],
+        vec![Box::new(AnalogSignalProcessorMovingAverage::new(60*60))],         // Fuel level changes slowly - average over a minute (60 samples per second times 60 seconds)
         Box::new(GenericAnalogSensor::new("HwFuelLvl".to_string(), "УРОВ ТОПЛ".to_string(), "%".to_string(),
                                           ValueConstraints::analog_with_thresholds(0.0, 100.0, Some(10.0), Some(20.0), None, None), 0.1)),
     );
@@ -327,7 +327,7 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
 
     let oil_pressure_chain = SensorAnalogInputChain::new(
         Box::new(ADCChannelProvider::new(HWInput::HwOilPress, frame.clone())),
-        vec![Box::new(AnalogSignalProcessorMovingAverage::new(10))],
+        vec![Box::new(AnalogSignalProcessorMovingAverage::new(60))],
         Box::new(GenericAnalogSensor::new("HwOilPress".to_string(), "ДАВЛ МАСЛА".to_string(), "кгс/см²".to_string(),
                                           ValueConstraints::analog_with_thresholds(0.0, 8.0, Some(0.5), Some(1.0), Some(7.0), Some(8.0)), 0.01)),
     );
@@ -335,7 +335,7 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
 
     let temperature_chain = SensorAnalogInputChain::new(
         Box::new(ADCChannelProvider::new(HWInput::HwEngineCoolantTemp, frame.clone())),
-        vec![Box::new(AnalogSignalProcessorMovingAverage::new(20))],
+        vec![Box::new(AnalogSignalProcessorMovingAverage::new(10*60))],      // Average over 10 seconds
         Box::new(EngineTemperatureSensor::new()),
     );
     mgr.add_analog_sensor_chain(temperature_chain);
