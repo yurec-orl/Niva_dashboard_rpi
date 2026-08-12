@@ -26,7 +26,7 @@ const STATUS_LABEL_FONT_SIZE: u32 = 32;
 /// this is visually clamped to the mark's max spread. Matches CompassIndicator's default
 /// minor-mark spacing (5°) so a maxed-out mark reaches one minor tick's width from the
 /// lubber line.
-const HEADING_ACCURACY_MAX_HALF_SPREAD_DEG: f32 = 5.0;
+const HEADING_ACCURACY_MAX_HALF_SPREAD_DEG: f32 = 90.0;
 /// Standard gravity, used to convert Bno085Acceleration's m/s^2 (chip's native unit) to g's
 /// for the InsData info block.
 const STANDARD_GRAVITY_MPS2: f32 = 9.80665;
@@ -486,9 +486,10 @@ impl GnssPage {
         self.pnp_mode.hdop_indicator.render(cx, cy, fix.hdop, &ui_style, context)?;
 
         // Two small marks flanking the lubber line at heading_deg ± heading_std_dev_deg/2,
-        // visualizing GNSS heading uncertainty. Skipped (not shown at 0 spread) when no std
+        // visualizing fused heading sensor uncertainty. Skipped (not shown at 0 spread) when no std
         // dev is reported, since a collapsed mark would misleadingly read as "perfect fix".
-        if let Some(heading_std_dev_deg) = fix.heading_std_dev_deg {
+        if let Some(heading_std_dev_value) = sensor_manager.get_sensor_value(&HWInput::HwHeadingAccuracy) {
+            let heading_std_dev_deg = heading_std_dev_value.as_f32();
             if heading_std_dev_deg > 5.0 {
                 let half_dev_deg = heading_std_dev_deg / 2.0;
                 let accuracy_radius = outer_r - self.pnp_mode.compass_indicator.major_mark_length();

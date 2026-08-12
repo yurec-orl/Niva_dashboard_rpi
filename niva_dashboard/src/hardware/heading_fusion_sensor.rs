@@ -193,10 +193,15 @@ struct GnssAnchor {
 
 /// Heading persisted across restarts. Loaded as `PersistedPrior`, never as `GnssCorrected` --
 /// it goes through the same validation gate as any other anchor before being trusted again.
-/// The timestamp is for UI/diagnostics only.
-#[derive(Serialize, Deserialize)]
+/// The timestamp is for UI/diagnostics only. `accuracy_deg` is `None` for files written before
+/// this field existed (`#[serde(default)]`) or when nothing had ever anchored the sensor at
+/// persist time -- `apply_persisted_prior_if_ready` treats that as 0.0 on load rather than
+/// leaving the resumed anchor with no accuracy to degrade from.
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 struct PersistedHeading {
     heading_deg: f32,
+    #[serde(default)]
+    accuracy_deg: Option<f32>,
     timestamp_unix_secs: u64,
 }
 
@@ -247,11 +252,15 @@ pub struct HeadingFusionSensor {
     /// `dead_reckoning_elapsed` as "time since the last correction".
     last_correction_instant: Option<Instant>,
 
-    /// Estimated current heading accuracy, degrees. None exactly when `correction_offset_deg`
-    /// is None (Unknown) or the anchor is still an unconfirmed `PersistedPrior` -- in both
-    /// cases there's no known accuracy figure to degrade from, only a heading. Set/reset
-    /// outright to the anchor's own accuracy on every validated GNSS correction or manual
-    /// input; degraded by `degrade_accuracy` on ticks spent dead-reckoning instead.
+    /// Estimated current heading accuracy, degrees. Only None while `correction_offset_deg` is
+    /// also None (Unknown) -- there's no known accuracy figure to degrade from before the first
+    /// anchor of any kind. A `PersistedPrior` anchor always gets a `Some` accuracy to resume
+    /// degrading from (see `apply_persisted_prior_if_ready`): whatever was persisted alongside
+    /// the heading, or 0.0 if the file predates that field / was written before the sensor was
+    /// ever anchored -- never left at `None`, which would silently hide INS drift for the rest
+    /// of the PersistedPrior stretch. Set/reset outright to the anchor's own accuracy on every
+    /// validated GNSS correction or manual input; degraded by `degrade_accuracy` on ticks spent
+    /// dead-reckoning instead.
     accuracy_deg: Option<f32>,
 
     course_agreement: SustainedAgreement,
@@ -265,6 +274,10 @@ pub struct HeadingFusionSensor {
     /// Heading loaded from disk at construction, not yet folded into `correction_offset_deg`
     /// because that requires a Game RV baseline (BNO085 may not have reported yet).
     pending_persisted_deg: Option<f32>,
+    /// Accuracy loaded alongside `pending_persisted_deg`, folded into `accuracy_deg` at the same
+    /// moment. Independently `None` (persisted file predates this field, or nothing had ever
+    /// anchored the sensor when it was written) even when `pending_persisted_deg` is `Some`.
+    pending_persisted_accuracy_deg: Option<f32>,
 
     persist_path: PathBuf,
     /// Last value actually written to disk, for `persist_if_changed`'s dedup check. None
@@ -285,10 +298,12 @@ pub struct HeadingFusionSensor {
 impl HeadingFusionSensor {
     pub fn new(gnss_frame: GnssFrame, bno_frame: Bno085Frame) -> Self {
         let persist_path = Self::default_persist_path();
-        let pending_persisted_deg = Self::load_persisted(&persist_path);
-        if pending_persisted_deg.is_some() {
+        let pending_persisted = Self::load_persisted(&persist_path);
+        if pending_persisted.is_some() {
             log::info!("Heading fusion: loaded persisted prior heading from {:?}", persist_path);
         }
+        let pending_persisted_deg = pending_persisted.as_ref().map(|p| p.heading_deg);
+        let pending_persisted_accuracy_deg = pending_persisted.and_then(|p| p.accuracy_deg);
 
         HeadingFusionSensor {
             gnss_frame,
@@ -303,6 +318,7 @@ impl HeadingFusionSensor {
             heading_agreement: SustainedAgreement::new(AGREEMENT_WINDOW, AGREEMENT_MIN_SAMPLES, AGREEMENT_TOLERANCE_DEG),
             game_rv_settle: SustainedAgreement::new(GAME_RV_SETTLE_WINDOW, GAME_RV_SETTLE_MIN_SAMPLES, GAME_RV_SETTLE_TOLERANCE_DEG),
             pending_persisted_deg,
+            pending_persisted_accuracy_deg,
             persist_path,
             last_persisted_deg: None,
             last_tick_instant: Instant::now(),
@@ -321,16 +337,15 @@ impl HeadingFusionSensor {
         PathBuf::from(format!("{home}/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/State/heading.json"))
     }
 
-    fn load_persisted(path: &std::path::Path) -> Option<f32> {
+    fn load_persisted(path: &std::path::Path) -> Option<PersistedHeading> {
         let contents = std::fs::read_to_string(path).ok()?;
-        let persisted: PersistedHeading = serde_json::from_str(&contents).ok()?;
-        Some(persisted.heading_deg)
+        serde_json::from_str(&contents).ok()
     }
 
-    /// Writes `heading_deg` to disk unless it's within `PERSIST_MIN_DELTA_DEG` of what's
-    /// already there. Called on a manual correction and on drop (see `Drop` impl below) --
-    /// deliberately not on any timer or motion-state change.
-    fn persist_if_changed(&mut self, heading_deg: f32) {
+    /// Writes `heading_deg`/`accuracy_deg` to disk unless the heading is within
+    /// `PERSIST_MIN_DELTA_DEG` of what's already there. Called on a manual correction and on
+    /// drop (see `Drop` impl below) -- deliberately not on any timer or motion-state change.
+    fn persist_if_changed(&mut self, heading_deg: f32, accuracy_deg: Option<f32>) {
         if let Some(last) = self.last_persisted_deg {
             if circular_diff_deg(heading_deg, last) < PERSIST_MIN_DELTA_DEG {
                 return;
@@ -341,7 +356,7 @@ impl HeadingFusionSensor {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let persisted = PersistedHeading { heading_deg, timestamp_unix_secs };
+        let persisted = PersistedHeading { heading_deg, accuracy_deg, timestamp_unix_secs };
         let Ok(json) = serde_json::to_string(&persisted) else { return };
         if let Some(parent) = self.persist_path.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -371,7 +386,7 @@ impl HeadingFusionSensor {
         self.last_correction_instant = Some(Instant::now());
         // Deliberate user action, not a hot path -- persist right away rather than waiting
         // for shutdown, so it survives an unclean exit before the next one.
-        self.persist_if_changed(heading_deg);
+        self.persist_if_changed(heading_deg, self.accuracy_deg);
     }
 
     /// How long the current DeadReckoning stretch has lasted, for UI display (e.g. dimming a
@@ -456,10 +471,15 @@ impl HeadingFusionSensor {
         self.game_rv_settle.push(now, raw)
     }
 
-    /// Folds a loaded-from-disk prior into `correction_offset_deg` the first tick a *settled*
-    /// Game RV baseline becomes available -- see `settled_game_rv`/GAME_RV_SETTLE_WINDOW for
-    /// why this waits rather than using the first raw reading. Deferred from `new()` because
-    /// the BNO085 may not have reported (or settled) yet at construction time.
+    /// Folds a loaded-from-disk prior into `correction_offset_deg` and `accuracy_deg` the first
+    /// tick a *settled* Game RV baseline becomes available -- see `settled_game_rv`/
+    /// GAME_RV_SETTLE_WINDOW for why this waits rather than using the first raw reading.
+    /// Deferred from `new()` because the BNO085 may not have reported (or settled) yet at
+    /// construction time. `accuracy_deg` always becomes `Some` here, defaulting to 0.0 when
+    /// nothing was persisted alongside the heading (a file predating that field, or written
+    /// before the sensor was ever anchored) -- leaving it `None` instead would put a
+    /// `PersistedPrior` anchor right back into the "nothing to degrade from" gap this exists to
+    /// close, silently hiding INS drift until the next GNSS re-anchor.
     fn apply_persisted_prior_if_ready(&mut self, settled_game_rv: Option<f32>) {
         if self.correction_offset_deg.is_some() {
             return;
@@ -468,7 +488,9 @@ impl HeadingFusionSensor {
         let Some(raw) = settled_game_rv else { return };
         self.correction_offset_deg = Some(persisted_deg - raw);
         self.confidence = HeadingConfidence::PersistedPrior;
+        self.accuracy_deg = Some(self.pending_persisted_accuracy_deg.unwrap_or(0.0));
         self.pending_persisted_deg = None;
+        self.pending_persisted_accuracy_deg = None;
     }
 
     /// Reads one atomic GNSS fix snapshot and runs both sources through their own
@@ -523,8 +545,9 @@ impl HeadingFusionSensor {
     /// Degrades `accuracy_deg` by the BNO085's pure-inertial drift rate for ticks spent
     /// dead-reckoning (no validated GNSS correction this tick), gated on the raw Game RV
     /// reading having actually moved since the last tick -- see `HEADING_STATIONARY_EPSILON_DEG`.
-    /// A None `accuracy_deg` (never yet anchored, or still an unconfirmed `PersistedPrior`) has
-    /// nothing to degrade from and is left alone.
+    /// Runs the same way whether the current anchor is `GnssCorrected` or a `PersistedPrior` --
+    /// a None `accuracy_deg` (only possible pre-anchor, still `Unknown`) has nothing to degrade
+    /// from and is left alone.
     fn degrade_accuracy(&mut self, game_rv_before: Option<f32>, dt: Duration) {
         let Some(accuracy_deg) = self.accuracy_deg else { return };
         let (Some(before), Some(after)) = (game_rv_before, self.game_rv_deg) else { return };
@@ -600,7 +623,7 @@ impl HeadingFusionSensor {
 impl Drop for HeadingFusionSensor {
     fn drop(&mut self) {
         if let Some(heading_deg) = self.displayed_heading() {
-            self.persist_if_changed(heading_deg);
+            self.persist_if_changed(heading_deg, self.accuracy_deg);
         }
     }
 }
@@ -779,7 +802,9 @@ mod tests {
         let bno_frame = Bno085Frame::for_test();
         let mut sensor = HeadingFusionSensor::new(gnss_frame, bno_frame.clone());
         sensor.persist_path = path.clone();
-        sensor.pending_persisted_deg = HeadingFusionSensor::load_persisted(&path);
+        let persisted = HeadingFusionSensor::load_persisted(&path);
+        sensor.pending_persisted_deg = persisted.as_ref().map(|p| p.heading_deg);
+        sensor.pending_persisted_accuracy_deg = persisted.and_then(|p| p.accuracy_deg);
 
         bno_frame.set_game_heading_for_test(123.0);
         // Game RV must hold steady for GAME_RV_SETTLE_MIN_SAMPLES ticks before the persisted
@@ -809,7 +834,9 @@ mod tests {
         let bno_frame = Bno085Frame::for_test();
         let mut sensor = HeadingFusionSensor::new(gnss_frame, bno_frame.clone());
         sensor.persist_path = path.clone();
-        sensor.pending_persisted_deg = HeadingFusionSensor::load_persisted(&path);
+        let persisted = HeadingFusionSensor::load_persisted(&path);
+        sensor.pending_persisted_deg = persisted.as_ref().map(|p| p.heading_deg);
+        sensor.pending_persisted_accuracy_deg = persisted.and_then(|p| p.accuracy_deg);
 
         let mut t = Instant::now();
 
@@ -856,9 +883,11 @@ mod tests {
         sensor.tick();
 
         sensor.set_manual_heading(200.0);
-        let persisted = HeadingFusionSensor::load_persisted(&sensor.persist_path);
-        assert_eq!(persisted, Some(200.0),
-                   "manual correction should be persisted right away, not deferred to shutdown");
+        let persisted = HeadingFusionSensor::load_persisted(&sensor.persist_path)
+            .expect("manual correction should be persisted right away, not deferred to shutdown");
+        assert!((persisted.heading_deg - 200.0).abs() < 0.01);
+        assert_eq!(persisted.accuracy_deg, Some(MANUAL_ANCHOR_ACCURACY_DEG),
+                   "manual anchor's accuracy should be persisted alongside its heading");
 
         let _ = std::fs::remove_file(&sensor.persist_path);
     }
@@ -880,7 +909,9 @@ mod tests {
         drop(sensor);
         let persisted = HeadingFusionSensor::load_persisted(&path)
             .expect("drop should persist the tracked heading");
-        assert!((persisted - 90.0).abs() < 0.5, "expected ~90 deg, got {}", persisted);
+        assert!((persisted.heading_deg - 90.0).abs() < 0.5, "expected ~90 deg, got {}", persisted.heading_deg);
+        assert_eq!(persisted.accuracy_deg, Some(0.5),
+                   "the GNSS anchor's accuracy (the fix's heading_std_dev_deg) should be persisted alongside its heading");
 
         let _ = std::fs::remove_file(&path);
     }
@@ -899,6 +930,81 @@ mod tests {
         let (mut sensor, _gnss, _bno) = new_sensor();
         let output = sensor.tick();
         assert_eq!(output.accuracy.value, ValueData::Empty);
+    }
+
+    #[test]
+    fn test_accuracy_defaults_to_zero_when_persisted_file_predates_accuracy_field() {
+        // A file written before accuracy_deg existed on disk (or written when nothing had ever
+        // anchored the sensor) has no accuracy on it -- rather than resuming with no accuracy to
+        // degrade from (the reported gap), the sensor should start counting drift from 0.0.
+        let dir = std::env::temp_dir().join(format!("niva_heading_test_no_accuracy_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("heading.json");
+        std::fs::write(&path, r#"{"heading_deg":123.0,"timestamp_unix_secs":0}"#).unwrap();
+
+        let gnss_frame = GnssFrame::for_test();
+        let bno_frame = Bno085Frame::for_test();
+        let mut sensor = HeadingFusionSensor::new(gnss_frame, bno_frame.clone());
+        sensor.persist_path = path.clone();
+        let persisted = HeadingFusionSensor::load_persisted(&path);
+        sensor.pending_persisted_deg = persisted.as_ref().map(|p| p.heading_deg);
+        sensor.pending_persisted_accuracy_deg = persisted.and_then(|p| p.accuracy_deg);
+
+        bno_frame.set_game_heading_for_test(123.0);
+        for _ in 0..GAME_RV_SETTLE_MIN_SAMPLES {
+            sensor.tick();
+        }
+        let output = sensor.tick();
+        assert_eq!(output.confidence.as_f32() as i32, HeadingConfidence::PersistedPrior.code());
+        assert!((output.accuracy.as_f32() - 0.0).abs() < 0.01,
+                 "no persisted accuracy on disk should default to 0.0, not stay unknown, got {}",
+                 output.accuracy.as_f32());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_persisted_prior_resumes_degrading_from_its_persisted_accuracy() {
+        // Reproduces the reported gap: a PersistedPrior anchor used to sit at accuracy_deg ==
+        // None for its whole stretch (nothing was ever persisted to resume from), so no amount
+        // of dead-reckoning drift ever showed up until the next GNSS re-anchor. It should
+        // instead resume degrading from whatever accuracy was persisted alongside the heading.
+        let dir = std::env::temp_dir().join(format!("niva_heading_test_resume_accuracy_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("heading.json");
+        std::fs::write(&path, r#"{"heading_deg":123.0,"accuracy_deg":2.0,"timestamp_unix_secs":0}"#).unwrap();
+
+        let gnss_frame = GnssFrame::for_test();
+        let bno_frame = Bno085Frame::for_test();
+        let mut sensor = HeadingFusionSensor::new(gnss_frame, bno_frame.clone());
+        sensor.persist_path = path.clone();
+        let persisted = HeadingFusionSensor::load_persisted(&path);
+        sensor.pending_persisted_deg = persisted.as_ref().map(|p| p.heading_deg);
+        sensor.pending_persisted_accuracy_deg = persisted.and_then(|p| p.accuracy_deg);
+
+        bno_frame.set_game_heading_for_test(123.0);
+        let mut t = Instant::now();
+        for _ in 0..GAME_RV_SETTLE_MIN_SAMPLES {
+            t += Duration::from_millis(20);
+            sensor.tick_at(t);
+        }
+        let anchored = sensor.tick_at(t);
+        assert_eq!(anchored.confidence.as_f32() as i32, HeadingConfidence::PersistedPrior.code());
+        assert!((anchored.accuracy.as_f32() - 2.0).abs() < 0.01,
+                 "expected the persisted accuracy (2.0) to be applied on load, got {}", anchored.accuracy.as_f32());
+
+        // Board rotates for a full minute with no GNSS -- should cost one INERTIAL_DRIFT_DEG_PER_MIN,
+        // same as it would from a GnssCorrected anchor.
+        bno_frame.set_game_heading_for_test(133.0);
+        t += Duration::from_secs(60);
+        let output = sensor.tick_at(t);
+        assert_eq!(output.confidence.as_f32() as i32, HeadingConfidence::PersistedPrior.code());
+        let expected = 2.0 + INERTIAL_DRIFT_DEG_PER_MIN;
+        assert!((output.accuracy.as_f32() - expected).abs() < 0.05,
+                 "expected accuracy ~{} deg after 1 min dead reckoning from a persisted prior, got {}",
+                 expected, output.accuracy.as_f32());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
