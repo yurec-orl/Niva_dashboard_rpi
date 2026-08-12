@@ -14,6 +14,7 @@ use crate::alerts::alert_manager::{AlertManager, Severity};
 use crate::alerts::watchdog::Watchdog;
 use crate::util::adc_data_provider::ADCFrame;
 use crate::util::gnss_data_provider::GnssFrame;
+use crate::util::bno085_data_provider::Bno085Frame;
 use crate::util::ups_monitor::UpsMonitor;
 
 use std::collections::HashMap;
@@ -224,6 +225,12 @@ pub struct PageManager {
     // page. None when the GNSS data provider failed to start.
     gnss_frame: Option<GnssFrame>,
 
+    // Handle to the shared BNO085 frame, passed straight into GnssPage for its raw INS
+    // diagnostics block (same rationale as gnss_frame above -- composite data the
+    // HWInput/sensor-chain pipeline doesn't carry). None when the BNO085 data provider
+    // failed to start.
+    bno_frame: Option<Bno085Frame>,
+
     // Reads GnssFrame/Bno085Frame directly and is ticked once per loop iteration below,
     // independent of `sensor_manager`'s self-test/real handoff -- see
     // hardware::heading_fusion_sensor. None when either source's data provider failed to
@@ -253,6 +260,7 @@ impl PageManager {
     pub fn new(context: GraphicsContext, sensor_manager: SensorManager, ui_style: UIStyle,
                input_sources: Vec<Box<dyn InputSource>>, ups_monitor: UpsMonitor,
                adc_frame: Option<ADCFrame>, gnss_frame: Option<GnssFrame>,
+               bno_frame: Option<Bno085Frame>,
                alert_manager: AlertManager, heading_fusion: Option<HeadingFusionSensor>) -> Self {
         let mut buttons_map = HashMap::new();
         buttons_map.insert('1', ButtonPosition::Left1);
@@ -290,6 +298,7 @@ impl PageManager {
             ups_monitor,
             adc_frame,
             gnss_frame,
+            bno_frame,
             heading_fusion,
             fps_counter: FpsCounter::new(),
             start_time: Instant::now(),
@@ -449,6 +458,7 @@ impl PageManager {
                                                      smart_sender.clone(),
                                                      self.get_event_receiver(),
                                                      frame,
+                                                     self.bno_frame.clone(),
                                                      GnssMode::PNP,
                                                      &self.ui_style));
             self.add_page(gnss_page);

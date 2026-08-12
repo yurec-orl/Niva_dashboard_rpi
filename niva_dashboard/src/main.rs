@@ -22,7 +22,10 @@ use crate::hardware::sensor_value::ValueConstraints;
 use crate::hardware::heading_fusion_sensor;
 use crate::util::adc_data_provider::{ADCDataProvider, ADCFrame, TestADCDataProvider, SELF_TEST_DURATION};
 use crate::util::bno085_data_provider::{Bno085DataProvider, Bno085Frame};
-use crate::util::bno085_protocol::{SH2_REPORT_ROTATION_VECTOR, SH2_REPORT_GAME_ROTATION_VECTOR};
+use crate::util::bno085_protocol::{
+    SH2_REPORT_ROTATION_VECTOR, SH2_REPORT_GAME_ROTATION_VECTOR,
+    SH2_REPORT_GEOMAGNETIC_ROTATION_VECTOR, SH2_REPORT_ACCELEROMETER,
+};
 use crate::util::gnss_data_provider::{GnssDataProvider, GnssFrame};
 use crate::util::logging::init_logging;
 use crate::util::ups_monitor::UpsMonitor;
@@ -448,9 +451,13 @@ fn setup_bno085_data_provider() -> Result<Bno085DataProvider, String> {
     // heading_fusion_sensor's continuously-integrated backbone (see HEADING_FUSION_DESIGN.md
     // -- the full Rotation Vector's magnetometer fusion was excluded from the fusion policy
     // itself as too error-prone in testing, but stays wired for the raw comparison reading).
-    // Geomagnetic RV/Accelerometer exist only for the "heading"/"bno085" test modes' source
-    // comparison, not for this chain.
-    let mut provider = Bno085DataProvider::new(&[SH2_REPORT_ROTATION_VECTOR, SH2_REPORT_GAME_ROTATION_VECTOR]);
+    // Geomagnetic RV/Accelerometer are read directly from Bno085Frame by GnssPage's raw INS
+    // diagnostics block (InfoBlocks::InsData) rather than through the HWInput/sensor-chain
+    // pipeline -- same rationale as GnssPage reading GnssFrame's composite fields directly.
+    let mut provider = Bno085DataProvider::new(&[
+        SH2_REPORT_ROTATION_VECTOR, SH2_REPORT_GAME_ROTATION_VECTOR,
+        SH2_REPORT_GEOMAGNETIC_ROTATION_VECTOR, SH2_REPORT_ACCELEROMETER,
+    ]);
     provider.run().map_err(|e| e.to_string())?;
     Ok(provider)
 }
@@ -580,6 +587,7 @@ fn main() -> std::process::ExitCode {
     // setup consumes the rest of their clones.
     let adc_frame_for_diag = adc_frame.clone();
     let gnss_frame_for_diag = gnss_frame.clone();
+    let bno_frame_for_diag = bno_frame.clone();
     let (sensors, heading_fusion) = setup_sensors(adc_frame, ups_frame, gnss_frame, bno_frame);
     let ui_style = setup_ui_style();
     // Starts disabled: alerts (e.g. engine temp, oil pressure) must not fire against the
@@ -587,7 +595,7 @@ fn main() -> std::process::ExitCode {
     // the real sensor set (PageManager's UIEvent::SwitchSensorSet handler).
     let alert_manager = AlertManager::new(false, &ui_style);
 
-    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag, gnss_frame_for_diag, alert_manager, heading_fusion);
+    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag, gnss_frame_for_diag, bno_frame_for_diag, alert_manager, heading_fusion);
 
     mgr.setup().expect("Failed to setup page manager");
 

@@ -6,6 +6,7 @@ use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosi
 use crate::hardware::sensor_manager::SensorManager;
 use crate::hardware::hw_providers::HWInput;
 use crate::util::gnss_data_provider::GnssFrame;
+use crate::util::bno085_data_provider::Bno085Frame;
 use crate::util::nmea::{FixQuality, GnssFix};
 use crate::indicators::compass_indicator::{CompassHeadingMarkerDecorator, CompassIndicator, HdopIndicator, UP_ANGLE};
 use crate::indicators::indicator::{Indicator, IndicatorBounds};
@@ -15,7 +16,7 @@ use crate::indicators::needle_shape::MarkNeedleShape;
 use crate::indicators::decorator::*;
 use crate::util::gnss_data_provider::TestGnssDataProvider;
 
-const CONTENT_X_MARGIN: f32 = 40.0;
+const CONTENT_X_MARGIN: f32 = 30.0;
 const TITLE_Y: f32 = 5.0;
 const TITLE_CONTENT_GAP: f32 = 10.0;
 /// Matches CompassIndicator's own (hardcoded, not style-driven) tape label size, so the
@@ -26,6 +27,9 @@ const STATUS_LABEL_FONT_SIZE: u32 = 32;
 /// minor-mark spacing (5°) so a maxed-out mark reaches one minor tick's width from the
 /// lubber line.
 const HEADING_ACCURACY_MAX_HALF_SPREAD_DEG: f32 = 5.0;
+/// Standard gravity, used to convert Bno085Acceleration's m/s^2 (chip's native unit) to g's
+/// for the InsData info block.
+const STANDARD_GRAVITY_MPS2: f32 = 9.80665;
 
 pub enum GnssMode {
     Info,
@@ -56,11 +60,16 @@ struct PnpMode {
 
 #[derive(PartialEq, Clone, Copy)]
 enum InfoBlocks {
-    LinkStatus,
-    FixQuality,
-    Position,
-    Movement,
-    TimeAndDate,
+    GnssLinkStatus,
+    GnssFixQuality,
+    GnssPosition,
+    GnssMovement,
+    GnssTimeAndDate,
+    /// BNO085 link health, mirrors GnssLinkStatus's format.
+    InsLinkStatus,
+    /// Raw BNO085 readings bypassing the fused heading chain: Game Rotation Vector yaw,
+    /// Geomagnetic Rotation Vector yaw, and instantaneous acceleration per axis in g's.
+    InsData,
 }
 
 /// Structured GNSS status page: parsed fix (position/speed/heading/time) pulled straight
@@ -71,6 +80,11 @@ pub struct GnssPage {
     event_receiver: EventReceiver,
     smart_event_sender: SmartEventSender,
     frame: GnssFrame,
+    /// BNO085 frame, read directly for the raw INS diagnostics block (InfoBlocks::InsData)
+    /// the same way `frame` above is read directly for GNSS's composite fields -- neither
+    /// goes through the HWInput/sensor-chain pipeline. None when the BNO085 data provider
+    /// failed to start.
+    bno_frame: Option<Bno085Frame>,
     mode: GnssMode,
     pnp_mode: PnpMode,
     /// Synthetic GNSS provider, active only while test mode is toggled on (see
@@ -80,12 +94,13 @@ pub struct GnssPage {
 }
 
 impl GnssPage {
-    pub fn new(id: u32, smart_event_sender: SmartEventSender, event_receiver: EventReceiver, frame: GnssFrame, mode: GnssMode, ui_style: &UIStyle) -> Self {
+    pub fn new(id: u32, smart_event_sender: SmartEventSender, event_receiver: EventReceiver, frame: GnssFrame, bno_frame: Option<Bno085Frame>, mode: GnssMode, ui_style: &UIStyle) -> Self {
         let mut page = GnssPage {
             base: PageBase::new(id, "GNSS".to_string()),
             smart_event_sender,
             event_receiver,
             frame,
+            bno_frame,
             mode,
             pnp_mode: GnssPage::setup_pnp_mode(ui_style),
             test_provider: None,
@@ -271,7 +286,7 @@ impl GnssPage {
 
         for &block in blocks {
             match block {
-                InfoBlocks::LinkStatus => {
+                InfoBlocks::GnssLinkStatus => {
                     lines.append(&mut vec![
                         (format!("ГНСС:    {}", link_str), false, stale),
                     ]);
@@ -280,7 +295,7 @@ impl GnssPage {
                     }
                     lines.push((String::new(), false, false));
                 },
-                InfoBlocks::FixQuality => {
+                InfoBlocks::GnssFixQuality => {
                     lines.append(&mut vec![
                         (format!("Фикс:     {}", quality_str), false, false),
                         (format!("Спутн:    {}", satellites_str), false, false),
@@ -288,7 +303,7 @@ impl GnssPage {
                         (String::new(), false, false),
                     ]);
                 },
-                InfoBlocks::Position => {
+                InfoBlocks::GnssPosition => {
                     lines.append(&mut vec![
                         (format!("Шир:      {}", Self::lat_str(&fix)), false, false),
                         (format!("Дол:      {}", Self::lon_str(&fix)), false, false),
@@ -296,7 +311,7 @@ impl GnssPage {
                         (String::new(), false, false),
                     ]);
                 },
-                InfoBlocks::Movement => {
+                InfoBlocks::GnssMovement => {
                     lines.append(&mut vec![
                         (format!("Скор:     {}", speed_str), false, false),
                         (format!("Курс:     {}", heading_str), false, false),
@@ -306,10 +321,50 @@ impl GnssPage {
                         (String::new(), false, false),
                     ]);
                 },
-                InfoBlocks::TimeAndDate => {
+                InfoBlocks::GnssTimeAndDate => {
                     lines.append(&mut vec![
                         (format!("UTC:      {}", Self::time_str(&fix)), false, false),
                         (format!("          {}", Self::date_str(&fix)), false, false),
+                        (String::new(), false, false),
+                    ]);
+                },
+                InfoBlocks::InsLinkStatus => {
+                    let ins_stale = self.bno_frame.as_ref().map(|f| f.is_stale()).unwrap_or(true);
+                    let ins_link_str = if ins_stale { "НЕТ СВЯЗИ" } else { "НОРМА" }.to_string();
+                    lines.append(&mut vec![
+                        (format!("ИНС: {}", ins_link_str), false, ins_stale),
+                        (String::new(), false, false),
+                    ]);
+                },
+                InfoBlocks::InsData => {
+                    // Game RV has its own staleness flag (see Bno085Frame::game_orientation_is_stale
+                    // doc comment) -- the general is_stale() only tells you *some* report type
+                    // arrived recently, not specifically this one.
+                    let game_yaw_str = match &self.bno_frame {
+                        Some(f) if !f.game_orientation_is_stale() => format!("{:.1}\u{00B0}", f.game_orientation().heading_deg),
+                        _ => Self::na(),
+                    };
+                    let geo_yaw_str = match &self.bno_frame {
+                        Some(f) if !f.is_stale() => format!("{:.1}\u{00B0}", f.geomagnetic_orientation().heading_deg),
+                        _ => Self::na(),
+                    };
+                    let (accel_x_str, accel_y_str, accel_z_str) = match &self.bno_frame {
+                        Some(f) if !f.is_stale() => {
+                            let a = f.acceleration();
+                            (
+                                format!("{:.1} g", a.x_mps2 / STANDARD_GRAVITY_MPS2),
+                                format!("{:.1} g", a.y_mps2 / STANDARD_GRAVITY_MPS2),
+                                format!("{:.1} g", a.z_mps2 / STANDARD_GRAVITY_MPS2),
+                            )
+                        },
+                        _ => (Self::na(), Self::na(), Self::na()),
+                    };
+                    lines.append(&mut vec![
+                        (format!("К/ИНС: {}", game_yaw_str), false, false),
+                        (format!("К/МАГ: {}", geo_yaw_str), false, false),
+                        (format!("УСК X: {}", accel_x_str), false, false),
+                        (format!("УСК Y: {}", accel_y_str), false, false),
+                        (format!("УСК Z: {}", accel_z_str), false, false),
                         (String::new(), false, false),
                     ]);
                 },
@@ -356,7 +411,10 @@ impl GnssPage {
         // time/date are composite fields GnssChannelProvider doesn't carry (see
         // hw_providers.rs), so this page is the sole consumer of the full GnssFix.
 
-        let lines = self.get_info_text(sensor_manager, &self.active_frame(), &[InfoBlocks::LinkStatus, InfoBlocks::FixQuality, InfoBlocks::Position, InfoBlocks::Movement, InfoBlocks::TimeAndDate]);
+        let lines = self.get_info_text(sensor_manager, &self.active_frame(), &[
+            InfoBlocks::GnssLinkStatus, InfoBlocks::GnssFixQuality, InfoBlocks::GnssPosition, InfoBlocks::GnssMovement, InfoBlocks::GnssTimeAndDate,
+            InfoBlocks::InsLinkStatus, InfoBlocks::InsData,
+        ]);
 
         self.render_info_lines(&lines, (CONTENT_X_MARGIN, y), context, &[text_color, warning_color, header_color], &font, font_size)?;
 
@@ -379,13 +437,17 @@ impl GnssPage {
 
         let active_frame = self.active_frame();
 
-        let lines = self.get_info_text(sensor_manager, &active_frame, &[InfoBlocks::LinkStatus, InfoBlocks::Position, InfoBlocks::FixQuality]);
-
+        // Gnss data, left side
+        let lines = self.get_info_text(sensor_manager, &active_frame, &[InfoBlocks::GnssLinkStatus, InfoBlocks::GnssPosition, InfoBlocks::GnssFixQuality]);
         self.render_info_lines(&lines, (CONTENT_X_MARGIN, TITLE_Y), context, &[text_color, warning_color, header_color], &font, font_size)?;
 
-        let lines = self.get_info_text(sensor_manager, &active_frame, &[InfoBlocks::TimeAndDate, InfoBlocks::Movement]);
-
+        // Gnss data, right side
+        let lines = self.get_info_text(sensor_manager, &active_frame, &[InfoBlocks::GnssTimeAndDate, InfoBlocks::GnssMovement]);
         self.render_info_lines(&lines, (w * 0.75, TITLE_Y), context, &[text_color, warning_color, header_color], &font, font_size)?;
+
+        // Ins data, left bottom side
+        let lines = self.get_info_text(sensor_manager, &active_frame, &[InfoBlocks::InsLinkStatus, InfoBlocks::InsData]);
+        self.render_info_lines(&lines, (CONTENT_X_MARGIN, h * 0.6), context, &[text_color, warning_color, header_color], &font, font_size)?;
 
         let fix = active_frame.fix();
 
