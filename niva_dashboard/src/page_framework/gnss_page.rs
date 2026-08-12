@@ -350,8 +350,8 @@ impl GnssPage {
                 },
                 InfoBlocks::GnssTimeAndDate => {
                     lines.append(&mut vec![
-                        (format!("UTC:      {}", Self::time_str(&fix)), false, false),
-                        (format!("          {}", Self::date_str(&fix)), false, false),
+                        (format!("UTC: {}", Self::time_str(&fix)), false, false),
+                        (format!("     {}", Self::date_str(&fix)), false, false),
                         (String::new(), false, false),
                     ]);
                 },
@@ -427,6 +427,8 @@ impl GnssPage {
         let font = ui_style.get_string(TEXT_MONOSPACE_FONT, TERMINAL_FONT_PATH);
         let font_size = ui_style.get_integer(TEXT_MONOSPACE_FONT_SIZE, 16);
 
+        let w = context.width as f32;
+
         context.render_text_with_font(
             "НАВИГАЦИЯ", CONTENT_X_MARGIN, TITLE_Y, 1.0, title_color, &title_font, title_font_size,
         )?;
@@ -439,11 +441,16 @@ impl GnssPage {
         // hw_providers.rs), so this page is the sole consumer of the full GnssFix.
 
         let lines = self.get_info_text(sensor_manager, &self.active_frame(), &[
-            InfoBlocks::GnssLinkStatus, InfoBlocks::GnssFixQuality, InfoBlocks::GnssPosition, InfoBlocks::GnssMovement, InfoBlocks::GnssTimeAndDate,
-            InfoBlocks::InsLinkStatus, InfoBlocks::InsData,
+            InfoBlocks::GnssLinkStatus, InfoBlocks::GnssFixQuality, InfoBlocks::GnssPosition, InfoBlocks::GnssMovement, InfoBlocks::GnssTimeAndDate
         ]);
 
         self.render_info_lines(&lines, (CONTENT_X_MARGIN, y), context, &[text_color, warning_color, header_color], &font, font_size)?;
+
+        let lines = self.get_info_text(sensor_manager, &self.active_frame(), &[
+            InfoBlocks::InsLinkStatus, InfoBlocks::InsData,
+        ]);
+
+        self.render_info_lines(&lines, (w * 0.5, y), context, &[text_color, warning_color, header_color], &font, font_size)?;
 
         Ok(())
     }
