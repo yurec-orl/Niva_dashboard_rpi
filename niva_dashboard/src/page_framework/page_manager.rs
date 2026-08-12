@@ -200,6 +200,9 @@ pub struct PageManager {
     // Map hardware keys with UI buttons positions.
     buttons_map: HashMap<char, ButtonPosition>,
 
+    // Positions currently held down, used to draw a frame around their label.
+    pressed_positions: std::collections::HashSet<ButtonPosition>,
+
     // Event system for UI communication (dual-channel).
     event_bus: EventBus,
     global_event_receiver: EventReceiver,  // PageManager listens to global events
@@ -289,6 +292,7 @@ impl PageManager {
             pages: Pages::new(),
             input_handler: InputHandler::new(input_sources),
             buttons_map,
+            pressed_positions: std::collections::HashSet::new(),
             event_bus,
             global_event_receiver,
             smart_event_sender,
@@ -407,6 +411,17 @@ impl PageManager {
     fn button_by_key(&mut self, key: &char) -> Option<&mut PageButton<Box<dyn FnMut()>>> {
         let pos = self.buttons_map.get(key).copied()?;
         self.get_current_page_mut()?.button_by_position_mut(pos)
+    }
+
+    // Track currently held-down positions, used to frame their label while pressed.
+    fn set_button_pressed(&mut self, key: char, pressed: bool) {
+        if let Some(pos) = self.buttons_map.get(&key).copied() {
+            if pressed {
+                self.pressed_positions.insert(pos);
+            } else {
+                self.pressed_positions.remove(&pos);
+            }
+        }
     }
 
     // Set up pages, buttons and watchdogs.
@@ -657,9 +672,11 @@ impl PageManager {
                 match state {
                     ButtonState::Pressed(key) => {
                         log::info!("Button pressed: {}", key);
+                        self.set_button_pressed(key, true);
                     }
                     ButtonState::Released(key) => {
                         log::info!("Button released: {}", key);
+                        self.set_button_pressed(key, false);
                         if let Some(button) = self.button_by_key(&key) {
                             button.trigger();
                         } else if key == 'q' {
@@ -776,19 +793,26 @@ impl PageManager {
     
     fn render_button_at_position(&mut self, pos: &ButtonPosition, label: &str,
         label_font: &String, label_font_size: u32, label_color: (f32, f32, f32),
-        orientation: &String
+        orientation: &String, is_pressed: bool
     ) -> Result<(), String> {
         let (x, mut y) = self.get_button_position(pos, orientation);
-        
+
+        let (text_width, text_height) = if orientation == "horizontal" {
+            (
+                self.context.calculate_text_width_with_font(label, 1.0, label_font, label_font_size)?,
+                self.context.calculate_text_height_with_font(label, 1.0, label_font, label_font_size)?,
+            )
+        } else {
+            (
+                self.context.calculate_text_width_with_font_vert(label, 1.0, label_font, label_font_size)?,
+                self.context.calculate_text_height_with_font_vert(label, 1.0, label_font, label_font_size)?,
+            )
+        };
+
         if orientation == "vertical" {
             // Special case for vertical orientation: adjust y position
             // so that label y center point alingns with button position
-            y = y - (self.context.calculate_text_height_with_font_vert(
-                label,
-                1.0,
-                label_font,
-                label_font_size
-            )? / 2.0);
+            y = y - (text_height / 2.0);
             // Adjust if out of bounds
             if y < 0.0 {
                 y = 0.0;
@@ -797,51 +821,50 @@ impl PageManager {
 
         let render_x = match pos {
             // Right side buttons are right-aligned
-            ButtonPosition::Right1 | ButtonPosition::Right2 | 
+            ButtonPosition::Right1 | ButtonPosition::Right2 |
             ButtonPosition::Right3 | ButtonPosition::Right4 => {
-                let text_width = if orientation == "horizontal" {
-                    self.context.calculate_text_width_with_font(
-                        label,
-                        1.0,
-                        label_font,
-                        label_font_size
-                    )?
-                } else {
-                    self.context.calculate_text_width_with_font_vert(
-                        label,
-                        1.0,
-                        label_font,
-                        label_font_size
-                    )?
-                };
                 x - text_width - PAGE_BUTTON_X_MARGIN
             }
             // Left side buttons are left-aligned
             _ => x + PAGE_BUTTON_X_MARGIN,
         };
-        
+
         if orientation == "horizontal" {
             self.context.render_text_with_font(
-                label, 
-                render_x, 
-                y, 
+                label,
+                render_x,
+                y,
                 1.0,
                 label_color,
                 label_font,
                 label_font_size
             )?;
-            return Ok(());
         } else {
             self.context.render_text_with_font_vert(
-                label, 
-                render_x, 
-                y, 
+                label,
+                render_x,
+                y,
                 1.0,
                 label_color,
                 label_font,
                 label_font_size
             )?;
         }
+
+        if is_pressed {
+            let padding = self.ui_style.get_float(PAGE_BUTTON_PRESSED_FRAME_PADDING, 4.0);
+            let thickness = self.ui_style.get_float(PAGE_BUTTON_PRESSED_FRAME_WIDTH, 2.0);
+            let frame_color = self.ui_style.get_color(PAGE_BUTTON_PRESSED_FRAME_COLOR, (1.0, 1.0, 1.0));
+            self.context.stroke_rect(
+                render_x - padding,
+                y - padding,
+                text_width + 2.0 * padding,
+                text_height + 2.0 * padding,
+                frame_color,
+                thickness,
+            )?;
+        }
+
         Ok(())
     }
     
@@ -858,17 +881,17 @@ impl PageManager {
         let orientation = self.ui_style.get_string(PAGE_BUTTON_LABEL_ORIENTATION, "horizontal");
 
         // Collect button data first to avoid borrowing conflicts
-        let button_data: Vec<(ButtonPosition, String)> = {
+        let button_data: Vec<(ButtonPosition, String, bool)> = {
             let current_page = self.get_current_page().unwrap();
             current_page.buttons()
                 .iter()
-                .map(|button| (*button.position(), button.label().to_string()))
+                .map(|button| (*button.position(), button.label().to_string(), self.pressed_positions.contains(button.position())))
                 .collect()
         };
 
         // Now render each button at its fixed position
-        for (position, label) in button_data {
-            self.render_button_at_position(&position, &label, &label_font, label_font_size, label_color, &orientation)?;
+        for (position, label, is_pressed) in button_data {
+            self.render_button_at_position(&position, &label, &label_font, label_font_size, label_color, &orientation, is_pressed)?;
         }
 
         Ok(())

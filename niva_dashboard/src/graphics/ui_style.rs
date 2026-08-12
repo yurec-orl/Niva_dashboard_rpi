@@ -51,6 +51,9 @@ pub const PAGE_BUTTON_LABEL_FONT: &str = "page_button_label_font";
 pub const PAGE_BUTTON_LABEL_FONT_SIZE: &str = "page_button_label_font_size";
 pub const PAGE_BUTTON_LABEL_ORIENTATION: &str = "page_button_label_orientation"; // "horizontal" or "vertical"
 pub const PAGE_BUTTON_LABEL_COLOR: &str = "page_button_label_color";
+pub const PAGE_BUTTON_PRESSED_FRAME_COLOR: &str = "page_button_pressed_frame_color";
+pub const PAGE_BUTTON_PRESSED_FRAME_WIDTH: &str = "page_button_pressed_frame_width";
+pub const PAGE_BUTTON_PRESSED_FRAME_PADDING: &str = "page_button_pressed_frame_padding";
 pub const PAGE_STATUS_FONT: &str = "page_status_font";
 pub const PAGE_STATUS_FONT_SIZE: &str = "page_status_font_size";
 pub const PAGE_STATUS_COLOR: &str = "page_status_color";
@@ -531,6 +534,9 @@ impl UIStyle {
         self.set(PAGE_BUTTON_LABEL_FONT_SIZE, UIStyleValue::Integer(24));
         self.set(PAGE_BUTTON_LABEL_ORIENTATION, UIStyleValue::String("vertical".to_string()));
         self.set(PAGE_BUTTON_LABEL_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
+        self.set(PAGE_BUTTON_PRESSED_FRAME_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
+        self.set(PAGE_BUTTON_PRESSED_FRAME_WIDTH, UIStyleValue::Float(2.0));
+        self.set(PAGE_BUTTON_PRESSED_FRAME_PADDING, UIStyleValue::Float(4.0));
         //self.set(PAGE_STATUS_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
         self.set(PAGE_STATUS_FONT, UIStyleValue::String(TERMINAL_FONT_PATH.to_string()));
         self.set(PAGE_STATUS_FONT_SIZE, UIStyleValue::Integer(14));
