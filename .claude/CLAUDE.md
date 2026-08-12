@@ -50,30 +50,66 @@ Car 12V → TPS40057 (DC-DC, 9-35V in, 5V 5A out)
 ```
 niva_dashboard/
 ├── src/
-│   ├── main.rs                 # Entry point with test modes
-│   ├── page_framework/         # Page management system
-│   │   ├── page_manager.rs     # Central page management
-│   │   ├── main_page.rs        # Main dashboard page
-│   │   ├── diag_page.rs        # Diagnostics page
-│   │   ├── osc_page.rs         # Oscilloscope page
-│   │   ├── events.rs           # Event handling / message passing
-│   │   └── input.rs            # Input processing / button handling
+│   ├── main.rs                     # Entry point with test modes
+│   ├── page_framework/             # Page management system
+│   │   ├── page_manager.rs         # Central page management
+│   │   ├── main_page.rs            # Main dashboard page
+│   │   ├── diag_page.rs            # Diagnostics page
+│   │   ├── gnss_page.rs            # GNSS/nav page
+│   │   ├── terminal_page.rs        # Log/ADC terminal page
+│   │   ├── osc_page.rs             # Oscilloscope page (orphaned dead code, see TODO)
+│   │   ├── events.rs               # Event handling / message passing
+│   │   └── input.rs                # Input processing / button handling
 │   ├── hardware/
-│   │   ├── hw_providers.rs     # HW abstraction (GPIO, I2C, Test)
-│   │   ├── sensor_manager.rs   # Sensor chain management
+│   │   ├── hw_providers.rs         # HW abstraction (GPIO, I2C, Test providers)
+│   │   ├── gpio_input.rs           # rppal-based GPIO wrapper (not wired to hw_providers traits, see TODO)
+│   │   ├── sensor_manager.rs       # Sensor chain management
+│   │   ├── sensor_value.rs
 │   │   ├── digital_signal_processing.rs
 │   │   ├── analog_signal_processing.rs
-│   │   ├── gpio_input.rs
-│   │   └── sensors.rs          # Legacy sensor definitions (being refactored)
+│   │   ├── sensors.rs              # Logical Sensor stage (live code, not legacy)
+│   │   └── heading_fusion_sensor.rs  # BNO085 IMU + GNSS heading fusion
+│   ├── indicators/                 # Indicator widgets
+│   │   ├── indicator.rs            # Shared Indicator trait / IndicatorBase
+│   │   ├── decorator.rs
+│   │   ├── needle_indicator.rs
+│   │   ├── needle_shape.rs
+│   │   ├── gauge_indicator.rs
+│   │   ├── vertical_bar_indicator.rs
+│   │   ├── digital_segmented_indicator.rs
+│   │   ├── compass_indicator.rs
+│   │   └── text_indicator.rs
+│   ├── indicator_builders/         # Per-signal indicator factory functions
+│   │   ├── bar_builders/           # fuel level, oil pressure, temperature, voltage
+│   │   ├── gauge_builders/         # fuel level, oil pressure, speedometer, temperature, voltage
+│   │   └── digital_builders/       # speed
+│   ├── alerts/
+│   │   ├── alert.rs
+│   │   ├── alert_manager.rs
+│   │   └── watchdog.rs
 │   ├── graphics/
-│   │   ├── context.rs          # OpenGL context and text rendering
+│   │   ├── context.rs              # OpenGL context and text rendering
 │   │   ├── ui_style.rs
-│   │   ├── default_style.json
+│   │   ├── text_box.rs
+│   │   ├── default_style.json      # dead, see TODO
 │   │   └── opengl_test.rs
+│   ├── util/
+│   │   ├── adc_data_provider.rs    # STM32 ADC serial protocol
+│   │   ├── bno085_data_provider.rs # BNO085 IMU serial protocol
+│   │   ├── bno085_protocol.rs
+│   │   ├── gnss_data_provider.rs   # UM982 GNSS serial protocol
+│   │   ├── nmea.rs                 # NMEA sentence parsing
+│   │   ├── serial_reader.rs
+│   │   ├── ups_i2c_provider.rs
+│   │   ├── ups_monitor.rs          # UPS HAT auto power on/off
+│   │   ├── shutdown.rs
+│   │   ├── diagnostics.rs
+│   │   └── logging.rs
 │   └── test/
-│       └── run_test.rs         # Test execution framework
+│       └── run_test.rs             # Test execution framework
 ├── build.rs
 ├── run.sh
+├── install-service.sh
 └── splash.png
 ```
 
@@ -116,7 +152,7 @@ Boot reduced from ~16.8s to ~5.1s by disabling unused systemd services (`Network
 - Finalize ui style handling: `graphics/default_style.json` is dead: never loaded (only a commented-out call in `main.rs`), and its keys (`needle_color`, `gauge_minor_mark_count: 4`, etc.) don't match the constants actually used in `ui_style.rs` (`GAUGE_NEEDLE_COLOR`, `GAUGE_MINOR_MARK_COUNT: 37`, ...). Delete it or reconcile it with the real style schema. Saving/loading ui style json is not used as well.
 - Default font paths hardcoded in `ui_style.rs::load_defaults()` are absolute and dev-machine-specific (`/home/user/Work/Niva_Dashboard_Rpi/...`) — will silently fail (falling back to warning-logged defaults) on any other deployment path.
 - `GaugeIndicator::with_decorators` (`indicators/gauge_indicator.rs`) is a stub that ignores its argument ("decorators not yet integrated"), unlike `NeedleIndicator`/`VerticalBarIndicator`/`DigitalSegmentedIndicator` which all wire decorators through `IndicatorBase`.
-- Doc/code mismatches to reconcile: `hardware/sensors.rs` is labeled "legacy... being refactored" in the Project Structure section above, but it's actually the live "Logical Sensor" stage the chains depend on — not a deprecated path. Also, the digital/analog signal processing "edge detection"/"low-pass filtering" terms in Core Components don't correspond to any processor by that name (debounce and the EMA `AnalogSignalProcessorDampener` fill those roles under different names). `hardware/gpio_input.rs` and `page_framework/terminal_page.rs` (a fourth page type, log/ADC) are also missing from the Project Structure listing above.
+- Doc/code mismatch: the digital/analog signal processing "edge detection"/"low-pass filtering" terms in Core Components don't correspond to any processor by that name (debounce and the EMA `AnalogSignalProcessorDampener` fill those roles under different names).
 - 'Master warning' button/indicator to the system: non-latching button with a warning light which lights up when an alert is active, and button press clears active alerts. Probably wire directly to Pi GPIO because STM32 ran out of pins (and to
   have it still function if no link to ADC module). Power considerations: 16 mA draw per pin and <= 50 mA total GPIO draw. 16 mA should be fine for one LED, possibly even less if brightness is enough for a warning light.
 - [In progress] GNSS connectivity and indicators
