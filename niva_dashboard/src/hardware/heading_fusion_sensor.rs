@@ -1,16 +1,14 @@
 #![allow(dead_code)]
 //! Heading fusion: Game Rotation Vector (BNO085 gyro+accel, no magnetometer) as a continuously
 //! -running relative tracker, anchored and periodically re-anchored by validated GNSS fixes
-//! (`course_deg` while moving, `heading_deg` while stationary). See HEADING_FUSION_DESIGN.md
-//! for the full policy this implements, including the reasoning behind each gate.
+//! (`course_deg` while moving, `heading_deg` while stationary).
 //!
 //! Reads `GnssFrame`/`Bno085Frame` directly rather than going through the `HWAnalogProvider`/
-//! `SensorFusedAnalogInputChain` machinery the previous "prefer BNO085, else GNSS" version of
-//! this sensor used: the gating logic here needs several concurrently-consistent fields per
-//! source (course_deg, heading_deg, heading_std_dev_deg, speed_kmh -- all from one atomic
-//! `GnssFrame::fix()` snapshot) and produces multiple independent outputs (heading, confidence,
-//! accuracy), none of which fit that chain type's one-scalar-in/one-`SensorValue`-out shape. See
-//! SENSOR_FUSION_CHAIN_DESIGN.md for that superseded design.
+//! `SensorFusedAnalogInputChain` machinery: the gating logic here needs several
+//! concurrently-consistent fields per source (course_deg, heading_deg, heading_std_dev_deg,
+//! speed_kmh -- all from one atomic `GnssFrame::fix()` snapshot) and produces multiple
+//! independent outputs (heading, confidence, accuracy), none of which fit that chain type's
+//! one-scalar-in/one-`SensorValue`-out shape.
 
 use crate::hardware::sensor_value::{SensorValue, ValueConstraints, ValueData, ValueMetadata};
 use crate::util::bno085_data_provider::Bno085Frame;
@@ -22,23 +20,22 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 /// GNSS course_deg is dominated by position noise below this speed -- not yet validated
-/// against a real moving trial (see HEADING_FUSION_DESIGN.md "Open decisions"), just a
-/// starting point pending field data.
+/// against a real moving trial, just a starting point pending field data.
 const MIN_SPEED_FOR_COURSE_KMH: f32 = 10.0;
 
 /// GNSS heading_deg is only fed into the sustained-agreement check when its own reported
-/// std-dev is at least this tight. Provisional -- see "Open decisions" in the design doc.
+/// std-dev is at least this tight. Provisional.
 const HEADING_STD_DEV_MAX_DEG: f32 = 30.0;
 
 /// Sustained-agreement window: a GNSS candidate is only validated once at least
 /// AGREEMENT_MIN_SAMPLES readings taken within this trailing window all agree with each other
-/// to within AGREEMENT_TOLERANCE_DEG. Provisional -- see "Open decisions" in the design doc.
+/// to within AGREEMENT_TOLERANCE_DEG. Provisional.
 const AGREEMENT_WINDOW: Duration = Duration::from_secs(5);
 const AGREEMENT_MIN_SAMPLES: usize = 5;
 const AGREEMENT_TOLERANCE_DEG: f32 = 15.0;
 
 /// How fast a validated correction is allowed to visually ramp in, so a large correction
-/// doesn't read as a needle glitch. Provisional -- see "Open decisions" in the design doc.
+/// doesn't read as a needle glitch. Provisional.
 const SLEW_RATE_DEG_PER_SEC: f32 = 30.0;
 
 /// Below this circular distance from the last persisted value, a persist call is a no-op --
@@ -58,20 +55,17 @@ const INERTIAL_DRIFT_DEG_PER_MIN: f32 = 0.5;
 const HEADING_STATIONARY_EPSILON_DEG: f32 = 0.01;
 
 /// GNSS `course_deg` has no reported accuracy figure of its own (unlike `heading_deg`'s
-/// `heading_std_dev_deg`) -- assumed accuracy for a course-validated anchor. Provisional, like
-/// the other constants above -- see "Open decisions" in the design doc; not yet checked against
-/// a real moving trial.
+/// `heading_std_dev_deg`) -- assumed accuracy for a course-validated anchor. Provisional; not
+/// yet checked against a real moving trial.
 const COURSE_ANCHOR_ACCURACY_DEG: f32 = 2.0;
 
-/// Accuracy assigned to a manually-set anchor -- treated as a perfect reference point, per
-/// HEADING_FUSION_DESIGN.md's "Manual input" transition ("trusted equivalent to
-/// GnssCorrected").
+/// Accuracy assigned to a manually-set anchor -- treated as a perfect reference point.
 const MANUAL_ANCHOR_ACCURACY_DEG: f32 = 0.0;
 
 /// Upper display clamp for `accuracy_deg` -- past this, the number stops being meaningful (the
 /// heading itself is effectively random) so there's no point letting it grow unbounded across a
 /// long uncorrected stretch. Not a claim about actual BNO085 drift bounds -- long-duration Game
-/// RV drift is explicitly uncharacterized (see design doc "Deferred").
+/// RV drift is uncharacterized.
 const MAX_DISPLAYED_ACCURACY_DEG: f32 = 90.0;
 
 /// BNO085 Game Rotation Vector's first report(s) after a (re)connect can reflect a not-yet-
@@ -82,16 +76,15 @@ const MAX_DISPLAYED_ACCURACY_DEG: f32 = 90.0;
 /// convergence error in as a permanent offset, since nothing else re-anchors PersistedPrior
 /// until a validated GNSS fix arrives). Reuses the same sustained-agreement mechanism as the
 /// GNSS gates (SustainedAgreement), just with a much shorter window since this is about sensor
-/// settle time, not distrust of noisy external data. Provisional -- not yet checked against how
-/// long a real settle actually takes.
+/// settle time, not distrust of noisy external data. Provisional -- not yet checked against
+/// how long a real settle actually takes.
 const GAME_RV_SETTLE_WINDOW: Duration = Duration::from_millis(500);
 const GAME_RV_SETTLE_MIN_SAMPLES: usize = 5;
 const GAME_RV_SETTLE_TOLERANCE_DEG: f32 = 2.0;
 
-/// Mirrors HEADING_FUSION_DESIGN.md's "Confidence tiers". Coded the same way
-/// `nmea::FixQuality::code()` is, so it can be surfaced as a plain analog value
-/// (HWInput::HwHeadingConfidence) instead of growing SensorValue a dedicated field for one
-/// consumer.
+/// Coded the same way `nmea::FixQuality::code()` is, so it can be surfaced as a plain analog
+/// value (HWInput::HwHeadingConfidence) instead of growing SensorValue a dedicated field for
+/// one consumer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeadingConfidence {
     /// No anchor obtained yet this boot -- no heading to display.
@@ -136,10 +129,9 @@ fn circular_signed_diff_deg(target: f32, from: f32) -> f32 {
 }
 
 /// Tracks whether a source's recent candidate readings agree with each other closely enough,
-/// over a trailing time window, to be trusted -- see HEADING_FUSION_DESIGN.md's "Validation
-/// gate" section. A single confidently-wrong reading (the failure mode seen in the
-/// window-sill GNSS heading_deg trials) can't pass this on its own no matter how tight its own
-/// reported accuracy claims to be.
+/// over a trailing time window, to be trusted. A single confidently-wrong reading (the failure
+/// mode seen in the window-sill GNSS heading_deg trials) can't pass this on its own no matter
+/// how tight its own reported accuracy claims to be.
 struct SustainedAgreement {
     window: Duration,
     min_samples: usize,
@@ -199,9 +191,9 @@ struct GnssAnchor {
     accuracy_deg: f32,
 }
 
-/// Heading persisted across restarts (see HEADING_FUSION_DESIGN.md "Persistence"). Loaded as
-/// `PersistedPrior`, never as `GnssCorrected` -- it goes through the same validation gate as
-/// any other anchor before being trusted again. The timestamp is for UI/diagnostics only.
+/// Heading persisted across restarts. Loaded as `PersistedPrior`, never as `GnssCorrected` --
+/// it goes through the same validation gate as any other anchor before being trusted again.
+/// The timestamp is for UI/diagnostics only.
 #[derive(Serialize, Deserialize)]
 struct PersistedHeading {
     heading_deg: f32,
@@ -220,21 +212,20 @@ pub struct HeadingFusionOutput {
 
 /// Combines a continuously-integrated BNO085 Game Rotation Vector (the always-running
 /// backbone) with validated GNSS course/heading corrections into one heading estimate plus a
-/// confidence tier, per HEADING_FUSION_DESIGN.md. Not a `Sensor`/`FusedAnalogSensor` impl --
-/// see the module doc for why; `tick()` is called directly once per sensor-read cycle and its
-/// outputs are pushed into `SensorManager` via `set_external_value`.
+/// confidence tier. Not a `Sensor`/`FusedAnalogSensor` impl -- see the module doc for why;
+/// `tick()` is called directly once per sensor-read cycle and its outputs are pushed into
+/// `SensorManager` via `set_external_value`.
 pub struct HeadingFusionSensor {
     gnss_frame: GnssFrame,
     bno_frame: Bno085Frame,
 
     confidence: HeadingConfidence,
     /// Offset such that the true current heading == `(correction_offset_deg + game_rv_deg) mod 360` --
-    /// the design doc's `anchor + (game_rv_now - game_rv_at_anchor)` formula, with this field
-    /// holding the constant `anchor - game_rv_at_anchor` term. None until the first anchor
-    /// (persisted or GNSS-validated) is established -- HEADING_FUSION_DESIGN.md's `Unknown`
-    /// tier. Updated instantly on every validated correction/manual input -- not itself
-    /// slew-limited, so it (and `confidence`) always reflect the true current correction
-    /// state. `display_offset_deg` is what actually ramps.
+    /// i.e. `anchor + (game_rv_now - game_rv_at_anchor)`, with this field holding the constant
+    /// `anchor - game_rv_at_anchor` term. None until the first anchor (persisted or
+    /// GNSS-validated) is established (`Unknown` tier). Updated instantly on every validated
+    /// correction/manual input -- not itself slew-limited, so it (and `confidence`) always
+    /// reflect the true current correction state. `display_offset_deg` is what actually ramps.
     correction_offset_deg: Option<f32>,
     /// Slew-rate-limited chase of `correction_offset_deg`, recombined with the (always
     /// instant, unfiltered) `game_rv_deg` at read time to produce `displayed_heading()`. Kept
@@ -245,10 +236,10 @@ pub struct HeadingFusionSensor {
     display_offset_deg: Option<f32>,
     /// Most recent Game RV wrapped heading reading, combined with `correction_offset_deg` at
     /// read time rather than integrated into a running sum. Recomputing from the raw sample
-    /// every tick (instead of accumulating a per-tick delta) avoids two failure modes of the
-    /// previous accumulation approach: compounding float rounding error over a long-running
-    /// session, and a stale-data gap (`is_stale()`) followed by >180 degrees of real rotation
-    /// during the gap being silently aliased to a small delta in the wrong direction.
+    /// every tick (instead of accumulating a per-tick delta) avoids compounding float rounding
+    /// error over a long-running session, and avoids a stale-data gap (`is_stale()`) followed
+    /// by >180 degrees of real rotation during the gap being silently aliased to a small delta
+    /// in the wrong direction.
     game_rv_deg: Option<f32>,
 
     /// Set on every tick a validated correction is applied (anchor snap, or an in-progress
@@ -260,8 +251,7 @@ pub struct HeadingFusionSensor {
     /// is None (Unknown) or the anchor is still an unconfirmed `PersistedPrior` -- in both
     /// cases there's no known accuracy figure to degrade from, only a heading. Set/reset
     /// outright to the anchor's own accuracy on every validated GNSS correction or manual
-    /// input; degraded by `degrade_accuracy` on ticks spent dead-reckoning instead. See
-    /// HEADING_FUSION_DESIGN.md and the BNO085-drift constants above.
+    /// input; degraded by `degrade_accuracy` on ticks spent dead-reckoning instead.
     accuracy_deg: Option<f32>,
 
     course_agreement: SustainedAgreement,
@@ -339,9 +329,7 @@ impl HeadingFusionSensor {
 
     /// Writes `heading_deg` to disk unless it's within `PERSIST_MIN_DELTA_DEG` of what's
     /// already there. Called on a manual correction and on drop (see `Drop` impl below) --
-    /// deliberately not on any timer or motion-state change; see HEADING_FUSION_DESIGN.md
-    /// "Persistence" for why periodic/stop-triggered writes were dropped in favor of these
-    /// two trigger points.
+    /// deliberately not on any timer or motion-state change.
     fn persist_if_changed(&mut self, heading_deg: f32) {
         if let Some(last) = self.last_persisted_deg {
             if circular_diff_deg(heading_deg, last) < PERSIST_MIN_DELTA_DEG {
@@ -365,8 +353,8 @@ impl HeadingFusionSensor {
     }
 
     /// Directly sets the anchor from user input, equivalent to a validated GNSS correction
-    /// for tracking purposes (see HEADING_FUSION_DESIGN.md "Manual input"). No-op if the
-    /// BNO085 hasn't produced a Game RV reading yet -- there's no baseline to anchor from.
+    /// for tracking purposes. No-op if the BNO085 hasn't produced a Game RV reading yet --
+    /// there's no baseline to anchor from.
     pub fn set_manual_heading(&mut self, heading_deg: f32) {
         let Some(raw) = self.game_rv_deg else {
             log::warn!("Heading fusion: ignoring manual heading, no Game RV baseline yet");
@@ -430,9 +418,9 @@ impl HeadingFusionSensor {
     }
 
     /// Records this tick's raw Game RV reading. Runs unconditionally, independent of GNSS --
-    /// this is the "continuously running backbone" HEADING_FUSION_DESIGN.md's core model calls
-    /// for. `displayed_heading()`/`advance_display_offset` combine it with the correction
-    /// offsets at read/slew time, so no rotation math happens here.
+    /// this is the continuously-running backbone. `displayed_heading()`/`advance_display_offset`
+    /// combine it with the correction offsets at read/slew time, so no rotation math happens
+    /// here.
     fn integrate_game_rv(&mut self) {
         // Not bno_frame.is_stale() -- that's bumped by *any* of the BNO085's report types, so
         // it can read "fresh" before Game RV specifically has ever reported (see
@@ -486,7 +474,7 @@ impl HeadingFusionSensor {
     /// Reads one atomic GNSS fix snapshot and runs both sources through their own
     /// eligibility gate plus the shared sustained-agreement check. Prefers course_deg (the
     /// moving-car case) over heading_deg (the stationary case) when both happen to validate
-    /// at once -- see HEADING_FUSION_DESIGN.md's "implicit handoff" note.
+    /// at once.
     fn validated_gnss_correction(&mut self, now: Instant) -> Option<GnssAnchor> {
         let fix = self.gnss_frame.fix();
 
@@ -521,7 +509,7 @@ impl HeadingFusionSensor {
     /// `confidence`, and `accuracy_deg` always reflect the true current correction state with
     /// no convergence delay. `advance_display_offset` is what makes this look smooth on
     /// screen. `accuracy_deg` is reset outright to the anchor's own accuracy, not just kept
-    /// from degrading further -- see HEADING_FUSION_DESIGN.md's re-anchoring note.
+    /// from degrading further.
     fn apply_correction(&mut self, target: &Option<GnssAnchor>, now: Instant) {
         let Some(target) = target else { return };
         let Some(raw) = self.game_rv_deg else { return }; // no Game RV baseline yet -- wait for BNO085
@@ -549,12 +537,9 @@ impl HeadingFusionSensor {
     /// Ramps `display_offset_deg` one slew-rate-limited step toward `correction_offset_deg`,
     /// snapping instead if there's nothing to ramp from yet (the very first anchor -- nothing
     /// to glitch). Runs every tick regardless of whether a correction just landed, so a
-    /// still-converging display keeps catching up smoothly across ticks. Deliberately operates
-    /// on the offset rather than on `displayed_heading()` directly: since
-    /// `game_rv_deg` is common to both and cancels out of the angular error either way, working
-    /// in offset-space gives the identical step but means real Game RV rotation -- which is
-    /// applied to `game_rv_deg` unfiltered every tick -- is never itself rate-limited, only the
-    /// correction jump is.
+    /// still-converging display keeps catching up smoothly. Operates on the offset rather than
+    /// on `displayed_heading()` directly so real Game RV rotation -- applied to `game_rv_deg`
+    /// unfiltered every tick -- is never itself rate-limited, only the correction jump is.
     fn advance_display_offset(&mut self, dt: Duration) {
         let Some(target_offset) = self.correction_offset_deg else { return };
 
@@ -611,8 +596,7 @@ impl HeadingFusionSensor {
 /// page_manager.rs returning normally rather than calling `std::process::exit` directly, so
 /// this fires on a clean SIGTERM/SIGINT shutdown, a binary-update or SIGUSR1 restart, and a
 /// panic unwind alike -- one hook instead of one persist call per exit path. Does not cover a
-/// SIGKILL or power loss; see HEADING_FUSION_DESIGN.md "Persistence" for why that gap is
-/// accepted rather than worked around with periodic writes.
+/// SIGKILL or power loss; that gap is accepted rather than worked around with periodic writes.
 impl Drop for HeadingFusionSensor {
     fn drop(&mut self) {
         if let Some(heading_deg) = self.displayed_heading() {
