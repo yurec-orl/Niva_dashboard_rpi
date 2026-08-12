@@ -527,7 +527,7 @@ impl PageManager {
             Severity::Warning,
             Some(std::time::Duration::from_secs(30)),       // Display for 30 s
             Some(std::time::Duration::from_secs(60)),       // Wait 60 s before displaying again
-            Some(std::time::Duration::from_secs(2)),        // Ignore brief transients
+            Some(std::time::Duration::from_secs(10)),       // Ignore brief transients
         );
         // 2 stages: warning on 25% charge and critical on 15% charge (controlled by sensor value constraints).
         let ups_low_charge_watchdog = Watchdog::new(
@@ -536,7 +536,7 @@ impl PageManager {
             Severity::Warning,
             Some(std::time::Duration::from_secs(60)),       // Display for 60 s
             Some(std::time::Duration::from_secs(60*3)),     // Wait 3 min before displaying again
-            None,                                           // Trigger immediately
+            Some(std::time::Duration::from_secs(5)),        // Ignore brief transients
         );
         let ups_crit_charge_watchdog = Watchdog::new(
             HWInput::HwUPSChargeState,
@@ -544,7 +544,7 @@ impl PageManager {
             Severity::Critical,
             None,                                           // No display timeout - stays visible while charge is critically low
             Some(std::time::Duration::from_secs(60*3)),     // Wait 3 min before displaying again
-            None,                                           // Trigger immediately
+            Some(std::time::Duration::from_secs(5)),        // Ignore brief transients
         );
 
         self.alert_manager.add_watchdog(engine_temp_watchdog);

@@ -24,11 +24,11 @@ const MCU_ARM_VALUE: u8 = 0x55;
 
 /// How long the battery-discharge condition must hold continuously before a shutdown is
 /// triggered.
-const ON_BATTERY_SHUTDOWN_DELAY: Duration = Duration::from_secs(10);
+const ON_BATTERY_SHUTDOWN_DELAY: Duration = Duration::from_secs(30);
 
 /// How long the battery-discharge condition must hold continuously before a message is
 /// written to log.
-const ON_BATTERY_LOG_DELAY: Duration = Duration::from_secs(1);
+const ON_BATTERY_LOG_DELAY: Duration = Duration::from_secs(3);
 
 /// Monitors the UPS current sensor chain (HwUPSCurrent, converted by
 /// hardware::sensors::UpsCurrentSensor) and shuts the system down after it has read
