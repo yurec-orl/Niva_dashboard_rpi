@@ -175,6 +175,10 @@ impl GnssPage {
                 let sender = self.smart_event_sender.clone();
                 move || sender.send(UIEvent::NavInfoMode)
             }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Right2, "УСТАНОВ".into(), Box::new({
+                let sender = self.smart_event_sender.clone();
+                move || sender.send(UIEvent::NavHeadingSetMode)
+            }) as Box<dyn FnMut()>),
             PageButton::new(ButtonPosition::Right3, "ТЕСТ".into(), Box::new({
                 let sender = self.smart_event_sender.clone();
                 move || sender.send(UIEvent::NavToggleGnssTest)
@@ -182,6 +186,29 @@ impl GnssPage {
             PageButton::new(ButtonPosition::Right4, "ВОЗВ".into(), Box::new({
                 let sender = self.smart_event_sender.clone();
                 move || sender.send(UIEvent::SwitchToPage(MAIN_PAGE_ID))
+            }) as Box<dyn FnMut()>),
+        ];
+        self.base.set_buttons(buttons);
+    }
+
+    // Manual heading button set, entered via УСТАНОВ. КУРС+/КУРС- only act on press (and
+    // repeat while held, see PageManager's held-button repeat sweep) -- their release
+    // callback is a no-op so a tap nudges the heading exactly once, not twice.
+    fn setup_heading_set_buttons(&mut self) {
+        let buttons = vec![
+            PageButton::new(ButtonPosition::Left1, "КУРС+".into(), Box::new(|| {}) as Box<dyn FnMut()>)
+                .with_onpress(Box::new({
+                    let sender = self.smart_event_sender.clone();
+                    move || sender.send(UIEvent::NavHeadingIncrease)
+                }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Left2, "КУРС-".into(), Box::new(|| {}) as Box<dyn FnMut()>)
+                .with_onpress(Box::new({
+                    let sender = self.smart_event_sender.clone();
+                    move || sender.send(UIEvent::NavHeadingDecrease)
+                }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Right4, "ВОЗВ".into(), Box::new({
+                let sender = self.smart_event_sender.clone();
+                move || sender.send(UIEvent::NavHeadingSetExit)
             }) as Box<dyn FnMut()>),
         ];
         self.base.set_buttons(buttons);
@@ -608,6 +635,12 @@ impl Page for GnssPage {
                     } else {
                         self.test_provider = Some(TestGnssDataProvider::start());
                     }
+                },
+                UIEvent::NavHeadingSetMode => {
+                    self.setup_heading_set_buttons();
+                },
+                UIEvent::NavHeadingSetExit => {
+                    self.setup_buttons();
                 },
                 _ => {}
             }

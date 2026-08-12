@@ -27,6 +27,10 @@ const STATUS_LINE_Y_MARGIN : f32 = 25.0;
 
 const PAGE_BUTTON_X_MARGIN: f32 = 4.0;      // Move a little from screen edge for better visibility.
 
+// While a button stays physically held past this interval, its on_press callback fires
+// again (e.g. GNSS page's КУРС+/КУРС- continuous heading adjust).
+const BUTTON_HOLD_REPEAT_INTERVAL: Duration = Duration::from_millis(150);
+
 pub const MAIN_PAGE_ID: u32 = 0;
 pub const DIAG_PAGE_ID: u32 = 1;
 pub const ADC_TERM_PAGE_ID: u32 = 2;
@@ -53,6 +57,7 @@ pub struct PageButton<CB> {
     pos: ButtonPosition,
     pub label: String,
     callback: CB,
+    on_press: Option<CB>,
 }
 
 impl<CB> PageButton<CB>
@@ -60,12 +65,26 @@ where
     CB: FnMut(),
 {
     pub fn new(pos: ButtonPosition, label: String, callback: CB) -> Self {
-        PageButton { pos, label, callback }
+        PageButton { pos, label, callback, on_press: None }
+    }
+
+    // Attaches a callback fired on press, and repeatedly while held (see PageManager's
+    // held-button repeat sweep) -- independent of the release-triggered callback above.
+    pub fn with_onpress(mut self, on_press: CB) -> Self {
+        self.on_press = Some(on_press);
+        self
     }
 
     // Invokes button-specific callback.
     pub fn trigger(&mut self) {
         (self.callback)();
+    }
+
+    // Invokes the on-press callback, if any.
+    pub fn trigger_press(&mut self) {
+        if let Some(on_press) = &mut self.on_press {
+            on_press();
+        }
     }
 
     // Used to match buttons with hardware input.
@@ -200,8 +219,9 @@ pub struct PageManager {
     // Map hardware keys with UI buttons positions.
     buttons_map: HashMap<char, ButtonPosition>,
 
-    // Positions currently held down, used to draw a frame around their label.
-    pressed_positions: std::collections::HashSet<ButtonPosition>,
+    // Positions currently held down, mapped to when their on_press callback last fired.
+    // Used both to draw a frame around the label and to drive the held-button repeat sweep.
+    pressed_positions: HashMap<ButtonPosition, Instant>,
 
     // Event system for UI communication (dual-channel).
     event_bus: EventBus,
@@ -292,7 +312,7 @@ impl PageManager {
             pages: Pages::new(),
             input_handler: InputHandler::new(input_sources),
             buttons_map,
-            pressed_positions: std::collections::HashSet::new(),
+            pressed_positions: HashMap::new(),
             event_bus,
             global_event_receiver,
             smart_event_sender,
@@ -417,7 +437,7 @@ impl PageManager {
     fn set_button_pressed(&mut self, key: char, pressed: bool) {
         if let Some(pos) = self.buttons_map.get(&key).copied() {
             if pressed {
-                self.pressed_positions.insert(pos);
+                self.pressed_positions.insert(pos, Instant::now());
             } else {
                 self.pressed_positions.remove(&pos);
             }
@@ -673,6 +693,9 @@ impl PageManager {
                     ButtonState::Pressed(key) => {
                         log::info!("Button pressed: {}", key);
                         self.set_button_pressed(key, true);
+                        if let Some(button) = self.button_by_key(&key) {
+                            button.trigger_press();
+                        }
                     }
                     ButtonState::Released(key) => {
                         log::info!("Button released: {}", key);
@@ -686,6 +709,22 @@ impl PageManager {
                         }
                     }
                 }
+            }
+
+            // Held-button repeat: re-fire on_press for any position still held past
+            // BUTTON_HOLD_REPEAT_INTERVAL (e.g. GNSS page's КУРС+/КУРС- continuous adjust).
+            // Positions are collected up front since the trigger below needs a fresh
+            // mutable borrow of self for each lookup.
+            let now = Instant::now();
+            let due_positions: Vec<ButtonPosition> = self.pressed_positions.iter()
+                .filter(|(_, &last)| now.duration_since(last) >= BUTTON_HOLD_REPEAT_INTERVAL)
+                .map(|(&pos, _)| pos)
+                .collect();
+            for pos in due_positions {
+                if let Some(button) = self.get_current_page_mut().and_then(|p| p.button_by_position_mut(pos)) {
+                    button.trigger_press();
+                }
+                self.pressed_positions.insert(pos, now);
             }
 
             // Process global UI events (PageManager events only)
@@ -759,10 +798,28 @@ impl PageManager {
                 // raising alerts now that watchdogs read live hardware, not the synthetic sweep.
                 self.alert_manager.set_enabled(true);
             }
+            UIEvent::NavHeadingIncrease => {
+                self.adjust_manual_heading(1.0);
+            }
+            UIEvent::NavHeadingDecrease => {
+                self.adjust_manual_heading(-1.0);
+            }
             _ => {}
         }
     }
     
+    // Nudges the fused heading's manual anchor by delta_deg, based on the currently
+    // displayed heading. No-op if heading fusion isn't running (e.g. BNO085 or GNSS
+    // provider failed to start).
+    fn adjust_manual_heading(&mut self, delta_deg: f32) {
+        let current = self.sensor_manager.get_sensor_value(&HWInput::HwHeading)
+            .map(|v| v.as_f32())
+            .unwrap_or(0.0);
+        if let Some(heading_fusion) = self.heading_fusion.as_mut() {
+            heading_fusion.set_manual_heading((current + delta_deg).rem_euclid(360.0));
+        }
+    }
+
     fn get_button_position(&self, pos: &ButtonPosition, _orientation: &String) -> (f32, f32) {
         let screen_width = self.context.width as f32;
         let screen_height = self.context.height as f32 - STATUS_LINE_Y_MARGIN;
@@ -885,7 +942,7 @@ impl PageManager {
             let current_page = self.get_current_page().unwrap();
             current_page.buttons()
                 .iter()
-                .map(|button| (*button.position(), button.label().to_string(), self.pressed_positions.contains(button.position())))
+                .map(|button| (*button.position(), button.label().to_string(), self.pressed_positions.contains_key(button.position())))
                 .collect()
         };
 

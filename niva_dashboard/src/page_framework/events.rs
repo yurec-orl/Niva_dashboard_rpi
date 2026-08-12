@@ -43,6 +43,10 @@ pub enum UIEvent {
     NavInfoMode,
     NavMapMode,
     NavToggleGnssTest,
+    NavHeadingSetMode,     // Enter the КУРС+/КУРС- manual heading button set
+    NavHeadingSetExit,     // Leave the manual heading button set, back to the primary one
+    NavHeadingIncrease,    // Nudge the manual heading anchor +1 deg (needs PageManager's heading_fusion)
+    NavHeadingDecrease,    // Nudge the manual heading anchor -1 deg (needs PageManager's heading_fusion)
 
     // Alert events
     SuppressAlerts,
@@ -201,7 +205,10 @@ impl SmartEventSender {
             UIEvent::SetBrightness(_) |
             UIEvent::SwitchToPage(_) |
             UIEvent::SuppressAlerts |
-            UIEvent::SwitchSensorSet => {
+            UIEvent::SwitchSensorSet |
+            // Manual heading anchor lives in PageManager's heading_fusion, not the page.
+            UIEvent::NavHeadingIncrease |
+            UIEvent::NavHeadingDecrease => {
                 self.global_sender.send(event);
             }
             // Page-specific events go to current page
@@ -222,7 +229,9 @@ impl SmartEventSender {
             UIEvent::NavPnpMode |
             UIEvent::NavInfoMode |
             UIEvent::NavMapMode |
-            UIEvent::NavToggleGnssTest => {
+            UIEvent::NavToggleGnssTest |
+            UIEvent::NavHeadingSetMode |
+            UIEvent::NavHeadingSetExit => {
                 self.page_sender.send(event);
             }
         }
@@ -288,6 +297,8 @@ mod tests {
             UIEvent::Restart,
             UIEvent::SuppressAlerts,
             UIEvent::SwitchSensorSet,
+            UIEvent::NavHeadingIncrease,
+            UIEvent::NavHeadingDecrease,
         ]
     }
 
@@ -309,6 +320,8 @@ mod tests {
             UIEvent::OscSetVoltageScale(1.0),
             UIEvent::OscSetTriggerLevel(1.0),
             UIEvent::OscToggleChannel(0),
+            UIEvent::NavHeadingSetMode,
+            UIEvent::NavHeadingSetExit,
         ]
     }
 
@@ -323,7 +336,7 @@ mod tests {
             smart_sender.send(event);
         }
 
-        assert_eq!(global_receiver.try_iter().count(), 8, "every global-tagged event must land on the global channel");
+        assert_eq!(global_receiver.try_iter().count(), 10, "every global-tagged event must land on the global channel");
         assert!(page_receiver.try_recv().is_err(), "no global-tagged event should leak onto the page channel");
     }
 
@@ -338,7 +351,7 @@ mod tests {
             smart_sender.send(event);
         }
 
-        assert_eq!(page_receiver.try_iter().count(), 14, "every page-tagged event must land on the page channel");
+        assert_eq!(page_receiver.try_iter().count(), 16, "every page-tagged event must land on the page channel");
         assert!(global_receiver.try_recv().is_err(), "no page-tagged event should leak onto the global channel");
     }
 }
