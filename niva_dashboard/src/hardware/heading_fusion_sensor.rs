@@ -24,18 +24,18 @@ use std::time::{Duration, Instant};
 /// GNSS course_deg is dominated by position noise below this speed -- not yet validated
 /// against a real moving trial (see HEADING_FUSION_DESIGN.md "Open decisions"), just a
 /// starting point pending field data.
-const MIN_SPEED_FOR_COURSE_KMH: f32 = 5.0;
+const MIN_SPEED_FOR_COURSE_KMH: f32 = 10.0;
 
 /// GNSS heading_deg is only fed into the sustained-agreement check when its own reported
 /// std-dev is at least this tight. Provisional -- see "Open decisions" in the design doc.
-const HEADING_STD_DEV_MAX_DEG: f32 = 5.0;
+const HEADING_STD_DEV_MAX_DEG: f32 = 30.0;
 
 /// Sustained-agreement window: a GNSS candidate is only validated once at least
 /// AGREEMENT_MIN_SAMPLES readings taken within this trailing window all agree with each other
 /// to within AGREEMENT_TOLERANCE_DEG. Provisional -- see "Open decisions" in the design doc.
 const AGREEMENT_WINDOW: Duration = Duration::from_secs(5);
 const AGREEMENT_MIN_SAMPLES: usize = 5;
-const AGREEMENT_TOLERANCE_DEG: f32 = 10.0;
+const AGREEMENT_TOLERANCE_DEG: f32 = 15.0;
 
 /// How fast a validated correction is allowed to visually ramp in, so a large correction
 /// doesn't read as a needle glitch. Provisional -- see "Open decisions" in the design doc.
@@ -73,6 +73,20 @@ const MANUAL_ANCHOR_ACCURACY_DEG: f32 = 0.0;
 /// long uncorrected stretch. Not a claim about actual BNO085 drift bounds -- long-duration Game
 /// RV drift is explicitly uncharacterized (see design doc "Deferred").
 const MAX_DISPLAYED_ACCURACY_DEG: f32 = 90.0;
+
+/// BNO085 Game Rotation Vector's first report(s) after a (re)connect can reflect a not-yet-
+/// settled integration reference rather than the board's true current orientation -- observed
+/// in practice as a persisted-prior anchor landing 100+ degrees off after a restart with the
+/// board physically untouched (the offset math is otherwise self-canceling: it reproduces
+/// `persisted_deg` exactly on the tick it's computed, so an unsettled `raw` bakes that
+/// convergence error in as a permanent offset, since nothing else re-anchors PersistedPrior
+/// until a validated GNSS fix arrives). Reuses the same sustained-agreement mechanism as the
+/// GNSS gates (SustainedAgreement), just with a much shorter window since this is about sensor
+/// settle time, not distrust of noisy external data. Provisional -- not yet checked against how
+/// long a real settle actually takes.
+const GAME_RV_SETTLE_WINDOW: Duration = Duration::from_millis(500);
+const GAME_RV_SETTLE_MIN_SAMPLES: usize = 5;
+const GAME_RV_SETTLE_TOLERANCE_DEG: f32 = 2.0;
 
 /// Mirrors HEADING_FUSION_DESIGN.md's "Confidence tiers". Coded the same way
 /// `nmea::FixQuality::code()` is, so it can be surfaced as a plain analog value
@@ -127,12 +141,15 @@ fn circular_signed_diff_deg(target: f32, from: f32) -> f32 {
 /// window-sill GNSS heading_deg trials) can't pass this on its own no matter how tight its own
 /// reported accuracy claims to be.
 struct SustainedAgreement {
+    window: Duration,
+    min_samples: usize,
+    tolerance_deg: f32,
     samples: VecDeque<(Instant, f32)>,
 }
 
 impl SustainedAgreement {
-    fn new() -> Self {
-        SustainedAgreement { samples: VecDeque::new() }
+    fn new(window: Duration, min_samples: usize, tolerance_deg: f32) -> Self {
+        SustainedAgreement { window, min_samples, tolerance_deg, samples: VecDeque::new() }
     }
 
     /// Feeds one candidate reading that already passed this source's own eligibility gate
@@ -141,14 +158,14 @@ impl SustainedAgreement {
     fn push(&mut self, now: Instant, value_deg: f32) -> Option<f32> {
         self.samples.push_back((now, value_deg));
         while let Some(&(t, _)) = self.samples.front() {
-            if now.saturating_duration_since(t) > AGREEMENT_WINDOW {
+            if now.saturating_duration_since(t) > self.window {
                 self.samples.pop_front();
             } else {
                 break;
             }
         }
 
-        if self.samples.len() < AGREEMENT_MIN_SAMPLES {
+        if self.samples.len() < self.min_samples {
             return None;
         }
 
@@ -160,7 +177,7 @@ impl SustainedAgreement {
             }
         }
 
-        if max_spread <= AGREEMENT_TOLERANCE_DEG {
+        if max_spread <= self.tolerance_deg {
             Some(value_deg)
         } else {
             None
@@ -249,6 +266,11 @@ pub struct HeadingFusionSensor {
 
     course_agreement: SustainedAgreement,
     heading_agreement: SustainedAgreement,
+    /// Settle check for the raw Game RV baseline used by `apply_persisted_prior_if_ready` --
+    /// see GAME_RV_SETTLE_WINDOW's doc comment for why this exists. Not consulted by the GNSS
+    /// anchor paths, which already have an effective warm-up delay from their own multi-second
+    /// agreement windows.
+    game_rv_settle: SustainedAgreement,
 
     /// Heading loaded from disk at construction, not yet folded into `correction_offset_deg`
     /// because that requires a Game RV baseline (BNO085 may not have reported yet).
@@ -287,8 +309,9 @@ impl HeadingFusionSensor {
             game_rv_deg: None,
             last_correction_instant: None,
             accuracy_deg: None,
-            course_agreement: SustainedAgreement::new(),
-            heading_agreement: SustainedAgreement::new(),
+            course_agreement: SustainedAgreement::new(AGREEMENT_WINDOW, AGREEMENT_MIN_SAMPLES, AGREEMENT_TOLERANCE_DEG),
+            heading_agreement: SustainedAgreement::new(AGREEMENT_WINDOW, AGREEMENT_MIN_SAMPLES, AGREEMENT_TOLERANCE_DEG),
+            game_rv_settle: SustainedAgreement::new(GAME_RV_SETTLE_WINDOW, GAME_RV_SETTLE_MIN_SAMPLES, GAME_RV_SETTLE_TOLERANCE_DEG),
             pending_persisted_deg,
             persist_path,
             last_persisted_deg: None,
@@ -388,7 +411,8 @@ impl HeadingFusionSensor {
 
         let game_rv_before = self.game_rv_deg;
         self.integrate_game_rv();
-        self.apply_persisted_prior_if_ready();
+        let settled_game_rv = self.settled_game_rv(now);
+        self.apply_persisted_prior_if_ready(settled_game_rv);
 
         let validated = self.validated_gnss_correction(now);
         self.apply_correction(&validated, now);
@@ -410,7 +434,12 @@ impl HeadingFusionSensor {
     /// for. `displayed_heading()`/`advance_display_offset` combine it with the correction
     /// offsets at read/slew time, so no rotation math happens here.
     fn integrate_game_rv(&mut self) {
-        if self.bno_frame.is_stale() {
+        // Not bno_frame.is_stale() -- that's bumped by *any* of the BNO085's report types, so
+        // it can read "fresh" before Game RV specifically has ever reported (see
+        // Bno085Frame::game_orientation_last_update's doc comment). Using it here let a
+        // phantom Default::default() game_orientation (heading_deg: 0.0) get treated as a real
+        // reading.
+        if self.bno_frame.game_orientation_is_stale() {
             return;
         }
         self.game_rv_deg = Some(self.bno_frame.game_orientation().heading_deg);
@@ -426,15 +455,29 @@ impl HeadingFusionSensor {
         }
     }
 
-    /// Folds a loaded-from-disk prior into `correction_offset_deg` the first tick a Game RV
-    /// baseline becomes available. Deferred from `new()` because the BNO085 may not have
-    /// reported yet at construction time.
-    fn apply_persisted_prior_if_ready(&mut self) {
+    /// Feeds this tick's raw Game RV reading into `game_rv_settle` and returns it back once
+    /// it's held steady for GAME_RV_SETTLE_WINDOW -- see that constant's doc comment. None
+    /// while the reading is missing (BNO085 stale) or still settling; resets the tracker on a
+    /// dropout so a later reconnect (which may itself carry a fresh, unsettled reference) has
+    /// to settle again rather than trusting samples from before the gap.
+    fn settled_game_rv(&mut self, now: Instant) -> Option<f32> {
+        let Some(raw) = self.game_rv_deg else {
+            self.game_rv_settle.reset();
+            return None;
+        };
+        self.game_rv_settle.push(now, raw)
+    }
+
+    /// Folds a loaded-from-disk prior into `correction_offset_deg` the first tick a *settled*
+    /// Game RV baseline becomes available -- see `settled_game_rv`/GAME_RV_SETTLE_WINDOW for
+    /// why this waits rather than using the first raw reading. Deferred from `new()` because
+    /// the BNO085 may not have reported (or settled) yet at construction time.
+    fn apply_persisted_prior_if_ready(&mut self, settled_game_rv: Option<f32>) {
         if self.correction_offset_deg.is_some() {
             return;
         }
         let Some(persisted_deg) = self.pending_persisted_deg else { return };
-        let Some(raw) = self.game_rv_deg else { return };
+        let Some(raw) = settled_game_rv else { return };
         self.correction_offset_deg = Some(persisted_deg - raw);
         self.confidence = HeadingConfidence::PersistedPrior;
         self.pending_persisted_deg = None;
@@ -755,8 +798,56 @@ mod tests {
         sensor.pending_persisted_deg = HeadingFusionSensor::load_persisted(&path);
 
         bno_frame.set_game_heading_for_test(123.0);
+        // Game RV must hold steady for GAME_RV_SETTLE_MIN_SAMPLES ticks before the persisted
+        // prior is trusted as a baseline -- see GAME_RV_SETTLE_WINDOW.
+        for _ in 0..(GAME_RV_SETTLE_MIN_SAMPLES - 1) {
+            sensor.tick();
+        }
         let HeadingFusionOutput { heading, confidence, .. } = sensor.tick();
         assert!((heading.as_f32() - 123.0).abs() < 0.5);
+        assert_eq!(confidence.as_f32() as i32, HeadingConfidence::PersistedPrior.code());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_persisted_prior_ignores_unsettled_first_game_rv_reading() {
+        // Reproduces a real bug: rotate the board so the running session reads heading=100,
+        // restart the program with the board physically untouched -- the persisted prior
+        // should still read ~100 after restart, not whatever the BNO085's first, not-yet-
+        // converged Game RV report happened to be.
+        let dir = std::env::temp_dir().join(format!("niva_heading_test_settle_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("heading.json");
+        std::fs::write(&path, r#"{"heading_deg":100.0,"timestamp_unix_secs":0}"#).unwrap();
+
+        let gnss_frame = GnssFrame::for_test();
+        let bno_frame = Bno085Frame::for_test();
+        let mut sensor = HeadingFusionSensor::new(gnss_frame, bno_frame.clone());
+        sensor.persist_path = path.clone();
+        sensor.pending_persisted_deg = HeadingFusionSensor::load_persisted(&path);
+
+        let mut t = Instant::now();
+
+        // First report after "reconnect" is a not-yet-converged transient, wildly different
+        // from the board's true (unmoved) orientation.
+        bno_frame.set_game_heading_for_test(0.0);
+        assert_eq!(sensor.tick_at(t).heading.value, ValueData::Empty,
+                   "must not anchor off a single unsettled reading");
+
+        // It settles to its true, steady value -- advance the clock past GAME_RV_SETTLE_WINDOW
+        // first so the stale transient sample ages out of the tracker instead of polluting the
+        // settle check.
+        t += GAME_RV_SETTLE_WINDOW + Duration::from_millis(1);
+        bno_frame.set_game_heading_for_test(355.0);
+        for _ in 0..(GAME_RV_SETTLE_MIN_SAMPLES - 1) {
+            t += Duration::from_millis(20);
+            sensor.tick_at(t);
+        }
+        t += Duration::from_millis(20);
+        let HeadingFusionOutput { heading, confidence, .. } = sensor.tick_at(t);
+        assert!((heading.as_f32() - 100.0).abs() < 0.5,
+                 "expected persisted 100 deg anchored off the settled reading, got {}", heading.as_f32());
         assert_eq!(confidence.as_f32() as i32, HeadingConfidence::PersistedPrior.code());
 
         let _ = std::fs::remove_dir_all(&dir);

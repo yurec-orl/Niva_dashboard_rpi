@@ -77,6 +77,15 @@ pub struct Bno085Frame {
     geomagnetic_orientation: Arc<Mutex<Bno085Orientation>>,
     acceleration: Arc<Mutex<Bno085Acceleration>>,
     last_update: Arc<Mutex<Instant>>,
+    /// Separate from `last_update`: that shared timestamp is bumped by *any* of the four
+    /// report types, so `is_stale()` alone can't tell "frame's alive" apart from "alive, but
+    /// Game RV specifically hasn't reported yet" -- if a Rotation Vector or Accelerometer
+    /// report happens to arrive first, `is_stale()` goes false while `game_orientation` is
+    /// still sitting at `Default::default()` (heading_deg: 0.0). Consumers that need Game RV
+    /// specifically (heading_fusion_sensor) must check `game_orientation_is_stale()` instead --
+    /// observed in practice as a persisted-heading anchor locking onto a phantom 0.0 deg
+    /// "reading" moments before the real first Game RV report landed.
+    game_orientation_last_update: Arc<Mutex<Instant>>,
 }
 
 impl Bno085Frame {
@@ -87,6 +96,7 @@ impl Bno085Frame {
             geomagnetic_orientation: Arc::new(Mutex::new(Bno085Orientation::default())),
             acceleration: Arc::new(Mutex::new(Bno085Acceleration::default())),
             last_update: Arc::new(Mutex::new(Instant::now() - READING_MAX_AGE)),
+            game_orientation_last_update: Arc::new(Mutex::new(Instant::now() - READING_MAX_AGE)),
         }
     }
 
@@ -125,6 +135,13 @@ impl Bno085Frame {
         self.last_update.lock().unwrap().elapsed() > READING_MAX_AGE
     }
 
+    /// True if Game Rotation Vector specifically hasn't reported within READING_MAX_AGE --
+    /// see `game_orientation_last_update`'s doc comment for why this must be checked instead
+    /// of (not in addition to) `is_stale()` before trusting `game_orientation()`.
+    pub fn game_orientation_is_stale(&self) -> bool {
+        self.game_orientation_last_update.lock().unwrap().elapsed() > READING_MAX_AGE
+    }
+
     /// Directly injects a Game RV heading for tests that need exact values at exact moments
     /// (e.g. heading_fusion_sensor's state machine tests), bypassing the quaternion decoding
     /// set_game_orientation does for real reports -- constructing a GameRotationVectorReport
@@ -139,6 +156,7 @@ impl Bno085Frame {
             accuracy: None,
         };
         *self.last_update.lock().unwrap() = Instant::now();
+        *self.game_orientation_last_update.lock().unwrap() = Instant::now();
     }
 
     #[cfg(test)]
@@ -180,6 +198,7 @@ impl Bno085Frame {
             accuracy: None,
         };
         *self.last_update.lock().unwrap() = Instant::now();
+        *self.game_orientation_last_update.lock().unwrap() = Instant::now();
     }
 
     fn set_acceleration(&self, report: crate::util::bno085_protocol::AccelerometerReport) {

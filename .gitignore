@@ -85,3 +85,6 @@ sensor_logs/
 
 # Build scripts output
 build.rs.out
+
+# Program state and configuration files
+/State/*
