@@ -183,7 +183,12 @@ impl GameRotationVectorReport {
 /// RotationVectorReport and GameRotationVectorReport — same math, just applied to quaternions
 /// from different fusion inputs.
 fn quat_to_euler_rad(i: f32, j: f32, k: f32, r: f32) -> (f32, f32, f32) {
-    let yaw = (2.0 * (r * k + i * j)).atan2(1.0 - 2.0 * (j * j + k * k));
+    // The textbook ZYX formula gives yaw as a right-handed rotation about the (up-pointing) Z
+    // axis, i.e. positive = counter-clockwise viewed from above. heading_deg (both call sites
+    // in bno085_data_provider.rs) needs compass convention: positive = clockwise viewed from
+    // above. Negate here, at the shared source, so all three heading consumers (Rotation
+    // Vector, Geomagnetic RV, Game RV) stay consistent.
+    let yaw = -(2.0 * (r * k + i * j)).atan2(1.0 - 2.0 * (j * j + k * k));
     let roll = (2.0 * (r * i + j * k)).atan2(1.0 - 2.0 * (i * i + j * j));
     let pitch = (2.0 * (r * j - k * i)).clamp(-1.0, 1.0).asin();
     (yaw, pitch, roll)
