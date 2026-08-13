@@ -300,8 +300,35 @@ impl MainPage {
         IndicatorSet { indicators, inputs, indicator_bounds }
     }
 
-    // Setup default buttons for main page using event system
+    // Primary button set, shown on entering the page and after returning from the
+    // secondary set (ВОЗВР). УСТАНОВ swaps to the secondary set below.
     fn setup_buttons(&mut self) {
+        let smart_sender = self.smart_event_sender.clone();
+        let buttons = vec![
+            PageButton::new(ButtonPosition::Left1, "НАВ".into(), Box::new({
+                let sender = smart_sender.clone();
+                move || sender.send(UIEvent::SwitchToPage(GNSS_PAGE_ID))
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Left4, "СБРОС".into(), Box::new({
+                let sender = smart_sender.clone();
+                move || sender.send(UIEvent::SuppressAlerts)
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Right3, "УСТАНОВ".into(), Box::new({
+                let sender = smart_sender.clone();
+                move || sender.send(UIEvent::MainSecondaryButtons)
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Right4, "ДИАГ".into(), Box::new({
+                let sender = smart_sender.clone();
+                move || sender.send(UIEvent::SwitchToPage(DIAG_PAGE_ID))
+            }) as Box<dyn FnMut()>),
+        ];
+
+        self.base.set_buttons(buttons);
+    }
+
+    // Secondary button set, entered via УСТАНОВ. Holds the view/brightness controls freed
+    // from the primary set's left1/left2/right1/right2 slots; ВОЗВР returns to primary.
+    fn setup_secondary_buttons(&mut self) {
         let smart_sender = self.smart_event_sender.clone();
         let buttons = vec![
             PageButton::new(ButtonPosition::Left1, "ВИД+".into(), Box::new({
@@ -312,14 +339,6 @@ impl MainPage {
                 let sender = smart_sender.clone();
                 move || sender.send(UIEvent::PreviousIndicatorSet)
             }) as Box<dyn FnMut()>),
-            PageButton::new(ButtonPosition::Left3, "НАВ".into(), Box::new({
-                let sender = smart_sender.clone();
-                move || sender.send(UIEvent::SwitchToPage(GNSS_PAGE_ID))
-            }) as Box<dyn FnMut()>),
-            PageButton::new(ButtonPosition::Left4, "СБРОС".into(), Box::new({
-                let sender = smart_sender.clone();
-                move || sender.send(UIEvent::SuppressAlerts)
-            }) as Box<dyn FnMut()>),
             PageButton::new(ButtonPosition::Right1, "ЯРК+".into(), Box::new({
                 let sender = smart_sender.clone();
                 move || sender.send(UIEvent::BrightnessUp)
@@ -328,9 +347,9 @@ impl MainPage {
                 let sender = smart_sender.clone();
                 move || sender.send(UIEvent::BrightnessDown)
             }) as Box<dyn FnMut()>),
-            PageButton::new(ButtonPosition::Right4, "ДИАГ".into(), Box::new({
+            PageButton::new(ButtonPosition::Right4, "ВОЗВР".into(), Box::new({
                 let sender = smart_sender.clone();
-                move || sender.send(UIEvent::SwitchToPage(DIAG_PAGE_ID))
+                move || sender.send(UIEvent::MainPrimaryButtons)
             }) as Box<dyn FnMut()>),
         ];
 
@@ -415,6 +434,12 @@ impl Page for MainPage {
                 crate::page_framework::events::UIEvent::PreviousIndicatorSet => {
                     log::info!("MainPage: PreviousIndicatorSet event received");
                     self.previous_indicator_set();
+                }
+                crate::page_framework::events::UIEvent::MainSecondaryButtons => {
+                    self.setup_secondary_buttons();
+                }
+                crate::page_framework::events::UIEvent::MainPrimaryButtons => {
+                    self.setup_buttons();
                 }
                 crate::page_framework::events::UIEvent::ButtonPressed(action) => {
                     match action.as_str() {

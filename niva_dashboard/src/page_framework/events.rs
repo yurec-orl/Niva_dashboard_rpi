@@ -15,6 +15,8 @@ pub enum UIEvent {
     // Main page events
     NextIndicatorSet,
     PreviousIndicatorSet,
+    MainSecondaryButtons,  // Enter the secondary button set (via УСТАНОВ)
+    MainPrimaryButtons,    // Leave the secondary button set, back to the primary one
 
     // System events
     Shutdown,
@@ -214,6 +216,8 @@ impl SmartEventSender {
             // Page-specific events go to current page
             UIEvent::NextIndicatorSet |
             UIEvent::PreviousIndicatorSet |
+            UIEvent::MainSecondaryButtons |
+            UIEvent::MainPrimaryButtons |
             UIEvent::ButtonPressed(_) |
             UIEvent::ShowSensorInfo |
             UIEvent::ShowECUInfo |
@@ -308,6 +312,8 @@ mod tests {
         vec![
             UIEvent::NextIndicatorSet,
             UIEvent::PreviousIndicatorSet,
+            UIEvent::MainSecondaryButtons,
+            UIEvent::MainPrimaryButtons,
             UIEvent::ButtonPressed("test".to_string()),
             UIEvent::ShowSensorInfo,
             UIEvent::ShowECUInfo,
