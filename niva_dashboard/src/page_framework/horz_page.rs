@@ -18,6 +18,13 @@ const PITCH_INDICATOR_HEIGHT_FRAC: f32 = 0.75;
 /// RollIndicator's doc comment for why its pivot is placed at the pitch indicator's center.
 const ROLL_INDICATOR_WIDTH_FRAC: f32 = 1.5;
 
+const INFO_X_MARGIN: f32 = 30.0;
+const INFO_Y: f32 = 5.0;
+
+/// Standard gravity, used to convert Bno085Acceleration's m/s^2 (chip's native unit) to g's
+/// for the INS info block. Duplicated from gnss_page.rs, which has its own page-local copy.
+const STANDARD_GRAVITY_MPS2: f32 = 9.80665;
+
 /// Inclinometer page: aircraft-style artificial horizon (pitch ladder + roll pointer), both
 /// driven by the BNO085 Game Rotation Vector.
 pub struct HorzPage {
@@ -63,6 +70,62 @@ impl HorzPage {
         }
     }
 
+    fn na() -> String {
+        "н/д".to_string()
+    }
+
+    /// INS info block (link status, pitch/roll, acceleration), mirroring GnssPage's
+    /// InsLinkStatus + InsData blocks -- lines are (text, is_header, is_warning) tuples for
+    /// render_info_lines to color.
+    fn get_ins_info_lines(&self) -> Vec<(String, bool, bool)> {
+        let stale = self.bno_frame.as_ref().map(|f| f.game_orientation_is_stale()).unwrap_or(true);
+        let link_str = if stale { "НЕТ СВЯЗИ" } else { "НОРМА" }.to_string();
+
+        let (pitch_str, roll_str) = if stale {
+            (Self::na(), Self::na())
+        } else {
+            (format!("{:.1}\u{00B0}", self.pitch_deg()), format!("{:.1}\u{00B0}", self.roll_deg()))
+        };
+
+        let (accel_x_str, accel_y_str, accel_z_str) = match &self.bno_frame {
+            Some(f) if !f.is_stale() => {
+                let a = f.acceleration();
+                (
+                    format!("{:.1} g", a.x_mps2 / STANDARD_GRAVITY_MPS2),
+                    format!("{:.1} g", a.y_mps2 / STANDARD_GRAVITY_MPS2),
+                    format!("{:.1} g", a.z_mps2 / STANDARD_GRAVITY_MPS2),
+                )
+            },
+            _ => (Self::na(), Self::na(), Self::na()),
+        };
+
+        vec![
+            (format!("ИНС:   {}", link_str), false, stale),
+            (String::new(), false, false),
+            (format!("ТАНГАЖ:{}", pitch_str), false, false),
+            (format!("КРЕН:  {}", roll_str), false, false),
+            (String::new(), false, false),
+            (format!("УСК X: {}", accel_x_str), false, false),
+            (format!("УСК Y: {}", accel_y_str), false, false),
+            (format!("УСК Z: {}", accel_z_str), false, false),
+        ]
+    }
+
+    fn render_info_lines(&self, lines: &Vec<(String, bool, bool)>, position: (f32, f32), context: &mut GraphicsContext, colors: &[(f32, f32, f32)], font: &String, font_size: u32) -> Result<(), String> {
+        let mut y = position.1;
+        let line_height = context.get_line_height_with_font(1.0, &font, font_size)?;
+
+        for (text, is_header, is_warning) in lines {
+            if !text.is_empty() {
+                let color = if *is_header { colors[2] } else if *is_warning { colors[1] } else { colors[0] };
+                context.render_text_with_font(text, position.0, y, 1.0, color, &font, font_size)?;
+            }
+            y += line_height;
+        }
+
+        Ok(())
+    }
+
     fn setup_buttons(&mut self) {
         let buttons = vec![
             PageButton::new(ButtonPosition::Right4, "ВОЗВР".into(), Box::new({
@@ -106,6 +169,15 @@ impl Page for HorzPage {
 
         let roll_value = SensorValue::analog(self.roll_deg(), -180.0, 180.0, "\u{00B0}", "КРЕН", "bno085_game_roll");
         self.roll_indicator.render(&roll_value, roll_bounds, ui_style, context)?;
+
+        let header_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (1.0, 1.0, 1.0));
+        let text_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (0.8, 0.8, 0.8));
+        let warning_color = ui_style.get_color(TEXT_WARNING_COLOR, (1.0, 1.0, 0.0));
+        let font = ui_style.get_string(TEXT_MONOSPACE_FONT, TERMINAL_FONT_PATH);
+        let font_size = ui_style.get_integer(TEXT_MONOSPACE_FONT_SIZE, 16);
+
+        let ins_lines = self.get_ins_info_lines();
+        self.render_info_lines(&ins_lines, (INFO_X_MARGIN, INFO_Y), context, &[text_color, warning_color, header_color], &font, font_size)?;
 
         Ok(())
     }
