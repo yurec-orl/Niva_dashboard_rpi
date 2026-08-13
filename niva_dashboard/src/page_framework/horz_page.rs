@@ -5,9 +5,12 @@ use crate::hardware::sensor_value::SensorValue;
 use crate::page_framework::events::{EventReceiver, SmartEventSender, UIEvent};
 use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition, MAIN_PAGE_ID};
 use crate::hardware::sensor_manager::SensorManager;
+use crate::hardware::hw_providers::HWInput;
 use crate::indicators::indicator::{Indicator, IndicatorBounds};
 use crate::indicators::pitch_indicator::PitchIndicator;
 use crate::indicators::roll_indicator::{RollIndicator, RollScaleDecorator};
+use crate::indicators::text_indicator::{TextIndicator, TextAlignment};
+use crate::indicators::decorator::*;
 use crate::util::bno085_data_provider::Bno085Frame;
 
 /// Fraction of screen width/height the pitch indicator occupies.
@@ -35,10 +38,14 @@ pub struct HorzPage {
     bno_frame: Option<Bno085Frame>,
     pitch_indicator: PitchIndicator,
     roll_indicator: RollIndicator,
+    heading_indicator: TextIndicator,
 }
 
 impl HorzPage {
-    pub fn new(id: u32, smart_event_sender: SmartEventSender, event_receiver: EventReceiver, bno_frame: Option<Bno085Frame>) -> Self {
+    pub fn new(id: u32, smart_event_sender: SmartEventSender, event_receiver: EventReceiver, bno_frame: Option<Bno085Frame>, ui_style: &UIStyle) -> Self {
+        let heading_label_color = ui_style.get_color(COMPASS_HEADING_COLOR, (0.9, 0.9, 1.0));
+        let heading_label_font = ui_style.get_string(COMPASS_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
+
         let mut page = HorzPage {
             base: PageBase::new(id, "Horz".to_string()),
             smart_event_sender,
@@ -46,6 +53,11 @@ impl HorzPage {
             bno_frame,
             pitch_indicator: PitchIndicator::new().with_visible_span_deg(50.0),
             roll_indicator: RollIndicator::new().with_decorators(vec![Box::new(RollScaleDecorator::new())]),
+            heading_indicator: TextIndicator::new().with_font(heading_label_font, 36, 1.0).with_colors(heading_label_color, (1.0, 1.0, 0.0), (1.0, 0.0, 0.0)).
+                with_parameters(TextAlignment::Center, false, false, true).with_decorators(vec![
+                    Box::new(BoxDecorator::new(2.0, COMPASS_HEADING_COLOR, 0.0)),
+                    //Box::new(TriangleDecorator::new([(0.5, 1.5), (0.35, 1.2), (0.65, 1.2)], 2.0, COMPASS_HEADING_COLOR, true)),
+                ]),
         };
 
         page.setup_buttons();
@@ -160,7 +172,7 @@ impl Page for HorzPage {
         self.base.set_buttons(buttons);
     }
 
-    fn render(&self, context: &mut GraphicsContext, _sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
+    fn render(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
         let screen_width = context.width as f32;
         let screen_height = context.height as f32;
         let width = screen_width * PITCH_INDICATOR_WIDTH_FRAC;
@@ -188,6 +200,19 @@ impl Page for HorzPage {
 
         let ins_lines = self.get_ins_info_lines();
         self.render_info_lines(&ins_lines, (INFO_X_MARGIN, INFO_Y), context, &[text_color, warning_color, header_color], &font, font_size)?;
+
+        // Aux heading indicator
+
+        let heading_font = ui_style.get_string(COMPASS_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
+        let heading_font_height = context.get_line_height_with_font(1.0, &heading_font, 36)?;
+        let heading_font_width = context.calculate_text_width_with_font("0000", 1.0, &heading_font, 36)?;
+
+        let heading_bounds = IndicatorBounds::new((screen_width - heading_font_width) / 2.0, 8.0, heading_font_width, heading_font_height);        
+        let heading_value = match sensor_manager.get_sensor_value(&HWInput::HwHeading) {
+            Some(value) if value.value != crate::hardware::sensor_value::ValueData::Empty => value.clone(),
+            _ => SensorValue::analog(0.0, 0.0, 359.999, "\u{00B0}", "КУРС", "heading_fused"),
+        };
+        self.heading_indicator.render(&heading_value, heading_bounds, &ui_style, context)?;
 
         Ok(())
     }

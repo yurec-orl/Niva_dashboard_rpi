@@ -507,7 +507,8 @@ impl PageManager {
         let horz_page = Box::new(HorzPage::new(HORZ_PAGE_ID,
                                                 smart_sender.clone(),
                                                 self.get_event_receiver(),
-                                                self.bno_frame.clone()));
+                                                self.bno_frame.clone(),
+                                                &self.ui_style));
 
         self.add_page(main_page);
         self.add_page(diag_page);
