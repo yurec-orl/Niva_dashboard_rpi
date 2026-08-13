@@ -16,6 +16,7 @@ use crate::util::adc_data_provider::ADCFrame;
 use crate::util::gnss_data_provider::GnssFrame;
 use crate::util::bno085_data_provider::Bno085Frame;
 use crate::util::ups_monitor::UpsMonitor;
+use crate::util::config::Config;
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -154,6 +155,14 @@ pub trait Page {
     // Process events specific to this page (MPMC allows each page to have its own receiver)
     fn process_events(&mut self) {}
 
+    // Returns this page's persistable settings as JSON, or `Value::Null` if it has none.
+    // PageManager stores/restores this opaquely (see util::config::Config), without knowing
+    // any page's own settings shape.
+    fn get_config(&self) -> serde_json::Value { serde_json::Value::Null }
+    // Restores settings previously returned by `get_config` (or `Value::Null` on first run /
+    // no prior entry) -- implementations must tolerate Null and missing/stale fields.
+    fn set_config(&mut self, _config: &serde_json::Value) {}
+
     fn buttons(&self) -> &Vec<PageButton<Box<dyn FnMut()>>>;
     fn set_buttons(&mut self, buttons: Vec<PageButton<Box<dyn FnMut()>>>);
 
@@ -194,6 +203,10 @@ impl Pages {
         }
         None
     }
+
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, Box<dyn Page>> {
+        self.pages.iter_mut()
+    }
 }
 
 // PageManager is responsible for managing multiple pages and their transitions,
@@ -212,6 +225,10 @@ pub struct PageManager {
     pg_id: u32,             // Page incremental id, depends on page creation order.
     current_page: Option<u32>,
     pages: Pages,
+
+    // Per-page persisted settings + last-opened page, loaded once at startup and updated on
+    // every page switch (see Page::get_config/set_config).
+    config: Config,
 
     // Input handling from gpio buttons, external keyboard, etc.
     input_handler: InputHandler,
@@ -310,6 +327,7 @@ impl PageManager {
             pg_id: 0,
             current_page: None,
             pages: Pages::new(),
+            config: Config::load(),
             input_handler: InputHandler::new(input_sources),
             buttons_map,
             pressed_positions: HashMap::new(),
@@ -414,9 +432,17 @@ impl PageManager {
         }
 
         // Call on_exit for old page first.
+        let outgoing_id = self.current_page;
         if let Some(current) = self.get_current_page_mut() {
             current.on_exit()?;
         }
+
+        // Persist the outgoing page's config (post on_exit, so its freshest state is
+        // captured) and record the page we're switching to as the one to reopen next
+        // launch -- done on every switch, not just at shutdown, so an unclean exit right
+        // after doesn't lose either.
+        let outgoing = outgoing_id.and_then(|id| self.get_page(id).map(|p| (id, p.get_config())));
+        self.config.record_switch(outgoing, page_id);
 
         self.current_page = Some(page_id);
 
@@ -465,8 +491,6 @@ impl PageManager {
                                                        self.get_event_receiver()));
 
         self.add_page(main_page);
-        self.switch_page(MAIN_PAGE_ID)?;
-
         self.add_page(diag_page);
         self.add_page(log_page);
 
@@ -498,6 +522,22 @@ impl PageManager {
                                                      &self.ui_style));
             self.add_page(gnss_page);
         }
+
+        // Restore every page's persisted config in one place, rather than at each add_page
+        // call site above -- a page added here without going through this loop would
+        // silently lose its settings on every restart.
+        for page in self.pages.iter_mut() {
+            let config = self.config.page_config(page.id());
+            page.set_config(&config);
+        }
+
+        // Reopen wherever the user left off last run, falling back to Main if that page
+        // no longer exists (e.g. GNSS was persisted as last-open but the receiver failed
+        // to start this run) or this is a first run with nothing persisted yet.
+        let start_page_id = self.config.last_page()
+            .filter(|id| self.get_page(*id).is_some())
+            .unwrap_or(MAIN_PAGE_ID);
+        self.switch_page(start_page_id)?;
 
         // Set up watchdogs for alert manager.
         // Display timeout: how long alert is displayed on screen before automatically hidden. None means displayed until manually suppressed.
@@ -1179,6 +1219,18 @@ impl PageManager {
         self.cpu_temp
     }
 
+}
+
+impl Drop for PageManager {
+    // Safety net for settings changed on the active page without a further switch (the
+    // normal switch_page path already persists on every navigation) -- e.g. a clean
+    // shutdown reached while still sitting on the GNSS page after adjusting it.
+    fn drop(&mut self) {
+        if let Some(id) = self.current_page {
+            let config = self.get_page(id).map(|p| p.get_config()).unwrap_or(serde_json::Value::Null);
+            self.config.record_switch(Some((id, config)), id);
+        }
+    }
 }
 
 #[derive(Debug)]
