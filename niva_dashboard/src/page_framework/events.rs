@@ -55,6 +55,9 @@ pub enum UIEvent {
 
     // Switch sensors event
     SwitchSensorSet,
+
+    // Horz page events
+    HorzCalibrate,  // Zero out current pitch/roll error via a temporary, slewed correction
 }
 
 /// Event bus that manages dual-channel communication for global and page events
@@ -235,7 +238,8 @@ impl SmartEventSender {
             UIEvent::NavMapMode |
             UIEvent::NavToggleGnssTest |
             UIEvent::NavHeadingSetMode |
-            UIEvent::NavHeadingSetExit => {
+            UIEvent::NavHeadingSetExit |
+            UIEvent::HorzCalibrate => {
                 self.page_sender.send(event);
             }
         }
@@ -328,6 +332,7 @@ mod tests {
             UIEvent::OscToggleChannel(0),
             UIEvent::NavHeadingSetMode,
             UIEvent::NavHeadingSetExit,
+            UIEvent::HorzCalibrate,
         ]
     }
 
@@ -342,7 +347,7 @@ mod tests {
             smart_sender.send(event);
         }
 
-        assert_eq!(global_receiver.try_iter().count(), 10, "every global-tagged event must land on the global channel");
+        assert_eq!(global_receiver.try_iter().count(), global_events().len(), "every global-tagged event must land on the global channel");
         assert!(page_receiver.try_recv().is_err(), "no global-tagged event should leak onto the page channel");
     }
 
@@ -357,7 +362,7 @@ mod tests {
             smart_sender.send(event);
         }
 
-        assert_eq!(page_receiver.try_iter().count(), 16, "every page-tagged event must land on the page channel");
+        assert_eq!(page_receiver.try_iter().count(), page_events().len(), "every page-tagged event must land on the page channel");
         assert!(global_receiver.try_recv().is_err(), "no page-tagged event should leak onto the global channel");
     }
 }

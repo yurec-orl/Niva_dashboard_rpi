@@ -35,6 +35,11 @@ pub struct HorzPage {
     bno_frame: Option<Bno085Frame>,
     pitch_indicator: PitchIndicator,
     roll_indicator: RollIndicator,
+    /// КАЛИБР correction: added to the raw reading so pitch/roll read zero right after the
+    /// button is pressed. Not persisted -- resets to 0 on restart, unlike
+    /// heading_fusion_sensor's disk-persisted correction.
+    pitch_correction_deg: f32,
+    roll_correction_deg: f32,
 }
 
 impl HorzPage {
@@ -46,27 +51,46 @@ impl HorzPage {
             bno_frame,
             pitch_indicator: PitchIndicator::new().with_visible_span_deg(50.0),
             roll_indicator: RollIndicator::new().with_decorators(vec![Box::new(RollScaleDecorator::new())]),
+            pitch_correction_deg: 0.0,
+            roll_correction_deg: 0.0,
         };
 
         page.setup_buttons();
         page
     }
 
-    /// Game Rotation Vector pitch in degrees, or 0.0 while the BNO085 link is down / hasn't
-    /// reported yet -- see Bno085Frame::game_orientation_is_stale's doc comment for why that
-    /// check (not the general is_stale()) is the correct one for Game RV specifically.
-    fn pitch_deg(&self) -> f32 {
+    /// Raw (uncorrected) Game Rotation Vector pitch/roll in degrees, or None while the BNO085
+    /// link is down / hasn't reported yet -- see Bno085Frame::game_orientation_is_stale's doc
+    /// comment for why that check (not the general is_stale()) is the correct one for Game RV
+    /// specifically. Feeds both the displayed pitch/roll below and КАЛИБР's correction below.
+    fn raw_pitch_roll_deg(&self) -> Option<(f32, f32)> {
         match &self.bno_frame {
-            Some(frame) if !frame.game_orientation_is_stale() => frame.game_orientation().pitch_deg,
-            _ => 0.0,
+            Some(frame) if !frame.game_orientation_is_stale() => {
+                let o = frame.game_orientation();
+                Some((o.pitch_deg, o.roll_deg))
+            },
+            _ => None,
         }
     }
 
-    /// Game Rotation Vector roll in degrees, same staleness handling as pitch_deg above.
+    /// Pitch in degrees, with any КАЛИБР correction applied; 0.0 while stale (correction is
+    /// meaningless without a live raw reading to combine it with).
+    fn pitch_deg(&self) -> f32 {
+        self.raw_pitch_roll_deg().map(|(p, _)| p + self.pitch_correction_deg).unwrap_or(0.0)
+    }
+
+    /// Roll in degrees, with any КАЛИБР correction applied; same staleness handling as pitch_deg.
     fn roll_deg(&self) -> f32 {
-        match &self.bno_frame {
-            Some(frame) if !frame.game_orientation_is_stale() => frame.game_orientation().roll_deg,
-            _ => 0.0,
+        self.raw_pitch_roll_deg().map(|(_, r)| r + self.roll_correction_deg).unwrap_or(0.0)
+    }
+
+    /// Handles a КАЛИБР press: sets the correction to minus the current raw reading, so
+    /// pitch/roll read zero immediately. Does nothing while the link is stale -- no raw
+    /// reading to zero out.
+    fn calibrate(&mut self) {
+        if let Some((raw_pitch, raw_roll)) = self.raw_pitch_roll_deg() {
+            self.pitch_correction_deg = -raw_pitch;
+            self.roll_correction_deg = -raw_roll;
         }
     }
 
@@ -128,6 +152,10 @@ impl HorzPage {
 
     fn setup_buttons(&mut self) {
         let buttons = vec![
+            PageButton::new(ButtonPosition::Left1, "КАЛИБР".into(), Box::new({
+                let sender = self.smart_event_sender.clone();
+                move || sender.send(UIEvent::HorzCalibrate)
+            }) as Box<dyn FnMut()>),
             PageButton::new(ButtonPosition::Right4, "ВОЗВР".into(), Box::new({
                 let sender = self.smart_event_sender.clone();
                 move || sender.send(UIEvent::SwitchToPage(MAIN_PAGE_ID))
@@ -195,7 +223,11 @@ impl Page for HorzPage {
     }
 
     fn process_events(&mut self) {
-        while self.event_receiver.try_recv().is_ok() {}
+        while let Ok(event) = self.event_receiver.try_recv() {
+            if let UIEvent::HorzCalibrate = event {
+                self.calibrate();
+            }
+        }
     }
 
     fn buttons(&self) -> &Vec<PageButton<Box<dyn FnMut()>>> {
