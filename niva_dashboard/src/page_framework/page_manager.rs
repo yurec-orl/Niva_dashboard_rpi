@@ -41,6 +41,16 @@ pub const GNSS_TERM_PAGE_ID: u32 = 4;
 pub const GNSS_PAGE_ID: u32 = 5;
 pub const HORZ_PAGE_ID: u32 = 6;
 
+/// Config section key PageManager persists the last-open page under.
+const LAST_PAGE_CONFIG_KEY: &str = "last_page";
+
+/// Config section key a page's own persisted settings are stored under -- Config only knows
+/// about opaque string keys, so PageManager (the only thing that knows pages have numeric ids)
+/// turns each page's id into one.
+fn page_config_key(page_id: u32) -> String {
+    format!("page_{}", page_id)
+}
+
 // ButtonPosition correspond to physical 2x4 buttons layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub enum ButtonPosition {
@@ -443,8 +453,10 @@ impl PageManager {
         // captured) and record the page we're switching to as the one to reopen next
         // launch -- done on every switch, not just at shutdown, so an unclean exit right
         // after doesn't lose either.
-        let outgoing = outgoing_id.and_then(|id| self.get_page(id).map(|p| (id, p.get_config())));
-        self.config.record_switch(outgoing, page_id);
+        if let Some((id, config)) = outgoing_id.and_then(|id| self.get_page(id).map(|p| (id, p.get_config()))) {
+            self.config.set_section(&page_config_key(id), config);
+        }
+        self.config.set_section(LAST_PAGE_CONFIG_KEY, serde_json::json!(page_id));
 
         self.current_page = Some(page_id);
 
@@ -535,14 +547,15 @@ impl PageManager {
         // call site above -- a page added here without going through this loop would
         // silently lose its settings on every restart.
         for page in self.pages.iter_mut() {
-            let config = self.config.page_config(page.id());
+            let config = self.config.section(&page_config_key(page.id()));
             page.set_config(&config);
         }
 
         // Reopen wherever the user left off last run, falling back to Main if that page
         // no longer exists (e.g. GNSS was persisted as last-open but the receiver failed
         // to start this run) or this is a first run with nothing persisted yet.
-        let start_page_id = self.config.last_page()
+        let start_page_id = self.config.section(LAST_PAGE_CONFIG_KEY).as_u64()
+            .map(|id| id as u32)
             .filter(|id| self.get_page(*id).is_some())
             .unwrap_or(MAIN_PAGE_ID);
         self.switch_page(start_page_id)?;
@@ -1236,7 +1249,8 @@ impl Drop for PageManager {
     fn drop(&mut self) {
         if let Some(id) = self.current_page {
             let config = self.get_page(id).map(|p| p.get_config()).unwrap_or(serde_json::Value::Null);
-            self.config.record_switch(Some((id, config)), id);
+            self.config.set_section(&page_config_key(id), config);
+            self.config.set_section(LAST_PAGE_CONFIG_KEY, serde_json::json!(id));
         }
     }
 }

@@ -8,11 +8,25 @@ use crate::util::bno085_protocol::{
     Accuracy, Bno085, Bno085Error, Bno085Event, Bno085Report, GameRotationVectorReport,
     RotationVectorReport, BNO085_ADDR, HINT_PIN, I2C_BUS,
 };
+use crate::util::config::Config;
 
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+
+/// Config section key the Game RV pitch/roll calibration (КАЛИБР) is persisted under.
+const CALIBRATION_CONFIG_KEY: &str = "bno085_pitch_roll_calibration";
+
+/// Correction added to the raw Game Rotation Vector pitch/roll so they read zero right after
+/// КАЛИБР is pressed. Persisted via Config so it survives a restart instead of resetting to 0
+/// -- previously lived page-locally in HorzPage and was lost on every restart.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default)]
+struct PitchRollCalibration {
+    pitch_correction_deg: f32,
+    roll_correction_deg: f32,
+}
 
 /// Report interval requested from the sensor for both enabled features. 50 Hz comfortably
 /// exceeds what a dashboard display needs while staying well clear of the report rates where
@@ -86,10 +100,15 @@ pub struct Bno085Frame {
     /// observed in practice as a persisted-heading anchor locking onto a phantom 0.0 deg
     /// "reading" moments before the real first Game RV report landed.
     game_orientation_last_update: Arc<Mutex<Instant>>,
+    /// (pitch, roll) correction added to the raw Game RV reading by `game_orientation()` --
+    /// see `PitchRollCalibration`'s doc comment. Loaded from Config at construction, updated
+    /// and re-persisted by `calibrate_pitch_roll()`.
+    pitch_roll_correction_deg: Arc<Mutex<(f32, f32)>>,
 }
 
 impl Bno085Frame {
     fn new() -> Self {
+        let calibration = Self::load_calibration();
         Bno085Frame {
             orientation: Arc::new(Mutex::new(Bno085Orientation::default())),
             game_orientation: Arc::new(Mutex::new(Bno085Orientation::default())),
@@ -97,7 +116,13 @@ impl Bno085Frame {
             acceleration: Arc::new(Mutex::new(Bno085Acceleration::default())),
             last_update: Arc::new(Mutex::new(Instant::now() - READING_MAX_AGE)),
             game_orientation_last_update: Arc::new(Mutex::new(Instant::now() - READING_MAX_AGE)),
+            pitch_roll_correction_deg: Arc::new(Mutex::new((calibration.pitch_correction_deg, calibration.roll_correction_deg))),
         }
+    }
+
+    fn load_calibration() -> PitchRollCalibration {
+        let value = Config::load().section(CALIBRATION_CONFIG_KEY);
+        serde_json::from_value(value).unwrap_or_default()
     }
 
     /// Latest decoded Rotation Vector orientation (gyro+accel+magnetometer fusion, absolute
@@ -108,11 +133,32 @@ impl Bno085Frame {
     }
 
     /// Latest decoded Game Rotation Vector orientation (gyro+accel fusion only, no
-    /// magnetometer). `heading_accuracy_deg` is always 0.0 and `accuracy` always `None` — this
-    /// report has no absolute reference to estimate accuracy against. Zeroed until the first
-    /// report arrives — check `is_stale()` before trusting it.
+    /// magnetometer), with the persisted КАЛИБР pitch/roll correction applied (heading is never
+    /// corrected -- calibration only zeroes out mounting-induced pitch/roll error).
+    /// `heading_accuracy_deg` is always 0.0 and `accuracy` always `None` — this report has no
+    /// absolute reference to estimate accuracy against. Zeroed until the first report arrives —
+    /// check `is_stale()` before trusting it.
     pub fn game_orientation(&self) -> Bno085Orientation {
-        *self.game_orientation.lock().unwrap()
+        let mut o = *self.game_orientation.lock().unwrap();
+        let (pitch_correction_deg, roll_correction_deg) = *self.pitch_roll_correction_deg.lock().unwrap();
+        o.pitch_deg += pitch_correction_deg;
+        o.roll_deg += roll_correction_deg;
+        o
+    }
+
+    /// Handles a КАЛИБР press: sets the pitch/roll correction to minus the current raw
+    /// reading, so `game_orientation()`'s pitch/roll read zero immediately, then persists it --
+    /// survives a restart, unlike the correction previously living page-locally in HorzPage.
+    /// No-op while stale -- no raw reading to zero out.
+    pub fn calibrate_pitch_roll(&self) {
+        if self.game_orientation_is_stale() {
+            return;
+        }
+        let raw = *self.game_orientation.lock().unwrap();
+        let calibration = PitchRollCalibration { pitch_correction_deg: -raw.pitch_deg, roll_correction_deg: -raw.roll_deg };
+        *self.pitch_roll_correction_deg.lock().unwrap() = (calibration.pitch_correction_deg, calibration.roll_correction_deg);
+        let Ok(value) = serde_json::to_value(calibration) else { return };
+        Config::load().set_section(CALIBRATION_CONFIG_KEY, value);
     }
 
     /// Latest decoded Geomagnetic Rotation Vector orientation (accel+magnetometer fusion only,
@@ -161,7 +207,13 @@ impl Bno085Frame {
 
     #[cfg(test)]
     pub(crate) fn for_test() -> Self {
-        Self::new()
+        // Self::new() just read the real default Config path for calibration -- discard
+        // whatever (if anything) it loaded so tests never depend on, or are skewed by, real
+        // persisted state from an actual dashboard run (same reasoning as
+        // heading_fusion_sensor's per-test persist_path override).
+        let frame = Self::new();
+        *frame.pitch_roll_correction_deg.lock().unwrap() = (0.0, 0.0);
+        frame
     }
 
     fn set_orientation(&self, report: RotationVectorReport) {

@@ -35,11 +35,6 @@ pub struct HorzPage {
     bno_frame: Option<Bno085Frame>,
     pitch_indicator: PitchIndicator,
     roll_indicator: RollIndicator,
-    /// КАЛИБР correction: added to the raw reading so pitch/roll read zero right after the
-    /// button is pressed. Not persisted -- resets to 0 on restart, unlike
-    /// heading_fusion_sensor's disk-persisted correction.
-    pitch_correction_deg: f32,
-    roll_correction_deg: f32,
 }
 
 impl HorzPage {
@@ -51,19 +46,17 @@ impl HorzPage {
             bno_frame,
             pitch_indicator: PitchIndicator::new().with_visible_span_deg(50.0),
             roll_indicator: RollIndicator::new().with_decorators(vec![Box::new(RollScaleDecorator::new())]),
-            pitch_correction_deg: 0.0,
-            roll_correction_deg: 0.0,
         };
 
         page.setup_buttons();
         page
     }
 
-    /// Raw (uncorrected) Game Rotation Vector pitch/roll in degrees, or None while the BNO085
-    /// link is down / hasn't reported yet -- see Bno085Frame::game_orientation_is_stale's doc
-    /// comment for why that check (not the general is_stale()) is the correct one for Game RV
-    /// specifically. Feeds both the displayed pitch/roll below and КАЛИБР's correction below.
-    fn raw_pitch_roll_deg(&self) -> Option<(f32, f32)> {
+    /// Game Rotation Vector pitch/roll in degrees (Bno085Frame::game_orientation() already
+    /// applies the persisted КАЛИБР correction), or None while the BNO085 link is down /
+    /// hasn't reported yet -- see Bno085Frame::game_orientation_is_stale's doc comment for why
+    /// that check (not the general is_stale()) is the correct one for Game RV specifically.
+    fn pitch_roll_deg(&self) -> Option<(f32, f32)> {
         match &self.bno_frame {
             Some(frame) if !frame.game_orientation_is_stale() => {
                 let o = frame.game_orientation();
@@ -73,25 +66,14 @@ impl HorzPage {
         }
     }
 
-    /// Pitch in degrees, with any КАЛИБР correction applied; 0.0 while stale (correction is
-    /// meaningless without a live raw reading to combine it with).
+    /// Pitch in degrees; 0.0 while stale.
     fn pitch_deg(&self) -> f32 {
-        self.raw_pitch_roll_deg().map(|(p, _)| p + self.pitch_correction_deg).unwrap_or(0.0)
+        self.pitch_roll_deg().map(|(p, _)| p).unwrap_or(0.0)
     }
 
-    /// Roll in degrees, with any КАЛИБР correction applied; same staleness handling as pitch_deg.
+    /// Roll in degrees; 0.0 while stale.
     fn roll_deg(&self) -> f32 {
-        self.raw_pitch_roll_deg().map(|(_, r)| r + self.roll_correction_deg).unwrap_or(0.0)
-    }
-
-    /// Handles a КАЛИБР press: sets the correction to minus the current raw reading, so
-    /// pitch/roll read zero immediately. Does nothing while the link is stale -- no raw
-    /// reading to zero out.
-    fn calibrate(&mut self) {
-        if let Some((raw_pitch, raw_roll)) = self.raw_pitch_roll_deg() {
-            self.pitch_correction_deg = -raw_pitch;
-            self.roll_correction_deg = -raw_roll;
-        }
+        self.pitch_roll_deg().map(|(_, r)| r).unwrap_or(0.0)
     }
 
     fn na() -> String {
@@ -225,7 +207,9 @@ impl Page for HorzPage {
     fn process_events(&mut self) {
         while let Ok(event) = self.event_receiver.try_recv() {
             if let UIEvent::HorzCalibrate = event {
-                self.calibrate();
+                if let Some(frame) = &self.bno_frame {
+                    frame.calibrate_pitch_roll();
+                }
             }
         }
     }

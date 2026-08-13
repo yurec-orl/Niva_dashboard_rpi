@@ -57,7 +57,7 @@ pub enum UIEvent {
     SwitchSensorSet,
 
     // Horz page events
-    HorzCalibrate,  // Zero out current pitch/roll error via a temporary, slewed correction
+    HorzCalibrate,  // Zero out current pitch/roll error (persisted at the BNO085 provider level)
 }
 
 /// Event bus that manages dual-channel communication for global and page events
