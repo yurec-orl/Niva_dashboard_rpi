@@ -26,6 +26,8 @@ Surveyed directly on this Pi on 2026-07-29:
 | 9  | I2C bus enablement                              | `dtparam=i2c_arm=on`                                                             | No       | No        |
 | 10 | `/etc/niva_dashboard/ui_style.json`             | `/etc/niva_dashboard/`                                                           | No       | Orphaned — load call is commented out at `main.rs:523`, so this file currently does nothing |
 | 11 | Hardcoded absolute font/style paths             | baked into `niva_dashboard/src/graphics/ui_style.rs` (`/home/user/Work/Niva_Dashboard_Rpi/...`) | In repo, but wrong — ties to one dev machine's clone path | N/A |
+| 12 | Boot splash (Plymouth)                          | apt packages `plymouth`/`plymouth-themes` + `/etc/plymouth/plymouthd.conf` + custom theme at `/usr/share/plymouth/themes/niva/` (`niva.plymouth`, `niva.script`, `splash.png`) + `splash plymouth.ignore-serial-consoles` on `cmdline.txt` + two masked units + a `getty@tty1` drop-in + a line in the `.profile` autostart block, described in `/home/user/splash-screen-fix.md` | No (doc lives outside repo) | No |
+| 13 | Old `fbi`-based splash (`splashscreen.service`) | unit at `/etc/systemd/system/splashscreen.service`, image at `/opt/splash.png` | No | Superseded by item 12, currently `disabled` (not removed) — dead weight that should be deleted, not carried into `deploy/` |
 
 Two more things worth flagging that fell out of this survey rather than being
 part of the original ask:
@@ -50,6 +52,40 @@ part of the original ask:
   a config line that also affects the UPS HAT's communication — worth a
   one-line comment in `02-boot-config.sh` explaining why, so a future reader
   doesn't assume it's UPS-related and remove it if the BNO085 is unplugged.
+- **Item 12 (Plymouth) has three non-obvious, easy-to-silently-break
+  dependencies** — all discovered the hard way (see
+  `/home/user/splash-screen-fix.md` for the full debugging trail), each with
+  no error message pointing at the actual cause:
+  - `cmdline.txt` must include `plymouth.ignore-serial-consoles`. This Pi's
+    `console=serial0,115200 console=tty1` setup makes Plymouth's device
+    manager detect a serial console and silently force the built-in
+    text-only `details` plugin for *every* display, including tty1 —
+    `plymouthd` runs, reports success, and never opens a DRM or fb device.
+    No log output flags this unless `--debug` is explicitly enabled.
+  - `plymouth-quit-wait.service` and `plymouth-quit.service` must both be
+    masked (`systemctl mask`, not just `disable`). Left unmasked, the first
+    makes `getty@tty1` block on Plymouth quitting — which can't happen here
+    since it's `.profile` (launched *by* getty's autologin) that's supposed
+    to quit Plymouth, a circular wait. The second is a stock unit that
+    auto-quits Plymouth on its own shortly after boot, independent of
+    whether the dashboard is actually ready.
+  - The `.profile` autostart block's `plymouth quit --retain-splash` call
+    **must be `sudo plymouth quit ...`**. `plymouthd`'s control socket is
+    root-only; a bare `plymouth` call from the unprivileged autologin shell
+    fails silently (non-zero exit, never checked by the script) and leaves
+    `plymouthd` holding DRM master forever — `niva_dashboard` then opens the
+    DRM device fine but its `drmModeSetCrtc` call fails with `-13`/`EACCES`
+    and it silently falls back to invisible off-screen rendering (see
+    `graphics/context.rs`'s warn-and-continue path on that error).
+  - `getty@tty1` needs a scoped drop-in setting `TTYReset=no` (leaving
+    `TTYVHangup=yes` and `TTYVTDisallocate=yes` at their stock values).
+    `TTYReset` resets the VT to text mode as part of getty's normal startup,
+    which wipes the visible splash within ~2s of boot regardless of whether
+    Plymouth itself is still running — independent of the vhangup/DRM-master
+    issues above. Disabling *all three* settings (an earlier attempt) breaks
+    `agetty`'s ability to reclaim the tty at all when something uncooperative
+    (the old `fbi`-based splash, item 13) is still on it; Plymouth is
+    VT-handoff-aware enough that only `TTYReset` needs disabling.
 
 ## Goal
 
@@ -70,7 +106,12 @@ deploy/
 ├── 03-udev-rules.sh                        # installs udev/*.rules, runs udevadm control --reload-rules
 ├── 04-sudoers.sh                           # installs sudoers/niva-uhubctl at mode 0440
 ├── 05-earlyoom.sh                          # installs earlyoom/earlyoom.default, restarts the service
-├── 06-autostart.sh                         # installs systemd/autologin.conf + profile.d snippet
+├── 06-autostart.sh                         # installs systemd/autologin.conf + profile.d snippet (incl. sudo plymouth quit line)
+├── 07-splash-screen.sh                     # apt install plymouth plymouth-themes; installs plymouth/ theme + plymouthd.conf;
+│                                            #   appends splash + plymouth.ignore-serial-consoles to cmdline.txt; masks
+│                                            #   plymouth-quit-wait/plymouth-quit; installs systemd/no-tty-reset.conf;
+│                                            #   disables + deletes the old splashscreen.service/opt/splash.png (item 13);
+│                                            #   ends with `update-initramfs -u`
 ├── udev/
 │   ├── 99-niva-adc.rules
 │   └── 99-niva-gps.rules
@@ -79,7 +120,14 @@ deploy/
 ├── earlyoom/
 │   └── earlyoom.default
 ├── systemd/
-│   └── autologin.conf
+│   ├── autologin.conf
+│   └── no-tty-reset.conf                   # getty@tty1.service.d drop-in: TTYReset=no
+├── plymouth/
+│   ├── plymouthd.conf                      # Theme=niva, Renderer=drm
+│   └── themes/niva/
+│       ├── niva.plymouth
+│       ├── niva.script
+│       └── splash.png
 └── profile.d/
     └── niva-dashboard-autostart.sh
 ```
@@ -135,7 +183,8 @@ anywhere other than this exact developer clone path.
 ## Phasing
 
 1. **Capture, no behavior change.** Copy the current manual system state
-   (udev rules, sudoers entry, earlyoom config, boot-optimizations doc) into
+   (udev rules, sudoers entry, earlyoom config, boot-optimizations doc,
+   Plymouth theme + `plymouthd.conf` + `splash-screen-fix.md`) into
    `deploy/` as inert reference files. Nothing on this Pi changes yet — this
    just stops the configuration living only on one machine's disk.
 2. **Script it.** Write the numbered install scripts wrapping idempotent
