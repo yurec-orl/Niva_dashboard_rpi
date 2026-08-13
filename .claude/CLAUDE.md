@@ -153,8 +153,9 @@ Boot reduced from ~16.8s to ~5.1s by disabling unused systemd services (`Network
 - Default font paths hardcoded in `ui_style.rs::load_defaults()` are absolute and dev-machine-specific (`/home/user/Work/Niva_Dashboard_Rpi/...`) — will silently fail (falling back to warning-logged defaults) on any other deployment path.
 - `GaugeIndicator::with_decorators` (`indicators/gauge_indicator.rs`) is a stub that ignores its argument ("decorators not yet integrated"), unlike `NeedleIndicator`/`VerticalBarIndicator`/`DigitalSegmentedIndicator` which all wire decorators through `IndicatorBase`.
 - Doc/code mismatch: the digital/analog signal processing "edge detection"/"low-pass filtering" terms in Core Components don't correspond to any processor by that name (debounce and the EMA `AnalogSignalProcessorDampener` fill those roles under different names).
-- 'Master warning' button/indicator to the system: non-latching button with a warning light which lights up when an alert is active, and button press clears active alerts. Probably wire directly to Pi GPIO because STM32 ran out of pins (and to
+- 'Master warning' button/indicator to the system: non-latching button with a warning light which lights up when an alert is active, and button press clears active alerts. Wired directly to Pi GPIO because STM32 ran out of pins (and to
   have it still function if no link to ADC module). Power considerations: 16 mA draw per pin and <= 50 mA total GPIO draw. 16 mA should be fine for one LED, possibly even less if brightness is enough for a warning light.
+  Pins chosen: **GPIO18 for the LED** (output; PWM0-capable, leaves room for hardware-PWM dimming later), **GPIO27 for the button** (pull-up input, active-low). Neither pin is used elsewhere in this codebase (existing GPIO use is I2C0 on GPIO2/3, shared with the UPS HAT, and the BNO085 HINT pin on GPIO17). Not yet wired in code.
 - [In progress] GNSS connectivity and indicators
 - [In progress] HSI (horizontal situation indicator) styled indicator - heading, speed, altitude, manually set waypoints, etc.
 - Nav page map mode - need to decide on which map data to use and how to render
