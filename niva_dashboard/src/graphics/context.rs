@@ -1733,6 +1733,12 @@ void main() {
     pub fn stroke_rounded_rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: (f32, f32, f32), thickness: f32, corner_radius: f32) -> Result<(), String> {
         self.render_rectangle(x, y, width, height, color, false, thickness, corner_radius)
     }
+
+    /// Render a straight line segment of arbitrary angle, square-capped, `thickness` px wide.
+    pub fn render_line(&mut self, p0: (f32, f32), p1: (f32, f32), color: (f32, f32, f32), thickness: f32) -> Result<(), String> {
+        let color = self.apply_brightness(color);
+        unsafe { self.render_thick_line(p0, p1, color, thickness) }
+    }
     
     /// Apply brightness to a color tuple
     pub fn apply_brightness(&self, color: (f32, f32, f32)) -> (f32, f32, f32) {
@@ -1806,7 +1812,12 @@ void main() {
         }
     }
     
-    /// Render text using a specific font (horizontal orientation)
+    /// Render text using a specific font (horizontal orientation). `y` is the top of the
+    /// line, positioned using the font's ascender metric (`get_line_height_with_font`'s
+    /// reference frame) -- NOT the top of this particular string's ink (which is what
+    /// `calculate_text_height_with_font` measures). To vertically center text around a
+    /// target point, offset `y` by half of `get_line_height_with_font`, not half of
+    /// `calculate_text_height_with_font`.
     pub fn render_text_with_font(
         &mut self, 
         text: &str, 
@@ -1879,10 +1890,12 @@ void main() {
         }
     }
     
-    /// Calculate text width using a specific font (horizontal orientation)
+    /// Calculate text width using a specific font (horizontal orientation): sum of this
+    /// string's glyph advances. Safe to use for horizontal centering/right-alignment against
+    /// `render_text_with_font`'s `x`.
     pub fn calculate_text_width_with_font(
-        &mut self, 
-        text: &str, 
+        &mut self,
+        text: &str,
         scale: f32,
         font_path: &str,
         font_size: u32
@@ -1900,10 +1913,21 @@ void main() {
         self.calculate_text_width(text, scale, font_path, font_size, TextOrientation::Vertical)
     }
     
-    /// Calculate text height using a specific font (horizontal orientation)
+    /// Calculate text height using a specific font (horizontal orientation): the tight ink
+    /// bounding box (max glyph ascent above baseline + max glyph descent below it) for the
+    /// *specific characters in this string* -- not a font-wide metric, so it varies between
+    /// e.g. "10" (no descender) and "1g" (has one).
+    ///
+    /// Do NOT use this to vertically center text via `render_text_with_font`: that function
+    /// positions `y` using the font's fixed ascender metric, not this string's tight bbox, so
+    /// `y - calculate_text_height_with_font(..)/2.0` leaves a residual offset equal to
+    /// (font ascender - this string's actual bearing above baseline). Use
+    /// `get_line_height_with_font` for that instead -- it shares `render_text_with_font`'s
+    /// reference frame. This function is appropriate for sizing a box tightly around known
+    /// ink (e.g. `alert_manager.rs`'s "Mg" sample-based bounds sizing).
     pub fn calculate_text_height_with_font(
-        &mut self, 
-        text: &str, 
+        &mut self,
+        text: &str,
         scale: f32,
         font_path: &str,
         font_size: u32
@@ -1921,10 +1945,13 @@ void main() {
         self.calculate_text_height(text, scale, font_path, font_size, TextOrientation::Vertical)
     }
 
-    /// Calculate text dimensions using a specific font (horizontal orientation)
+    /// Calculate text dimensions using a specific font (horizontal orientation): `(width,
+    /// height)` from `calculate_text_width_with_font`/`calculate_text_height_with_font`. Same
+    /// caveat as the latter applies to the height component -- do not use it for vertical
+    /// centering against `render_text_with_font`; use `get_line_height_with_font` for that.
     pub fn calculate_text_dimensions_with_font(
-        &mut self, 
-        text: &str, 
+        &mut self,
+        text: &str,
         scale: f32,
         font_path: &str,
         font_size: u32
@@ -1942,9 +1969,14 @@ void main() {
         self.calculate_text_dimensions(text, scale, font_path, font_size, TextOrientation::Vertical)
     }
 
-    /// Get line height for a specific font
+    /// Get line height for a specific font: a font-wide metric (ascender + descender +
+    /// linegap from the face's own metrics), independent of any particular string's glyphs.
+    /// This is the reference frame `render_text_with_font` actually positions `y` against, so
+    /// it's the right height to use for vertical centering: `y = target_y - get_line_height_with_font(..)/2.0`.
+    /// Prefer this over `calculate_text_height_with_font` (a per-string tight ink bbox) for
+    /// any centering/positioning math involving `render_text_with_font`'s `y`.
     pub fn get_line_height_with_font(
-        &mut self, 
+        &mut self,
         scale: f32,
         font_path: &str,
         font_size: u32
@@ -1952,8 +1984,9 @@ void main() {
         let renderer = self.get_text_renderer(font_path, font_size)?;
         Ok(renderer.get_line_height(scale))
     }
-    
-    /// Get line spacing for a specific font
+
+    /// Get line spacing for a specific font: baseline-to-baseline distance for stacking
+    /// multiple lines, currently just an alias for `get_line_height_with_font`.
     pub fn get_line_spacing_with_font(
         &mut self, 
         scale: f32,
@@ -2682,10 +2715,13 @@ void main() {
         let h = glyph.height * scale;
         let xrel = x + glyph.bearing_x * scale;
         
-        // Get font ascender to convert from top-of-line to baseline coordinates
+        // Get font ascender to convert from top-of-line to baseline coordinates. This is a
+        // font-wide constant, not derived from this glyph or string -- it's why `y` here must
+        // be measured in the same frame (get_line_height, not calculate_text_height's per-glyph
+        // tight bbox) for callers to land the ink where they expect.
         let face_ref = &*self.ft_face;
         let ascender = face_ref.size.as_ref().unwrap().metrics.ascender as f32 / 64.0 * scale;
-        
+
         // Calculate y position: y is top of line, so add ascender to get baseline, then subtract bearing_y
         let yrel = y + ascender - glyph.bearing_y * scale;
         
@@ -2742,7 +2778,11 @@ void main() {
         }
     }
     
-    /// Calculate the maximum height of a text string with the current font and scale
+    /// Calculate the maximum height of a text string with the current font and scale: a tight
+    /// ink bounding box built from this string's actual glyphs (max bearing_y above baseline +
+    /// max descent below it), not the font's line metrics -- see `get_line_height` for that.
+    /// `render_cached_character` positions glyphs using the font's ascender, not this value, so
+    /// this is unsuitable for computing a `render_text_with_font` vertical-centering offset.
     unsafe fn calculate_text_height(&mut self, text: &str, scale: f32, orientation: TextOrientation) -> Result<f32, String> {
         match orientation {
             TextOrientation::Horizontal => {
@@ -2777,21 +2817,26 @@ void main() {
         }
     }
     
-    /// Calculate both width and height of a text string (convenience function)
+    /// Calculate both width and height of a text string (convenience function). Height here
+    /// is `calculate_text_height`'s tight per-glyph ink bbox -- see that function's doc comment
+    /// for why it's the wrong height to use for vertical centering against `render_text`.
     unsafe fn calculate_text_dimensions(&mut self, text: &str, scale: f32, orientation: TextOrientation) -> Result<(f32, f32), String> {
         let width = self.calculate_text_width(text, scale, orientation)?;
         let height = self.calculate_text_height(text, scale, orientation)?;
         Ok((width, height))
     }
-    
-    /// Get the line height for the current font (useful for multi-line text)
+
+    /// Get the line height for the current font (useful for multi-line text): a font-wide
+    /// metric (ascender + descender + linegap) independent of any specific string's glyphs.
+    /// This is the frame `render_cached_character` positions `y` against, so it's the correct
+    /// height to halve when vertically centering text around a target point.
     fn get_line_height(&self, scale: f32) -> f32 {
         unsafe {
             let face_ref = &*self.ft_face;
             (face_ref.size as *const ft::FT_SizeRec).as_ref().unwrap().metrics.height as f32 / 64.0 * scale
         }
     }
-    
+
     /// Get the baseline-to-baseline distance for the current font
     fn get_line_spacing(&self, scale: f32) -> f32 {
         // Use line height as default line spacing

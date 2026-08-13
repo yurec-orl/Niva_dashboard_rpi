@@ -7,6 +7,7 @@ use crate::page_framework::input::{InputHandler, InputSource, ButtonState};
 use crate::page_framework::main_page::MainPage;
 use crate::page_framework::terminal_page::TerminalPage;
 use crate::page_framework::gnss_page::{GnssPage, GnssMode};
+use crate::page_framework::horz_page::HorzPage;
 use crate::hardware::sensor_manager::SensorManager;
 use crate::hardware::hw_providers::HWInput;
 use crate::hardware::heading_fusion_sensor::HeadingFusionSensor;
@@ -38,6 +39,7 @@ pub const ADC_TERM_PAGE_ID: u32 = 2;
 pub const LOG_PAGE_ID: u32 = 3;
 pub const GNSS_TERM_PAGE_ID: u32 = 4;
 pub const GNSS_PAGE_ID: u32 = 5;
+pub const HORZ_PAGE_ID: u32 = 6;
 
 // ButtonPosition correspond to physical 2x4 buttons layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -490,9 +492,15 @@ impl PageManager {
                                                        smart_sender.clone(),
                                                        self.get_event_receiver()));
 
+        let horz_page = Box::new(HorzPage::new(HORZ_PAGE_ID,
+                                                smart_sender.clone(),
+                                                self.get_event_receiver(),
+                                                self.bno_frame.clone()));
+
         self.add_page(main_page);
         self.add_page(diag_page);
         self.add_page(log_page);
+        self.add_page(horz_page);
 
         // ADC terminal page only exists when the ADC data provider actually started —
         // without a frame handle there is nothing for it to display.

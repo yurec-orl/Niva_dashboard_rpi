@@ -1,0 +1,140 @@
+#![allow(dead_code)]
+use crate::graphics::context::GraphicsContext;
+use crate::graphics::ui_style::*;
+use crate::hardware::sensor_value::SensorValue;
+use crate::page_framework::events::{EventReceiver, SmartEventSender, UIEvent};
+use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition, MAIN_PAGE_ID};
+use crate::hardware::sensor_manager::SensorManager;
+use crate::indicators::indicator::{Indicator, IndicatorBounds};
+use crate::indicators::pitch_indicator::PitchIndicator;
+use crate::indicators::roll_indicator::{RollIndicator, RollScaleDecorator};
+use crate::util::bno085_data_provider::Bno085Frame;
+
+/// Fraction of screen width/height the pitch indicator occupies.
+const PITCH_INDICATOR_WIDTH_FRAC: f32 = 0.25;
+const PITCH_INDICATOR_HEIGHT_FRAC: f32 = 0.75;
+
+/// Roll indicator's total width, relative to the pitch indicator's width -- see
+/// RollIndicator's doc comment for why its pivot is placed at the pitch indicator's center.
+const ROLL_INDICATOR_WIDTH_FRAC: f32 = 1.5;
+
+/// Inclinometer page: aircraft-style artificial horizon (pitch ladder + roll pointer), both
+/// driven by the BNO085 Game Rotation Vector.
+pub struct HorzPage {
+    base: PageBase,
+    event_receiver: EventReceiver,
+    smart_event_sender: SmartEventSender,
+    /// None when the BNO085 data provider failed to start.
+    bno_frame: Option<Bno085Frame>,
+    pitch_indicator: PitchIndicator,
+    roll_indicator: RollIndicator,
+}
+
+impl HorzPage {
+    pub fn new(id: u32, smart_event_sender: SmartEventSender, event_receiver: EventReceiver, bno_frame: Option<Bno085Frame>) -> Self {
+        let mut page = HorzPage {
+            base: PageBase::new(id, "Horz".to_string()),
+            smart_event_sender,
+            event_receiver,
+            bno_frame,
+            pitch_indicator: PitchIndicator::new().with_visible_span_deg(50.0),
+            roll_indicator: RollIndicator::new().with_decorators(vec![Box::new(RollScaleDecorator::new())]),
+        };
+
+        page.setup_buttons();
+        page
+    }
+
+    /// Game Rotation Vector pitch in degrees, or 0.0 while the BNO085 link is down / hasn't
+    /// reported yet -- see Bno085Frame::game_orientation_is_stale's doc comment for why that
+    /// check (not the general is_stale()) is the correct one for Game RV specifically.
+    fn pitch_deg(&self) -> f32 {
+        match &self.bno_frame {
+            Some(frame) if !frame.game_orientation_is_stale() => frame.game_orientation().pitch_deg,
+            _ => 0.0,
+        }
+    }
+
+    /// Game Rotation Vector roll in degrees, same staleness handling as pitch_deg above.
+    fn roll_deg(&self) -> f32 {
+        match &self.bno_frame {
+            Some(frame) if !frame.game_orientation_is_stale() => frame.game_orientation().roll_deg,
+            _ => 0.0,
+        }
+    }
+
+    fn setup_buttons(&mut self) {
+        let buttons = vec![
+            PageButton::new(ButtonPosition::Right4, "ВОЗВР".into(), Box::new({
+                let sender = self.smart_event_sender.clone();
+                move || sender.send(UIEvent::SwitchToPage(MAIN_PAGE_ID))
+            }) as Box<dyn FnMut()>),
+        ];
+        self.base.set_buttons(buttons);
+    }
+}
+
+impl Page for HorzPage {
+    fn id(&self) -> u32 {
+        self.base.id()
+    }
+
+    fn name(&self) -> &str {
+        self.base.name()
+    }
+
+    fn set_buttons(&mut self, buttons: Vec<PageButton<Box<dyn FnMut()>>>) {
+        self.base.set_buttons(buttons);
+    }
+
+    fn render(&self, context: &mut GraphicsContext, _sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
+        let screen_width = context.width as f32;
+        let screen_height = context.height as f32;
+        let width = screen_width * PITCH_INDICATOR_WIDTH_FRAC;
+        let height = screen_height * PITCH_INDICATOR_HEIGHT_FRAC;
+        let bounds = IndicatorBounds::new((screen_width - width) / 2.0, (screen_height - height) / 2.0, width, height);
+        let (pitch_cx, pitch_cy) = bounds.center();
+
+        let pitch_value = SensorValue::analog(self.pitch_deg(), -90.0, 90.0, "\u{00B0}", "ТАНГАЖ", "bno085_game_pitch");
+        self.pitch_indicator.render(&pitch_value, bounds, ui_style, context)?;
+
+        // Pivot sits exactly on the pitch indicator's center -- see RollIndicator's doc
+        // comment for why. Height is arbitrary (unused by RollIndicator beyond bounds.center()).
+        let roll_width = width * ROLL_INDICATOR_WIDTH_FRAC;
+        let roll_height = roll_width / 6.0;
+        let roll_bounds = IndicatorBounds::new(pitch_cx - roll_width / 2.0, pitch_cy - roll_height / 2.0, roll_width, roll_height);
+
+        let roll_value = SensorValue::analog(self.roll_deg(), -180.0, 180.0, "\u{00B0}", "КРЕН", "bno085_game_roll");
+        self.roll_indicator.render(&roll_value, roll_bounds, ui_style, context)?;
+
+        Ok(())
+    }
+
+    fn on_enter(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn on_exit(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn on_button(&mut self, _button: char) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn process_events(&mut self) {
+        while self.event_receiver.try_recv().is_ok() {}
+    }
+
+    fn buttons(&self) -> &Vec<PageButton<Box<dyn FnMut()>>> {
+        self.base.buttons()
+    }
+
+    fn button_by_position(&self, pos: ButtonPosition) -> Option<&PageButton<Box<dyn FnMut()>>> {
+        self.base.button_by_position(pos)
+    }
+
+    fn button_by_position_mut(&mut self, pos: ButtonPosition) -> Option<&mut PageButton<Box<dyn FnMut()>>> {
+        self.base.button_by_position_mut(pos)
+    }
+}
