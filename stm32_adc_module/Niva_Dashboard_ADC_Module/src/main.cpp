@@ -456,6 +456,10 @@ static void run_oscilloscope_capture() {
     HAL_TIMEx_MasterConfigSynchronization(osc_trigger_timer->getHandle(), &sMasterConfig);
 
     // --- DMA1 Channel1: ADC1's fixed (non-remappable) DMA channel on F103 ---
+    // Unlike ADC1's clock (already enabled elsewhere via analogRead()), nothing else in
+    // this sketch uses DMA, so its peripheral clock needs enabling explicitly here — HAL_DMA_Init()
+    // does not do this itself (that's normally an MSP init callback's job).
+    __HAL_RCC_DMA1_CLK_ENABLE();
     static DMA_HandleTypeDef hdma_osc;
     hdma_osc = DMA_HandleTypeDef{};
     hdma_osc.Instance = DMA1_Channel1;

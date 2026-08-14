@@ -474,6 +474,7 @@ fn show_help() {
     log::info!("8. Compass indicator test (synthetic GNSS heading sweep)");
     log::info!("9. BNO085 IMU test (streams heading/pitch/roll/acceleration to console)");
     log::info!("10. GNSS/BNO085 heading accuracy test (streams heading+accuracy from both to console)");
+    log::info!("11. Oscilloscope burst capture test (sends $OSCCAP, validates the captured buffer)");
 }
 
 fn main() -> std::process::ExitCode {
@@ -486,7 +487,7 @@ fn main() -> std::process::ExitCode {
     let args: Vec<String> = env::args().collect();
 
     log::info!("Niva Dashboard - Raspberry Pi Version (KMS/DRM Backend)");
-    log::info!("Usage: cargo run -- [help|test={{needle|gpio|digital|ind_zero_pos|ind_middle_pos|ind_max_pos|fuel_grid|compass|bno085|heading}}]");
+    log::info!("Usage: cargo run -- [help|test={{needle|gpio|digital|ind_zero_pos|ind_middle_pos|ind_max_pos|fuel_grid|compass|bno085|heading|osc_capture}}]");
 
     for arg in args {
         let parm = arg.split("=").collect::<Vec<&str>>();

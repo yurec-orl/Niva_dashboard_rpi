@@ -1,3 +1,4 @@
+use std::io::{BufRead, BufReader, Write};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -64,9 +65,13 @@ pub fn run_test(name: &str) {
             log::info!("\n=== GNSS/BNO085 Heading Accuracy Test ===");
             run_heading_test();
         }
+        "osc_capture" => {
+            log::info!("\n=== Oscilloscope Burst Capture Test ===");
+            run_osc_capture_test();
+        }
         _ => {
             log::error!("Unknown test: {}", name);
-            log::error!("Valid options: needle, gpio, digital, ind_zero_pos, ind_middle_pos, ind_max_pos, fuel_grid, compass, bno085, heading");
+            log::error!("Valid options: needle, gpio, digital, ind_zero_pos, ind_middle_pos, ind_max_pos, fuel_grid, compass, bno085, heading, osc_capture");
             log::error!("Note: SDL2-based tests (sdl2, advanced, etc.) are disabled after KMS/DRM migration");
             std::process::exit(1);
         }
@@ -299,6 +304,186 @@ fn run_heading_test() {
     }
 
     log::info!("Heading test stopped.");
+}
+
+/// Wire parameters for the oscilloscope burst-capture protocol (see
+/// OSCILLOSCOPE_DESIGN.md and stm32_adc_module's main.cpp OSC_* defines) — kept in sync
+/// with the firmware by hand, since the two sides don't share a header.
+const OSC_BUF_LEN: usize = 4096;
+const OSC_CHUNK_SAMPLES: usize = 64;
+const OSC_EXPECTED_CHUNKS: usize = OSC_BUF_LEN / OSC_CHUNK_SAMPLES;
+/// STM32 ADC1 is 12-bit.
+const OSC_ADC_MAX: u16 = 4095;
+/// Bounds the whole request/response round trip: firmware's own DMA capture is bounded at
+/// 150ms, plus time to ASCII-encode and transmit ~21KB back over the USB-CDC link. Generous
+/// relative to both so a hung/missing STM32 is reported promptly rather than hanging forever.
+const OSC_CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long to wait, after the capture completes, for a normal telemetry line to prove the
+/// STM32 actually resumed its 50Hz tick rather than staying paused.
+const OSC_RESUME_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Hardware-in-the-loop test for the oscilloscope burst-capture feature (see
+/// OSCILLOSCOPE_DESIGN.md): sends "$OSCCAP" to the STM32 ADC module over its normal serial
+/// link, reassembles the chunked "$OSCD,<seq>,<v0>...<v63>" response into one buffer, and
+/// validates it against the protocol's fixed shape (sample count, chunk count/size, 12-bit
+/// range) rather than against any particular waveform — a bench-only, no-signal-connected
+/// run is expected to look like flat/noisy 12V-rail readings, not a specific shape.
+///
+/// Opens its own serial connection directly (rather than going through
+/// ADCDataProvider/LineSerialReader) since neither has a write path yet — this is a
+/// standalone diagnostic, not part of the running dashboard's sensor chains, so it doesn't
+/// need to share the connection with anything else.
+fn run_osc_capture_test() {
+    const PORT: &str = "/dev/niva_adc";
+    const BAUD: u32 = 115200;
+
+    log::info!("Opening {} to request an oscilloscope burst capture...", PORT);
+    let port = match serialport::new(PORT, BAUD)
+        .timeout(Duration::from_millis(200))
+        .open()
+    {
+        Ok(p) => p,
+        Err(e) => {
+            log::error!("Failed to open {}: {}", PORT, e);
+            return;
+        }
+    };
+    let mut reader = BufReader::new(port);
+
+    if let Err(e) = reader.get_mut().write_all(b"$OSCCAP\n") {
+        log::error!("Failed to send $OSCCAP: {}", e);
+        return;
+    }
+    log::info!(
+        "Sent $OSCCAP — waiting for {} samples in {} chunks of {}...",
+        OSC_BUF_LEN, OSC_EXPECTED_CHUNKS, OSC_CHUNK_SAMPLES
+    );
+
+    let mut chunks: Vec<Option<Vec<u16>>> = vec![None; OSC_EXPECTED_CHUNKS];
+    let mut duplicate_chunks = 0usize;
+    let mut malformed_lines = 0usize;
+    let start = Instant::now();
+    let mut got_end = false;
+    let mut line = String::new();
+
+    while start.elapsed() < OSC_CAPTURE_TIMEOUT {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => continue, // read timeout (configured above) — keep polling
+            Ok(_) => {
+                let trimmed = line.trim();
+                if trimmed == "$OSCEND" {
+                    got_end = true;
+                    break;
+                } else if let Some(rest) = trimmed.strip_prefix("$OSCD,") {
+                    let mut parts = rest.split(',');
+                    let seq = match parts.next().and_then(|s| s.parse::<usize>().ok()) {
+                        Some(s) if s < OSC_EXPECTED_CHUNKS => s,
+                        _ => {
+                            log::warn!("Malformed/out-of-range $OSCD line: {}", trimmed);
+                            malformed_lines += 1;
+                            continue;
+                        }
+                    };
+                    let values: Vec<u16> = parts.filter_map(|s| s.parse().ok()).collect();
+                    if values.len() != OSC_CHUNK_SAMPLES {
+                        log::warn!(
+                            "$OSCD seq {} carried {} samples, expected {}",
+                            seq, values.len(), OSC_CHUNK_SAMPLES
+                        );
+                        malformed_lines += 1;
+                        continue;
+                    }
+                    if chunks[seq].replace(values).is_some() {
+                        duplicate_chunks += 1;
+                    }
+                }
+                // Ignore other lines (e.g. a trailing normal telemetry frame that raced in)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
+            Err(e) => {
+                log::error!("Serial read error during capture: {}", e);
+                return;
+            }
+        }
+    }
+
+    let capture_elapsed = start.elapsed();
+
+    if !got_end {
+        let received = chunks.iter().filter(|c| c.is_some()).count();
+        log::error!(
+            "Timed out after {:?} waiting for $OSCEND ({} of {} chunks received)",
+            OSC_CAPTURE_TIMEOUT, received, OSC_EXPECTED_CHUNKS
+        );
+        return;
+    }
+
+    let missing: Vec<usize> = chunks.iter()
+        .enumerate()
+        .filter(|(_, c)| c.is_none())
+        .map(|(i, _)| i)
+        .collect();
+    if !missing.is_empty() {
+        log::error!("Missing {} of {} chunks: {:?}", missing.len(), OSC_EXPECTED_CHUNKS, missing);
+        return;
+    }
+    if duplicate_chunks > 0 {
+        log::warn!("{} chunk sequence number(s) were received more than once", duplicate_chunks);
+    }
+    if malformed_lines > 0 {
+        log::warn!("{} malformed/unexpected line(s) were seen and skipped", malformed_lines);
+    }
+
+    let samples: Vec<u16> = chunks.into_iter().flatten().flatten().collect();
+    if samples.len() != OSC_BUF_LEN {
+        log::error!("Reassembled {} samples, expected {}", samples.len(), OSC_BUF_LEN);
+        return;
+    }
+
+    let out_of_range = samples.iter().filter(|&&v| v > OSC_ADC_MAX).count();
+    let min = *samples.iter().min().unwrap();
+    let max = *samples.iter().max().unwrap();
+    let mean = samples.iter().map(|&v| v as f64).sum::<f64>() / samples.len() as f64;
+
+    log::info!(
+        "Capture OK in {:?}: {} samples, min={}, max={}, mean={:.1}",
+        capture_elapsed, samples.len(), min, max, mean
+    );
+    if out_of_range > 0 {
+        log::error!("{} sample(s) exceeded the 12-bit ADC range (> {})", out_of_range, OSC_ADC_MAX);
+    } else {
+        log::info!("All samples within the 12-bit ADC range (0..={})", OSC_ADC_MAX);
+    }
+
+    // Confirm the STM32 actually resumed normal telemetry rather than staying paused —
+    // any non-empty line here that isn't itself capture protocol traffic proves the 50Hz
+    // tick is running again.
+    let resume_start = Instant::now();
+    let mut resumed = false;
+    while resume_start.elapsed() < OSC_RESUME_TIMEOUT {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(n) if n > 0 => {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() && !trimmed.starts_with("$OSC") {
+                    resumed = true;
+                    break;
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
+            _ => {}
+        }
+    }
+
+    if resumed {
+        log::info!("Normal telemetry resumed after the capture.");
+    } else {
+        log::error!(
+            "No normal telemetry line seen within {:?} after the capture — STM32 may still be paused",
+            OSC_RESUME_TIMEOUT
+        );
+    }
 }
 
 /// Digital segmented display demonstration and test
