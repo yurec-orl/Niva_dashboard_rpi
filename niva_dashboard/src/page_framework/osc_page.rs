@@ -21,12 +21,16 @@ const AMPLITUDE_DIVISIONS: u32 = 4;
 const WAVEFORM_THICKNESS: f32 = 2.0;
 
 /// STM32 ADC1 is 12-bit, referenced to VDDA (3.3V) -- see OSCILLOSCOPE_DESIGN.md and
-/// test/run_test.rs's dump_osc_buffer_csv, which uses the same conversion. This is the
-/// voltage at the PA3 pin itself, not the real 12V system voltage upstream of whatever
-/// divider feeds it -- no calibrated divider ratio exists yet elsewhere in the codebase
-/// (see main.rs's Hw12v chain comment: "calibration ... is pending").
+/// test/run_test.rs's dump_osc_buffer_csv, which uses the same conversion.
 const OSC_ADC_MAX_CODE: f32 = 4095.0;
 const OSC_ADC_VREF: f32 = 3.3;
+
+/// PA3's voltage divider steps the car's 12V system voltage down to the ADC's 0-3.3V range
+/// (see stm32_adc_module/WIRING.md's "PA3 -- 12V system voltage" section): R1=51kΩ from the
+/// 12V line, R2=10kΩ to GND, ADC pin taps the R1/R2 junction. Real system voltage = ADC pin
+/// voltage / (R2/(R1+R2)) -- i.e. multiplied back up by (R1+R2)/R2 (~6.1x).
+const OSC_DIVIDER_R1_OHM: f32 = 51_000.0;
+const OSC_DIVIDER_R2_OHM: f32 = 10_000.0;
 
 const GRID_COLOR: (f32, f32, f32) = (0.25, 0.25, 0.25);
 const AXIS_COLOR: (f32, f32, f32) = (0.6, 0.6, 0.6);
@@ -147,15 +151,17 @@ impl Page for OscPage {
         let y_max = data_max + pad;
         let y_span = (y_max - y_min).max(1.0);
 
-        // Amplitude grid lines + value labels, in volts at the ADC pin (see OSC_ADC_VREF
-        // doc comment above). The graph itself still scales in raw ADC codes -- only the
-        // label text is converted -- since the samples are raw codes throughout.
+        // Amplitude grid lines + value labels, in real 12V-system volts (ADC pin voltage
+        // scaled back up through the PA3 divider -- see OSC_DIVIDER_* doc comment above).
+        // The graph itself still scales in raw ADC codes -- only the label text is converted
+        // -- since the samples are raw codes throughout.
         for i in 0..=AMPLITUDE_DIVISIONS {
             let frac = i as f32 / AMPLITUDE_DIVISIONS as f32;
             let y = graph_y1 - frac * graph_h;
             let value = y_min + frac * y_span;
             context.render_line((graph_x0, y), (graph_x1, y), GRID_COLOR, 1.0)?;
-            let volts = value * OSC_ADC_VREF / OSC_ADC_MAX_CODE;
+            let adc_pin_volts = value * OSC_ADC_VREF / OSC_ADC_MAX_CODE;
+            let volts = adc_pin_volts * (OSC_DIVIDER_R1_OHM + OSC_DIVIDER_R2_OHM) / OSC_DIVIDER_R2_OHM;
             let label = format!("{:.2}В", volts);
             let label_w = context.calculate_text_width_with_font(&label, 1.0, &text_font, text_font_size)?;
             context.render_text_with_font(&label, graph_x0 - label_w - 8.0, y - text_font_size as f32 * 0.5, 1.0, text_color, &text_font, text_font_size)?;
