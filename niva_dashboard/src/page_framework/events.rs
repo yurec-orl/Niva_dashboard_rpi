@@ -31,15 +31,6 @@ pub enum UIEvent {
     ShowOSCInfo,
     ShowLog,
 
-    // Oscilloscope page events
-    OscStart,
-    OscStop,
-    OscSetSampleRate(f32),
-    OscSetTimeScale(f32),
-    OscSetVoltageScale(f32),
-    OscSetTriggerLevel(f32),
-    OscToggleChannel(u8),
-
     // Nav page events
     NavPnpMode,
     NavInfoMode,
@@ -226,13 +217,6 @@ impl SmartEventSender {
             UIEvent::ShowECUInfo |
             UIEvent::ShowOSCInfo |
             UIEvent::ShowLog |
-            UIEvent::OscStart |
-            UIEvent::OscStop |
-            UIEvent::OscSetSampleRate(_) |
-            UIEvent::OscSetTimeScale(_) |
-            UIEvent::OscSetVoltageScale(_) |
-            UIEvent::OscSetTriggerLevel(_) |
-            UIEvent::OscToggleChannel(_) |
             UIEvent::NavPnpMode |
             UIEvent::NavInfoMode |
             UIEvent::NavMapMode |
@@ -323,13 +307,6 @@ mod tests {
             UIEvent::ShowECUInfo,
             UIEvent::ShowOSCInfo,
             UIEvent::ShowLog,
-            UIEvent::OscStart,
-            UIEvent::OscStop,
-            UIEvent::OscSetSampleRate(1.0),
-            UIEvent::OscSetTimeScale(1.0),
-            UIEvent::OscSetVoltageScale(1.0),
-            UIEvent::OscSetTriggerLevel(1.0),
-            UIEvent::OscToggleChannel(0),
             UIEvent::NavHeadingSetMode,
             UIEvent::NavHeadingSetExit,
             UIEvent::HorzCalibrate,

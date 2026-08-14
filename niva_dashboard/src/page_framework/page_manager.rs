@@ -8,12 +8,13 @@ use crate::page_framework::main_page::MainPage;
 use crate::page_framework::terminal_page::TerminalPage;
 use crate::page_framework::gnss_page::{GnssPage, GnssMode};
 use crate::page_framework::horz_page::HorzPage;
+use crate::page_framework::osc_page::OscPage;
 use crate::hardware::sensor_manager::SensorManager;
 use crate::hardware::hw_providers::HWInput;
 use crate::hardware::heading_fusion_sensor::HeadingFusionSensor;
 use crate::alerts::alert_manager::{AlertManager, Severity};
 use crate::alerts::watchdog::Watchdog;
-use crate::util::adc_data_provider::ADCFrame;
+use crate::util::adc_data_provider::{ADCFrame, OscFrame};
 use crate::util::gnss_data_provider::GnssFrame;
 use crate::util::bno085_data_provider::Bno085Frame;
 use crate::util::ups_monitor::UpsMonitor;
@@ -40,6 +41,7 @@ pub const LOG_PAGE_ID: u32 = 3;
 pub const GNSS_TERM_PAGE_ID: u32 = 4;
 pub const GNSS_PAGE_ID: u32 = 5;
 pub const HORZ_PAGE_ID: u32 = 6;
+pub const OSC_PAGE_ID: u32 = 7;
 
 /// Config section key PageManager persists the last-open page under.
 const LAST_PAGE_CONFIG_KEY: &str = "last_page";
@@ -273,6 +275,10 @@ pub struct PageManager {
     // None when the ADC data provider failed to start.
     adc_frame: Option<ADCFrame>,
 
+    // Handle for requesting oscilloscope burst captures, used to build the osc page. None
+    // under the same condition as adc_frame (they come from the same provider).
+    osc_frame: Option<OscFrame>,
+
     // Handle to the shared GNSS line buffer, used to build the GNSS diagnostic terminal
     // page. None when the GNSS data provider failed to start.
     gnss_frame: Option<GnssFrame>,
@@ -311,7 +317,7 @@ pub struct PageManager {
 impl PageManager {
     pub fn new(context: GraphicsContext, sensor_manager: SensorManager, ui_style: UIStyle,
                input_sources: Vec<Box<dyn InputSource>>, ups_monitor: UpsMonitor,
-               adc_frame: Option<ADCFrame>, gnss_frame: Option<GnssFrame>,
+               adc_frame: Option<ADCFrame>, osc_frame: Option<OscFrame>, gnss_frame: Option<GnssFrame>,
                bno_frame: Option<Bno085Frame>,
                alert_manager: AlertManager, heading_fusion: Option<HeadingFusionSensor>) -> Self {
         let mut buttons_map = HashMap::new();
@@ -351,6 +357,7 @@ impl PageManager {
             alert_manager,
             ups_monitor,
             adc_frame,
+            osc_frame,
             gnss_frame,
             bno_frame,
             heading_fusion,
@@ -524,6 +531,16 @@ impl PageManager {
                                                            frame));
             self.add_page(adc_page);
         }
+
+        // Osc page is always registered, even without an osc_frame handle (ADC data
+        // provider unavailable) -- it just renders "АЦП НЕДОСТУПНО" instead of a graph in
+        // that case, and the diag page's ОСЦ button is unconditional (same lenient pattern
+        // as its ДАТЧ/ГНСС buttons, which no-op if their target page isn't registered).
+        let osc_page = Box::new(OscPage::new(OSC_PAGE_ID,
+                                              smart_sender.clone(),
+                                              self.get_event_receiver(),
+                                              self.osc_frame.clone()));
+        self.add_page(osc_page);
 
         // GNSS terminal page only exists when the GNSS data provider actually started —
         // without a frame handle there is nothing for it to display.

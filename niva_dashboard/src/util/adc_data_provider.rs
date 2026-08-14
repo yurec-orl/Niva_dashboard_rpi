@@ -38,6 +38,20 @@ const ADC_USB_HUB_LOCATION: &str = "1-1";
 /// disconnect/reconnect never triggers a physical power cycle.
 const HARD_RESET_STALE_THRESHOLD: Duration = Duration::from_secs(5);
 
+/// Wire parameters for the oscilloscope burst-capture protocol (see OSCILLOSCOPE_DESIGN.md
+/// and stm32_adc_module's main.cpp OSC_* defines) — kept in sync with the firmware by hand,
+/// since the two sides don't share a header.
+pub const OSC_BUF_LEN: usize = 4096;
+const OSC_CHUNK_SAMPLES: usize = 64;
+const OSC_EXPECTED_CHUNKS: usize = OSC_BUF_LEN / OSC_CHUNK_SAMPLES;
+/// Sample rate of the burst capture (50 kSPS, see OSCILLOSCOPE_DESIGN.md) — used by callers
+/// to convert the buffer's sample index into elapsed time.
+pub const OSC_SAMPLE_RATE_HZ: f64 = 50_000.0;
+/// Bounds the whole request/response round trip: firmware's own DMA capture is bounded at
+/// 150ms, plus time to ASCII-encode and transmit ~21KB back over the USB-CDC link. Generous
+/// relative to both so a hung/missing STM32 is reported promptly rather than hanging forever.
+const OSC_CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Physical channel index within the STM32 ADC frame. After stripping the leading '$'
 /// marker, the frame is a fixed sequence: A0-A3 (analog), TACHO/SPEED (raw inter-pulse
 /// periods), D0-D9 (digital, STM32 pre-normalizes 1=active/0=inactive), then B0-B7
@@ -152,6 +166,67 @@ impl ADCFrame {
     pub fn is_stale(&self) -> bool {
         self.last_update_age() > ADC_LINK_MAX_AGE
     }
+
+    /// Refreshes the "last updated" timestamp without altering channel data. Used while an
+    /// oscilloscope capture has the STM32's normal telemetry paused, so the routine pause
+    /// doesn't get mistaken by AdcLinkStatusProvider for a dropped link.
+    fn touch(&self) {
+        *self.last_update.lock().unwrap() = Instant::now();
+    }
+}
+
+/// Outcome of the most recent (or in-progress) oscilloscope burst capture, shared between
+/// ADCDataProvider's background thread (writer) and OscPage (reader) via OscFrame.
+#[derive(Clone)]
+pub enum OscCaptureState {
+    /// No capture has been requested yet.
+    Idle,
+    /// A capture is currently in flight (request sent, waiting on chunks/$OSCEND).
+    Capturing,
+    /// Last capture completed successfully; carries the reassembled sample buffer.
+    Done(Vec<u16>),
+    /// Last capture failed (link lost, timeout, missing/malformed chunks).
+    Failed(String),
+}
+
+/// A cloneable, thread-safe handle for requesting an oscilloscope burst capture and reading
+/// back its result. Mirrors ADCFrame's shape (background thread owns the writer side, UI
+/// thread only ever reads/requests) but models a one-shot request/response instead of a
+/// continuously-refreshed frame.
+#[derive(Clone)]
+pub struct OscFrame {
+    request_pending: Arc<AtomicBool>,
+    state: Arc<Mutex<OscCaptureState>>,
+}
+
+impl OscFrame {
+    fn new() -> Self {
+        OscFrame {
+            request_pending: Arc::new(AtomicBool::new(false)),
+            state: Arc::new(Mutex::new(OscCaptureState::Idle)),
+        }
+    }
+
+    /// Requests a new capture. A no-op (from the caller's perspective) if a capture is
+    /// already pending or in flight — the background thread only ever services one at a time.
+    pub fn request_capture(&self) {
+        self.request_pending.store(true, Ordering::SeqCst);
+    }
+
+    /// Current capture state, cloned out for the caller to inspect. `Vec<u16>` clones here
+    /// are at most OSC_BUF_LEN elements (a few KB) — cheap enough to call every frame.
+    pub fn state(&self) -> OscCaptureState {
+        self.state.lock().unwrap().clone()
+    }
+
+    /// Consumes a pending request, if any. Called only from the background thread's read loop.
+    fn take_request(&self) -> bool {
+        self.request_pending.swap(false, Ordering::SeqCst)
+    }
+
+    fn set_state(&self, state: OscCaptureState) {
+        *self.state.lock().unwrap() = state;
+    }
 }
 
 /// Owns the ADC serial connection's lifecycle within the background thread's read loop:
@@ -223,6 +298,7 @@ pub struct ADCDataProvider {
     baud: u32,
     should_stop: Arc<AtomicBool>,
     frame: ADCFrame,
+    osc_frame: OscFrame,
     thread: Option<thread::JoinHandle<()>>,
 }
 
@@ -233,6 +309,7 @@ impl ADCDataProvider {
             baud,
             should_stop: Arc::new(AtomicBool::new(false)),
             frame: ADCFrame::new(),
+            osc_frame: OscFrame::new(),
             thread: None,
         }
     }
@@ -246,10 +323,11 @@ impl ADCDataProvider {
         let baud = self.baud;
         let should_stop = Arc::clone(&self.should_stop);
         let frame = self.frame.clone();
+        let osc_frame = self.osc_frame.clone();
 
         match std::thread::Builder::new()
             .name("adc-data-provider".into())
-            .spawn(move || Self::run_loop(&port, baud, &should_stop, &frame)) {
+            .spawn(move || Self::run_loop(&port, baud, &should_stop, &frame, &osc_frame)) {
             Ok(handle) => self.thread = Some(handle),
             Err(e) => return Err(AdcDataProviderError::SpawnFailed(e)),
         }
@@ -260,7 +338,7 @@ impl ADCDataProvider {
     /// Background thread body: (re)opens the serial port whenever there is no live
     /// connection, then reads frames until the link drops, looping back to reconnecting.
     /// Runs until `should_stop` is set.
-    fn run_loop(port: &str, baud: u32, should_stop: &AtomicBool, frame: &ADCFrame) {
+    fn run_loop(port: &str, baud: u32, should_stop: &AtomicBool, frame: &ADCFrame, osc_frame: &OscFrame) {
         let mut conn = AdcConnection::new();
         // A hub-wide power cycle is far more intrusive than a routine reconnect (it also
         // drops whatever else shares the hub), so it's attempted at most once per outage —
@@ -270,6 +348,22 @@ impl ADCDataProvider {
         while !should_stop.load(Ordering::Relaxed) {
             if !conn.ensure_connected(port, baud) {
                 Self::sleep_while_running(should_stop, RECONNECT_INTERVAL);
+                continue;
+            }
+
+            // Oscilloscope capture requests take priority over normal telemetry reads: the
+            // STM32 pauses its own 50Hz tick for the duration, so there is nothing else
+            // useful to read from the port until the capture finishes anyway.
+            if osc_frame.take_request() {
+                osc_frame.set_state(OscCaptureState::Capturing);
+                let reader = conn.reader.as_mut().unwrap();
+                match Self::perform_osc_capture(reader, frame) {
+                    Ok(samples) => osc_frame.set_state(OscCaptureState::Done(samples)),
+                    Err(e) => {
+                        log::warn!("Oscilloscope capture failed: {}", e);
+                        osc_frame.set_state(OscCaptureState::Failed(e));
+                    }
+                }
                 continue;
             }
 
@@ -311,6 +405,56 @@ impl ADCDataProvider {
         }
     }
 
+    /// Sends `$OSCCAP`, reassembles the chunked `$OSCD,<seq>,...`/`$OSCEND` response into one
+    /// sample buffer, and returns it. Mirrors the standalone `osc_capture` test's logic (see
+    /// test/run_test.rs::run_osc_capture_test — validated there against real hardware) but
+    /// runs inside the provider's own connection/read loop instead of a throwaway one, so it
+    /// can share the live port with normal telemetry reads.
+    ///
+    /// Touches `frame`'s last-update timestamp on every iteration of the wait: the STM32
+    /// pauses its normal telemetry send for the whole capture window, which would otherwise
+    /// read as a dropped ADC link (see ADCFrame::touch) and flash the link-down alert on
+    /// every single capture.
+    fn perform_osc_capture(reader: &mut LineSerialReader, frame: &ADCFrame) -> Result<Vec<u16>, String> {
+        reader.write_line("$OSCCAP\n")?;
+
+        let mut chunks: Vec<Option<Vec<u16>>> = vec![None; OSC_EXPECTED_CHUNKS];
+        let start = Instant::now();
+        let mut got_end = false;
+
+        while start.elapsed() < OSC_CAPTURE_TIMEOUT {
+            frame.touch();
+            match reader.read_line() {
+                Some(line) if !line.is_empty() => {
+                    if line == "$OSCEND" {
+                        got_end = true;
+                        break;
+                    } else if let Some(rest) = line.strip_prefix("$OSCD,") {
+                        let mut parts = rest.split(',');
+                        if let Some(seq) = parts.next().and_then(|s| s.parse::<usize>().ok()).filter(|&s| s < OSC_EXPECTED_CHUNKS) {
+                            let values: Vec<u16> = parts.filter_map(|s| s.parse().ok()).collect();
+                            if values.len() == OSC_CHUNK_SAMPLES {
+                                chunks[seq] = Some(values);
+                            }
+                        }
+                    }
+                    // Ignore other lines (e.g. a trailing normal telemetry frame that raced in).
+                }
+                Some(_) => {} // read timeout — keep polling
+                None => return Err("ADC serial link lost during capture".to_string()),
+            }
+        }
+
+        if !got_end {
+            let received = chunks.iter().filter(|c| c.is_some()).count();
+            return Err(format!("timed out waiting for $OSCEND ({} of {} chunks received)", received, OSC_EXPECTED_CHUNKS));
+        }
+
+        chunks.into_iter().collect::<Option<Vec<_>>>()
+            .map(|chunks| chunks.into_iter().flatten().collect())
+            .ok_or_else(|| "capture missing one or more chunks".to_string())
+    }
+
     /// Power-cycles every port on the STM32 module's USB hub via `uhubctl`, forcing a
     /// hardware power-on-reset. Requires root — a narrowly-scoped passwordless sudoers
     /// entry (see PROJECT_CONTEXT.md "ADC module connectivity") permits exactly this one
@@ -344,6 +488,11 @@ impl ADCDataProvider {
     /// Returns a cloneable handle to the shared frame for use by hardware providers.
     pub fn frame(&self) -> ADCFrame {
         self.frame.clone()
+    }
+
+    /// Returns a cloneable handle for requesting oscilloscope burst captures (see OscPage).
+    pub fn osc_frame(&self) -> OscFrame {
+        self.osc_frame.clone()
     }
 }
 

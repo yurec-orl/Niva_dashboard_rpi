@@ -1,5 +1,6 @@
 use std::io::BufRead;
 use std::io::BufReader;
+use std::io::Write;
 use std::time::Duration;
 use serialport::SerialPort;
 
@@ -29,6 +30,13 @@ impl LineSerialReader {
 
         log::info!("Opened serial port '{}' at {} baud", port, baud);
         Ok(LineSerialReader { reader: BufReader::new(opened) })
+    }
+
+    /// Writes raw bytes to the port (e.g. an `$OSCCAP\n` command line). The reader wraps the
+    /// port in a `BufReader`, which only buffers reads — writes go straight through.
+    pub fn write_line(&mut self, s: &str) -> Result<(), String> {
+        self.reader.get_mut().write_all(s.as_bytes())
+            .map_err(|e| format!("serial write failed: {}", e))
     }
 }
 
