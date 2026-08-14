@@ -32,6 +32,13 @@ const OSC_ADC_VREF: f32 = 3.3;
 const OSC_DIVIDER_R1_OHM: f32 = 51_000.0;
 const OSC_DIVIDER_R2_OHM: f32 = 10_000.0;
 
+/// Converts a raw ADC code to real 12V-system volts (ADC pin voltage scaled back up through
+/// the PA3 divider -- see OSC_DIVIDER_* doc comment above).
+fn adc_code_to_volts(code: f32) -> f32 {
+    let adc_pin_volts = code * OSC_ADC_VREF / OSC_ADC_MAX_CODE;
+    adc_pin_volts * (OSC_DIVIDER_R1_OHM + OSC_DIVIDER_R2_OHM) / OSC_DIVIDER_R2_OHM
+}
+
 const GRID_COLOR: (f32, f32, f32) = (0.25, 0.25, 0.25);
 const AXIS_COLOR: (f32, f32, f32) = (0.6, 0.6, 0.6);
 const WAVEFORM_COLOR: (f32, f32, f32) = (0.2, 1.0, 0.4);
@@ -145,6 +152,15 @@ impl Page for OscPage {
         // (min == max) falls back to a 1-unit span so the math below stays well-defined.
         let data_min = *samples.iter().min().unwrap() as f32;
         let data_max = *samples.iter().max().unwrap() as f32;
+
+        let min_v = adc_code_to_volts(data_min);
+        let max_v = adc_code_to_volts(data_max);
+        let stats_label = format!("MIN {:.2}В  MAX {:.2}В  Δ {:.2}В", min_v, max_v, max_v - min_v);
+        let stats_label_w = context.calculate_text_width_with_font(&stats_label, 1.0, &text_font, text_font_size)?;
+        context.render_text_with_font(
+            &stats_label, graph_x1 - stats_label_w, STATUS_Y, 1.0, text_color, &text_font, text_font_size,
+        )?;
+
         let span = (data_max - data_min).max(1.0);
         let pad = span * 0.05;
         let y_min = data_min - pad;
@@ -160,9 +176,7 @@ impl Page for OscPage {
             let y = graph_y1 - frac * graph_h;
             let value = y_min + frac * y_span;
             context.render_line((graph_x0, y), (graph_x1, y), GRID_COLOR, 1.0)?;
-            let adc_pin_volts = value * OSC_ADC_VREF / OSC_ADC_MAX_CODE;
-            let volts = adc_pin_volts * (OSC_DIVIDER_R1_OHM + OSC_DIVIDER_R2_OHM) / OSC_DIVIDER_R2_OHM;
-            let label = format!("{:.2}В", volts);
+            let label = format!("{:.2}В", adc_code_to_volts(value));
             let label_w = context.calculate_text_width_with_font(&label, 1.0, &text_font, text_font_size)?;
             context.render_text_with_font(&label, graph_x0 - label_w - 8.0, y - text_font_size as f32 * 0.5, 1.0, text_color, &text_font, text_font_size)?;
         }
