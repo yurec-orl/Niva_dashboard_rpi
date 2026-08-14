@@ -1,6 +1,8 @@
+use std::env;
+use std::fmt::Write as _;
 use std::io::{BufRead, BufReader, Write};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::opengl_test::{run_rotating_needle_gauge_test, run_indicator_zero_position_test, run_indicator_middle_position_test, run_indicator_max_position_test, run_fuel_level_grid_test, run_compass_test};
@@ -456,6 +458,23 @@ fn run_osc_capture_test() {
         log::info!("All samples within the 12-bit ADC range (0..={})", OSC_ADC_MAX);
     }
 
+    // A single sample at 0 is consistent with a real trough grazing the ADC floor; a long
+    // run of consecutive zeros means the input actually went negative and got clamped there
+    // for a stretch — the two look identical in min/max/mean alone, so distinguish them here.
+    let zero_count = samples.iter().filter(|&&v| v == 0).count();
+    let longest_zero_run = samples.iter().fold((0usize, 0usize), |(longest, current), &v| {
+        let current = if v == 0 { current + 1 } else { 0 };
+        (longest.max(current), current)
+    }).0;
+    log::info!(
+        "Zero-value samples: {} of {} ({:.1}%), longest consecutive run: {}",
+        zero_count, samples.len(), 100.0 * zero_count as f64 / samples.len() as f64, longest_zero_run
+    );
+
+    if let Some(path) = dump_osc_buffer_csv(&samples) {
+        log::info!("Raw buffer dumped to {}", path);
+    }
+
     // Confirm the STM32 actually resumed normal telemetry rather than staying paused —
     // any non-empty line here that isn't itself capture protocol traffic proves the 50Hz
     // tick is running again.
@@ -483,6 +502,46 @@ fn run_osc_capture_test() {
             "No normal telemetry line seen within {:?} after the capture — STM32 may still be paused",
             OSC_RESUME_TIMEOUT
         );
+    }
+}
+
+/// STM32 ADC1's reference voltage (VDDA, tied to the 3.3V rail) — used only to add a
+/// convenience volts column to the CSV dump; the raw 12-bit codes are what's actually
+/// validated above.
+const OSC_ADC_VREF: f32 = 3.3;
+/// Sample period at OSC_SAMPLE_RATE_HZ (50 kHz, see stm32_adc_module's main.cpp), in
+/// microseconds — used to add a convenience time column to the CSV dump.
+const OSC_SAMPLE_PERIOD_US: f64 = 1_000_000.0 / 50_000.0;
+
+/// Writes the captured buffer to a CSV file (index, time, raw code, volts per row) next to
+/// the dashboard's log files, so a capture can actually be plotted/inspected instead of
+/// judged from min/max/mean alone. Best-effort — a write failure just logs and returns None,
+/// since the diagnostic already has its findings from the in-memory buffer regardless.
+fn dump_osc_buffer_csv(samples: &[u16]) -> Option<String> {
+    let home = env::var("HOME").unwrap_or_else(|_| "/home/user".to_string());
+    let dir = format!("{home}/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/Logs");
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        log::error!("Failed to create {}: {}", dir, e);
+        return None;
+    }
+
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
+    let path = format!("{dir}/osc_capture_{timestamp}.csv");
+
+    let mut csv = String::with_capacity(samples.len() * 24);
+    csv.push_str("index,time_us,raw,volts\n");
+    for (i, &raw) in samples.iter().enumerate() {
+        let time_us = i as f64 * OSC_SAMPLE_PERIOD_US;
+        let volts = raw as f32 * OSC_ADC_VREF / OSC_ADC_MAX as f32;
+        let _ = writeln!(csv, "{},{:.1},{},{:.4}", i, time_us, raw, volts);
+    }
+
+    match std::fs::write(&path, csv) {
+        Ok(()) => Some(path),
+        Err(e) => {
+            log::error!("Failed to write {}: {}", path, e);
+            None
+        }
     }
 }
 
