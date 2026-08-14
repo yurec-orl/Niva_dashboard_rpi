@@ -274,8 +274,8 @@ const UPS_CURRENT_LSB_MA: f32 = 0.1524;
 
 /// Current draw below this (mA) counts as "discharging" (running on battery, mains absent
 /// or insufficient). UPS reported current at full charge normally floats arount 0..-150 mA 
-// for extended periods, -200 mA threshold accounts for that.
-pub const UPS_ON_BATTERY_CURRENT_THRESHOLD_MA: f32 = -200.0;
+// for extended periods, and dips <-200 mA under load - -300 mA accounts for that.
+pub const UPS_ON_BATTERY_CURRENT_THRESHOLD_MA: f32 = -300.0;
 
 /// Bus voltage (V) mapped to state of charge (0-100%), ported from Waveshare's INA219.py
 /// demo (`p = (bus_voltage - 3) / 1.2 * 100`) — a linear estimate between an empty single

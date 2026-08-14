@@ -306,7 +306,8 @@ impl Indicator for CompassIndicator {
             let lx = cx + screen_angle.cos() * label_radius;
             let ly = cy + screen_angle.sin() * label_radius;
             let text = format!("{:.0}", v);
-            let (text_width, text_height) = context.calculate_text_dimensions_with_font(&text, 1.0, &label_font, self.label_font_size)?;
+            let text_width = context.calculate_text_width_with_font(&text, 1.0, &label_font, self.label_font_size)?;
+            let text_height = context.get_line_height_with_font(1.0, &label_font, self.label_font_size)?;
             context.render_text_with_font(
                 &text, lx - text_width / 2.0, ly - text_height / 2.0, 1.0, label_color, &label_font, self.label_font_size,
             )?;

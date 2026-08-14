@@ -7,6 +7,7 @@ use crate::page_framework::input::{InputHandler, InputSource, ButtonState};
 use crate::page_framework::main_page::MainPage;
 use crate::page_framework::terminal_page::TerminalPage;
 use crate::page_framework::gnss_page::{GnssPage, GnssMode};
+use crate::page_framework::horz_page::HorzPage;
 use crate::hardware::sensor_manager::SensorManager;
 use crate::hardware::hw_providers::HWInput;
 use crate::hardware::heading_fusion_sensor::HeadingFusionSensor;
@@ -14,7 +15,9 @@ use crate::alerts::alert_manager::{AlertManager, Severity};
 use crate::alerts::watchdog::Watchdog;
 use crate::util::adc_data_provider::ADCFrame;
 use crate::util::gnss_data_provider::GnssFrame;
+use crate::util::bno085_data_provider::Bno085Frame;
 use crate::util::ups_monitor::UpsMonitor;
+use crate::util::config::Config;
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -26,12 +29,27 @@ const STATUS_LINE_Y_MARGIN : f32 = 25.0;
 
 const PAGE_BUTTON_X_MARGIN: f32 = 4.0;      // Move a little from screen edge for better visibility.
 
+// While a button stays physically held past this interval, its on_press callback fires
+// again (e.g. GNSS page's КУРС+/КУРС- continuous heading adjust).
+const BUTTON_HOLD_REPEAT_INTERVAL: Duration = Duration::from_millis(150);
+
 pub const MAIN_PAGE_ID: u32 = 0;
 pub const DIAG_PAGE_ID: u32 = 1;
 pub const ADC_TERM_PAGE_ID: u32 = 2;
 pub const LOG_PAGE_ID: u32 = 3;
 pub const GNSS_TERM_PAGE_ID: u32 = 4;
 pub const GNSS_PAGE_ID: u32 = 5;
+pub const HORZ_PAGE_ID: u32 = 6;
+
+/// Config section key PageManager persists the last-open page under.
+const LAST_PAGE_CONFIG_KEY: &str = "last_page";
+
+/// Config section key a page's own persisted settings are stored under -- Config only knows
+/// about opaque string keys, so PageManager (the only thing that knows pages have numeric ids)
+/// turns each page's id into one.
+fn page_config_key(page_id: u32) -> String {
+    format!("page_{}", page_id)
+}
 
 // ButtonPosition correspond to physical 2x4 buttons layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -52,6 +70,7 @@ pub struct PageButton<CB> {
     pos: ButtonPosition,
     pub label: String,
     callback: CB,
+    on_press: Option<CB>,
 }
 
 impl<CB> PageButton<CB>
@@ -59,12 +78,26 @@ where
     CB: FnMut(),
 {
     pub fn new(pos: ButtonPosition, label: String, callback: CB) -> Self {
-        PageButton { pos, label, callback }
+        PageButton { pos, label, callback, on_press: None }
+    }
+
+    // Attaches a callback fired on press, and repeatedly while held (see PageManager's
+    // held-button repeat sweep) -- independent of the release-triggered callback above.
+    pub fn with_onpress(mut self, on_press: CB) -> Self {
+        self.on_press = Some(on_press);
+        self
     }
 
     // Invokes button-specific callback.
     pub fn trigger(&mut self) {
         (self.callback)();
+    }
+
+    // Invokes the on-press callback, if any.
+    pub fn trigger_press(&mut self) {
+        if let Some(on_press) = &mut self.on_press {
+            on_press();
+        }
     }
 
     // Used to match buttons with hardware input.
@@ -134,6 +167,14 @@ pub trait Page {
     // Process events specific to this page (MPMC allows each page to have its own receiver)
     fn process_events(&mut self) {}
 
+    // Returns this page's persistable settings as JSON, or `Value::Null` if it has none.
+    // PageManager stores/restores this opaquely (see util::config::Config), without knowing
+    // any page's own settings shape.
+    fn get_config(&self) -> serde_json::Value { serde_json::Value::Null }
+    // Restores settings previously returned by `get_config` (or `Value::Null` on first run /
+    // no prior entry) -- implementations must tolerate Null and missing/stale fields.
+    fn set_config(&mut self, _config: &serde_json::Value) {}
+
     fn buttons(&self) -> &Vec<PageButton<Box<dyn FnMut()>>>;
     fn set_buttons(&mut self, buttons: Vec<PageButton<Box<dyn FnMut()>>>);
 
@@ -174,6 +215,10 @@ impl Pages {
         }
         None
     }
+
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, Box<dyn Page>> {
+        self.pages.iter_mut()
+    }
 }
 
 // PageManager is responsible for managing multiple pages and their transitions,
@@ -193,11 +238,19 @@ pub struct PageManager {
     current_page: Option<u32>,
     pages: Pages,
 
+    // Per-page persisted settings + last-opened page, loaded once at startup and updated on
+    // every page switch (see Page::get_config/set_config).
+    config: Config,
+
     // Input handling from gpio buttons, external keyboard, etc.
     input_handler: InputHandler,
 
     // Map hardware keys with UI buttons positions.
     buttons_map: HashMap<char, ButtonPosition>,
+
+    // Positions currently held down, mapped to when their on_press callback last fired.
+    // Used both to draw a frame around the label and to drive the held-button repeat sweep.
+    pressed_positions: HashMap<ButtonPosition, Instant>,
 
     // Event system for UI communication (dual-channel).
     event_bus: EventBus,
@@ -223,6 +276,12 @@ pub struct PageManager {
     // Handle to the shared GNSS line buffer, used to build the GNSS diagnostic terminal
     // page. None when the GNSS data provider failed to start.
     gnss_frame: Option<GnssFrame>,
+
+    // Handle to the shared BNO085 frame, passed straight into GnssPage for its raw INS
+    // diagnostics block (same rationale as gnss_frame above -- composite data the
+    // HWInput/sensor-chain pipeline doesn't carry). None when the BNO085 data provider
+    // failed to start.
+    bno_frame: Option<Bno085Frame>,
 
     // Reads GnssFrame/Bno085Frame directly and is ticked once per loop iteration below,
     // independent of `sensor_manager`'s self-test/real handoff -- see
@@ -253,6 +312,7 @@ impl PageManager {
     pub fn new(context: GraphicsContext, sensor_manager: SensorManager, ui_style: UIStyle,
                input_sources: Vec<Box<dyn InputSource>>, ups_monitor: UpsMonitor,
                adc_frame: Option<ADCFrame>, gnss_frame: Option<GnssFrame>,
+               bno_frame: Option<Bno085Frame>,
                alert_manager: AlertManager, heading_fusion: Option<HeadingFusionSensor>) -> Self {
         let mut buttons_map = HashMap::new();
         buttons_map.insert('1', ButtonPosition::Left1);
@@ -279,8 +339,10 @@ impl PageManager {
             pg_id: 0,
             current_page: None,
             pages: Pages::new(),
+            config: Config::load(),
             input_handler: InputHandler::new(input_sources),
             buttons_map,
+            pressed_positions: HashMap::new(),
             event_bus,
             global_event_receiver,
             smart_event_sender,
@@ -290,6 +352,7 @@ impl PageManager {
             ups_monitor,
             adc_frame,
             gnss_frame,
+            bno_frame,
             heading_fusion,
             fps_counter: FpsCounter::new(),
             start_time: Instant::now(),
@@ -381,9 +444,19 @@ impl PageManager {
         }
 
         // Call on_exit for old page first.
+        let outgoing_id = self.current_page;
         if let Some(current) = self.get_current_page_mut() {
             current.on_exit()?;
         }
+
+        // Persist the outgoing page's config (post on_exit, so its freshest state is
+        // captured) and record the page we're switching to as the one to reopen next
+        // launch -- done on every switch, not just at shutdown, so an unclean exit right
+        // after doesn't lose either.
+        if let Some((id, config)) = outgoing_id.and_then(|id| self.get_page(id).map(|p| (id, p.get_config()))) {
+            self.config.set_section(&page_config_key(id), config);
+        }
+        self.config.set_section(LAST_PAGE_CONFIG_KEY, serde_json::json!(page_id));
 
         self.current_page = Some(page_id);
 
@@ -398,6 +471,17 @@ impl PageManager {
     fn button_by_key(&mut self, key: &char) -> Option<&mut PageButton<Box<dyn FnMut()>>> {
         let pos = self.buttons_map.get(key).copied()?;
         self.get_current_page_mut()?.button_by_position_mut(pos)
+    }
+
+    // Track currently held-down positions, used to frame their label while pressed.
+    fn set_button_pressed(&mut self, key: char, pressed: bool) {
+        if let Some(pos) = self.buttons_map.get(&key).copied() {
+            if pressed {
+                self.pressed_positions.insert(pos, Instant::now());
+            } else {
+                self.pressed_positions.remove(&pos);
+            }
+        }
     }
 
     // Set up pages, buttons and watchdogs.
@@ -420,11 +504,16 @@ impl PageManager {
                                                        smart_sender.clone(),
                                                        self.get_event_receiver()));
 
-        self.add_page(main_page);
-        self.switch_page(MAIN_PAGE_ID)?;
+        let horz_page = Box::new(HorzPage::new(HORZ_PAGE_ID,
+                                                smart_sender.clone(),
+                                                self.get_event_receiver(),
+                                                self.bno_frame.clone(),
+                                                &self.ui_style));
 
+        self.add_page(main_page);
         self.add_page(diag_page);
         self.add_page(log_page);
+        self.add_page(horz_page);
 
         // ADC terminal page only exists when the ADC data provider actually started —
         // without a frame handle there is nothing for it to display.
@@ -449,10 +538,28 @@ impl PageManager {
                                                      smart_sender.clone(),
                                                      self.get_event_receiver(),
                                                      frame,
+                                                     self.bno_frame.clone(),
                                                      GnssMode::PNP,
                                                      &self.ui_style));
             self.add_page(gnss_page);
         }
+
+        // Restore every page's persisted config in one place, rather than at each add_page
+        // call site above -- a page added here without going through this loop would
+        // silently lose its settings on every restart.
+        for page in self.pages.iter_mut() {
+            let config = self.config.section(&page_config_key(page.id()));
+            page.set_config(&config);
+        }
+
+        // Reopen wherever the user left off last run, falling back to Main if that page
+        // no longer exists (e.g. GNSS was persisted as last-open but the receiver failed
+        // to start this run) or this is a first run with nothing persisted yet.
+        let start_page_id = self.config.section(LAST_PAGE_CONFIG_KEY).as_u64()
+            .map(|id| id as u32)
+            .filter(|id| self.get_page(*id).is_some())
+            .unwrap_or(MAIN_PAGE_ID);
+        self.switch_page(start_page_id)?;
 
         // Set up watchdogs for alert manager.
         // Display timeout: how long alert is displayed on screen before automatically hidden. None means displayed until manually suppressed.
@@ -511,7 +618,7 @@ impl PageManager {
             Severity::Warning,
             Some(std::time::Duration::from_secs(60)),       // Display for 60 s
             Some(std::time::Duration::from_secs(60*3)),     // Wait 3 min before displaying again
-            None,                                           // Trigger immediately
+            Some(std::time::Duration::from_secs(5)),        // Ignore brief transients
         );
         let ups_crit_charge_watchdog = Watchdog::new(
             HWInput::HwUPSChargeState,
@@ -519,7 +626,7 @@ impl PageManager {
             Severity::Critical,
             None,                                           // No display timeout - stays visible while charge is critically low
             Some(std::time::Duration::from_secs(60*3)),     // Wait 3 min before displaying again
-            None,                                           // Trigger immediately
+            Some(std::time::Duration::from_secs(5)),        // Ignore brief transients
         );
 
         self.alert_manager.add_watchdog(engine_temp_watchdog);
@@ -647,9 +754,14 @@ impl PageManager {
                 match state {
                     ButtonState::Pressed(key) => {
                         log::info!("Button pressed: {}", key);
+                        self.set_button_pressed(key, true);
+                        if let Some(button) = self.button_by_key(&key) {
+                            button.trigger_press();
+                        }
                     }
                     ButtonState::Released(key) => {
                         log::info!("Button released: {}", key);
+                        self.set_button_pressed(key, false);
                         if let Some(button) = self.button_by_key(&key) {
                             button.trigger();
                         } else if key == 'q' {
@@ -659,6 +771,22 @@ impl PageManager {
                         }
                     }
                 }
+            }
+
+            // Held-button repeat: re-fire on_press for any position still held past
+            // BUTTON_HOLD_REPEAT_INTERVAL (e.g. GNSS page's КУРС+/КУРС- continuous adjust).
+            // Positions are collected up front since the trigger below needs a fresh
+            // mutable borrow of self for each lookup.
+            let now = Instant::now();
+            let due_positions: Vec<ButtonPosition> = self.pressed_positions.iter()
+                .filter(|(_, &last)| now.duration_since(last) >= BUTTON_HOLD_REPEAT_INTERVAL)
+                .map(|(&pos, _)| pos)
+                .collect();
+            for pos in due_positions {
+                if let Some(button) = self.get_current_page_mut().and_then(|p| p.button_by_position_mut(pos)) {
+                    button.trigger_press();
+                }
+                self.pressed_positions.insert(pos, now);
             }
 
             // Process global UI events (PageManager events only)
@@ -732,10 +860,28 @@ impl PageManager {
                 // raising alerts now that watchdogs read live hardware, not the synthetic sweep.
                 self.alert_manager.set_enabled(true);
             }
+            UIEvent::NavHeadingIncrease => {
+                self.adjust_manual_heading(1.0);
+            }
+            UIEvent::NavHeadingDecrease => {
+                self.adjust_manual_heading(-1.0);
+            }
             _ => {}
         }
     }
     
+    // Nudges the fused heading's manual anchor by delta_deg, based on the currently
+    // displayed heading. No-op if heading fusion isn't running (e.g. BNO085 or GNSS
+    // provider failed to start).
+    fn adjust_manual_heading(&mut self, delta_deg: f32) {
+        let current = self.sensor_manager.get_sensor_value(&HWInput::HwHeading)
+            .map(|v| v.as_f32())
+            .unwrap_or(0.0);
+        if let Some(heading_fusion) = self.heading_fusion.as_mut() {
+            heading_fusion.set_manual_heading((current + delta_deg).rem_euclid(360.0));
+        }
+    }
+
     fn get_button_position(&self, pos: &ButtonPosition, _orientation: &String) -> (f32, f32) {
         let screen_width = self.context.width as f32;
         let screen_height = self.context.height as f32 - STATUS_LINE_Y_MARGIN;
@@ -766,19 +912,26 @@ impl PageManager {
     
     fn render_button_at_position(&mut self, pos: &ButtonPosition, label: &str,
         label_font: &String, label_font_size: u32, label_color: (f32, f32, f32),
-        orientation: &String
+        orientation: &String, is_pressed: bool
     ) -> Result<(), String> {
         let (x, mut y) = self.get_button_position(pos, orientation);
-        
+
+        let (text_width, text_height) = if orientation == "horizontal" {
+            (
+                self.context.calculate_text_width_with_font(label, 1.0, label_font, label_font_size)?,
+                self.context.calculate_text_height_with_font(label, 1.0, label_font, label_font_size)?,
+            )
+        } else {
+            (
+                self.context.calculate_text_width_with_font_vert(label, 1.0, label_font, label_font_size)?,
+                self.context.calculate_text_height_with_font_vert(label, 1.0, label_font, label_font_size)?,
+            )
+        };
+
         if orientation == "vertical" {
             // Special case for vertical orientation: adjust y position
             // so that label y center point alingns with button position
-            y = y - (self.context.calculate_text_height_with_font_vert(
-                label,
-                1.0,
-                label_font,
-                label_font_size
-            )? / 2.0);
+            y = y - (text_height / 2.0);
             // Adjust if out of bounds
             if y < 0.0 {
                 y = 0.0;
@@ -787,51 +940,50 @@ impl PageManager {
 
         let render_x = match pos {
             // Right side buttons are right-aligned
-            ButtonPosition::Right1 | ButtonPosition::Right2 | 
+            ButtonPosition::Right1 | ButtonPosition::Right2 |
             ButtonPosition::Right3 | ButtonPosition::Right4 => {
-                let text_width = if orientation == "horizontal" {
-                    self.context.calculate_text_width_with_font(
-                        label,
-                        1.0,
-                        label_font,
-                        label_font_size
-                    )?
-                } else {
-                    self.context.calculate_text_width_with_font_vert(
-                        label,
-                        1.0,
-                        label_font,
-                        label_font_size
-                    )?
-                };
                 x - text_width - PAGE_BUTTON_X_MARGIN
             }
             // Left side buttons are left-aligned
             _ => x + PAGE_BUTTON_X_MARGIN,
         };
-        
+
         if orientation == "horizontal" {
             self.context.render_text_with_font(
-                label, 
-                render_x, 
-                y, 
+                label,
+                render_x,
+                y,
                 1.0,
                 label_color,
                 label_font,
                 label_font_size
             )?;
-            return Ok(());
         } else {
             self.context.render_text_with_font_vert(
-                label, 
-                render_x, 
-                y, 
+                label,
+                render_x,
+                y,
                 1.0,
                 label_color,
                 label_font,
                 label_font_size
             )?;
         }
+
+        if is_pressed {
+            let padding = self.ui_style.get_float(PAGE_BUTTON_PRESSED_FRAME_PADDING, 4.0);
+            let thickness = self.ui_style.get_float(PAGE_BUTTON_PRESSED_FRAME_WIDTH, 2.0);
+            let frame_color = self.ui_style.get_color(PAGE_BUTTON_PRESSED_FRAME_COLOR, (1.0, 1.0, 1.0));
+            self.context.stroke_rect(
+                render_x - padding,
+                y - padding,
+                text_width + 2.0 * padding,
+                text_height + 2.0 * padding,
+                frame_color,
+                thickness,
+            )?;
+        }
+
         Ok(())
     }
     
@@ -848,17 +1000,17 @@ impl PageManager {
         let orientation = self.ui_style.get_string(PAGE_BUTTON_LABEL_ORIENTATION, "horizontal");
 
         // Collect button data first to avoid borrowing conflicts
-        let button_data: Vec<(ButtonPosition, String)> = {
+        let button_data: Vec<(ButtonPosition, String, bool)> = {
             let current_page = self.get_current_page().unwrap();
             current_page.buttons()
                 .iter()
-                .map(|button| (*button.position(), button.label().to_string()))
+                .map(|button| (*button.position(), button.label().to_string(), self.pressed_positions.contains_key(button.position())))
                 .collect()
         };
 
         // Now render each button at its fixed position
-        for (position, label) in button_data {
-            self.render_button_at_position(&position, &label, &label_font, label_font_size, label_color, &orientation)?;
+        for (position, label, is_pressed) in button_data {
+            self.render_button_at_position(&position, &label, &label_font, label_font_size, label_color, &orientation, is_pressed)?;
         }
 
         Ok(())
@@ -1089,6 +1241,19 @@ impl PageManager {
         self.cpu_temp
     }
 
+}
+
+impl Drop for PageManager {
+    // Safety net for settings changed on the active page without a further switch (the
+    // normal switch_page path already persists on every navigation) -- e.g. a clean
+    // shutdown reached while still sitting on the GNSS page after adjusting it.
+    fn drop(&mut self) {
+        if let Some(id) = self.current_page {
+            let config = self.get_page(id).map(|p| p.get_config()).unwrap_or(serde_json::Value::Null);
+            self.config.set_section(&page_config_key(id), config);
+            self.config.set_section(LAST_PAGE_CONFIG_KEY, serde_json::json!(id));
+        }
+    }
 }
 
 #[derive(Debug)]

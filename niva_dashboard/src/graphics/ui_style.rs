@@ -51,6 +51,9 @@ pub const PAGE_BUTTON_LABEL_FONT: &str = "page_button_label_font";
 pub const PAGE_BUTTON_LABEL_FONT_SIZE: &str = "page_button_label_font_size";
 pub const PAGE_BUTTON_LABEL_ORIENTATION: &str = "page_button_label_orientation"; // "horizontal" or "vertical"
 pub const PAGE_BUTTON_LABEL_COLOR: &str = "page_button_label_color";
+pub const PAGE_BUTTON_PRESSED_FRAME_COLOR: &str = "page_button_pressed_frame_color";
+pub const PAGE_BUTTON_PRESSED_FRAME_WIDTH: &str = "page_button_pressed_frame_width";
+pub const PAGE_BUTTON_PRESSED_FRAME_PADDING: &str = "page_button_pressed_frame_padding";
 pub const PAGE_STATUS_FONT: &str = "page_status_font";
 pub const PAGE_STATUS_FONT_SIZE: &str = "page_status_font_size";
 pub const PAGE_STATUS_COLOR: &str = "page_status_color";
@@ -160,6 +163,20 @@ pub const COMPASS_HDOP_EXCELLENT_COLOR: &str = "compass_hdop_excellent_color";
 pub const COMPASS_HDOP_GOOD_COLOR: &str = "compass_hdop_good_color";
 pub const COMPASS_HDOP_MODERATE_COLOR: &str = "compass_hdop_moderate_color";
 pub const COMPASS_HDOP_POOR_COLOR: &str = "compass_hdop_poor_color";
+
+// Pitch (artificial horizon) Style Elements
+pub const PITCH_SKY_COLOR: &str = "pitch_sky_color";
+pub const PITCH_GROUND_COLOR: &str = "pitch_ground_color";
+pub const PITCH_ABOVE_HORIZON_LABEL_COLOR: &str = "pitch_above_horizon_label_color";
+pub const PITCH_BELOW_HORIZON_LABEL_COLOR: &str = "pitch_below_horizon_label_color";
+pub const PITCH_BORDER_COLOR: &str = "pitch_border_color";
+pub const PITCH_BORDER_WIDTH: &str = "pitch_border_width";
+pub const PITCH_LABEL_FONT: &str = "pitch_label_font";
+pub const PITCH_LABEL_FONT_SIZE: &str = "pitch_label_font_size";
+pub const ROLL_INDICATOR_COLOR: &str = "roll_indicator_color";
+pub const ROLL_SCALE_COLOR: &str = "roll_scale_color";
+pub const ROLL_SCALE_LABEL_FONT: &str = "roll_scale_label_font";
+pub const ROLL_SCALE_LABEL_FONT_SIZE: &str = "roll_scale_label_font_size";
 
 // Text Style Elements
 pub const TEXT_PRIMARY_COLOR: &str = "text_primary_color";
@@ -531,6 +548,9 @@ impl UIStyle {
         self.set(PAGE_BUTTON_LABEL_FONT_SIZE, UIStyleValue::Integer(24));
         self.set(PAGE_BUTTON_LABEL_ORIENTATION, UIStyleValue::String("vertical".to_string()));
         self.set(PAGE_BUTTON_LABEL_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
+        self.set(PAGE_BUTTON_PRESSED_FRAME_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
+        self.set(PAGE_BUTTON_PRESSED_FRAME_WIDTH, UIStyleValue::Float(2.0));
+        self.set(PAGE_BUTTON_PRESSED_FRAME_PADDING, UIStyleValue::Float(4.0));
         //self.set(PAGE_STATUS_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
         self.set(PAGE_STATUS_FONT, UIStyleValue::String(TERMINAL_FONT_PATH.to_string()));
         self.set(PAGE_STATUS_FONT_SIZE, UIStyleValue::Integer(14));
@@ -641,6 +661,20 @@ impl UIStyle {
         self.set(COMPASS_HDOP_GOOD_COLOR, UIStyleValue::Color("#FFFF00".to_string()));
         self.set(COMPASS_HDOP_MODERATE_COLOR, UIStyleValue::Color("#FFAA00".to_string()));
         self.set(COMPASS_HDOP_POOR_COLOR, UIStyleValue::Color("#FF0000".to_string()));
+
+        // Pitch (artificial horizon) defaults
+        self.set(PITCH_SKY_COLOR, UIStyleValue::Color("#6BA4D9".to_string()));
+        self.set(PITCH_GROUND_COLOR, UIStyleValue::Color("#734B2A".to_string()));
+        self.set(PITCH_ABOVE_HORIZON_LABEL_COLOR, UIStyleValue::Color("#000000".to_string()));
+        self.set(PITCH_BELOW_HORIZON_LABEL_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
+        self.set(PITCH_BORDER_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
+        self.set(PITCH_BORDER_WIDTH, UIStyleValue::Float(2.0));
+        self.set(PITCH_LABEL_FONT, UIStyleValue::String(DEFAULT_GLOBAL_FONT_PATH.to_string()));
+        self.set(PITCH_LABEL_FONT_SIZE, UIStyleValue::Integer(42));
+        self.set(ROLL_INDICATOR_COLOR, UIStyleValue::Color("#FFFF00".to_string()));
+        self.set(ROLL_SCALE_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
+        self.set(ROLL_SCALE_LABEL_FONT, UIStyleValue::String(DEFAULT_GLOBAL_FONT_PATH.to_string()));
+        self.set(ROLL_SCALE_LABEL_FONT_SIZE, UIStyleValue::Integer(32));
 
         // Text defaults
         self.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#FF7D00".to_string()));

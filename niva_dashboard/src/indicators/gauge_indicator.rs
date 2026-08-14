@@ -285,12 +285,13 @@ void main() {
             let target_y = center_y + sin_a * radius;
             
             // Calculate text dimensions to find the center offset
-            let (text_width, text_height) = context.calculate_text_dimensions_with_font(
-                &text, 
-                text_scale, 
-                &font_path, 
+            let text_width = context.calculate_text_width_with_font(
+                &text,
+                text_scale,
+                &font_path,
                 font_size
             )?;
+            let text_height = context.get_line_height_with_font(text_scale, &font_path, font_size)?;
             
             // Calculate the top-left corner position to center the text at the target position
             let text_x = target_x - text_width / 2.0;

@@ -71,7 +71,7 @@ impl LabelDecorator {
     fn calculate_position(&self, bounds: &IndicatorBounds, context: &mut GraphicsContext) -> Result<(f32, f32), String> {
         // Get text dimensions
         let text_width = context.calculate_text_width_with_font(&self.text, 1.0, &self.font_path, self.font_size)?;
-        let text_height = context.calculate_text_height_with_font(&self.text, 1.0, &self.font_path, self.font_size)?;
+        let text_height = context.get_line_height_with_font(1.0, &self.font_path, self.font_size)?;
         
         // Calculate vertical position
         let y = match self.alignment_v {

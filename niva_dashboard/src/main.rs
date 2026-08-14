@@ -22,7 +22,10 @@ use crate::hardware::sensor_value::ValueConstraints;
 use crate::hardware::heading_fusion_sensor;
 use crate::util::adc_data_provider::{ADCDataProvider, ADCFrame, TestADCDataProvider, SELF_TEST_DURATION};
 use crate::util::bno085_data_provider::{Bno085DataProvider, Bno085Frame};
-use crate::util::bno085_protocol::{SH2_REPORT_ROTATION_VECTOR, SH2_REPORT_GAME_ROTATION_VECTOR};
+use crate::util::bno085_protocol::{
+    SH2_REPORT_ROTATION_VECTOR, SH2_REPORT_GAME_ROTATION_VECTOR,
+    SH2_REPORT_GEOMAGNETIC_ROTATION_VECTOR, SH2_REPORT_ACCELEROMETER,
+};
 use crate::util::gnss_data_provider::{GnssDataProvider, GnssFrame};
 use crate::util::logging::init_logging;
 use crate::util::ups_monitor::UpsMonitor;
@@ -311,7 +314,7 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
 
     let voltage_12v_chain = SensorAnalogInputChain::new(
         Box::new(ADCChannelProvider::new(HWInput::Hw12v, frame.clone())),
-        vec![Box::new(AnalogSignalProcessorMovingAverage::new(10))],
+        vec![Box::new(AnalogSignalProcessorMovingAverage::new(60))],
         Box::new(GenericAnalogSensor::new("Hw12v".to_string(), "БОРТ СЕТЬ".to_string(), "В".to_string(),
                                           ValueConstraints::analog_with_thresholds(0.0, 20.0, Some(11.0), Some(13.0), Some(14.7), Some(15.0)), 0.02)),
     );
@@ -319,7 +322,7 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
 
     let fuel_level_chain = SensorAnalogInputChain::new(
         Box::new(ADCChannelProvider::new(HWInput::HwFuelLvl, frame.clone())),
-        vec![Box::new(AnalogSignalProcessorMovingAverage::new(15))],
+        vec![Box::new(AnalogSignalProcessorMovingAverage::new(60*60))],         // Fuel level changes slowly - average over a minute (60 samples per second times 60 seconds)
         Box::new(GenericAnalogSensor::new("HwFuelLvl".to_string(), "УРОВ ТОПЛ".to_string(), "%".to_string(),
                                           ValueConstraints::analog_with_thresholds(0.0, 100.0, Some(10.0), Some(20.0), None, None), 0.1)),
     );
@@ -327,7 +330,7 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
 
     let oil_pressure_chain = SensorAnalogInputChain::new(
         Box::new(ADCChannelProvider::new(HWInput::HwOilPress, frame.clone())),
-        vec![Box::new(AnalogSignalProcessorMovingAverage::new(10))],
+        vec![Box::new(AnalogSignalProcessorMovingAverage::new(60))],
         Box::new(GenericAnalogSensor::new("HwOilPress".to_string(), "ДАВЛ МАСЛА".to_string(), "кгс/см²".to_string(),
                                           ValueConstraints::analog_with_thresholds(0.0, 8.0, Some(0.5), Some(1.0), Some(7.0), Some(8.0)), 0.01)),
     );
@@ -335,7 +338,7 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
 
     let temperature_chain = SensorAnalogInputChain::new(
         Box::new(ADCChannelProvider::new(HWInput::HwEngineCoolantTemp, frame.clone())),
-        vec![Box::new(AnalogSignalProcessorMovingAverage::new(20))],
+        vec![Box::new(AnalogSignalProcessorMovingAverage::new(10*60))],      // Average over 10 seconds
         Box::new(EngineTemperatureSensor::new()),
     );
     mgr.add_analog_sensor_chain(temperature_chain);
@@ -448,9 +451,13 @@ fn setup_bno085_data_provider() -> Result<Bno085DataProvider, String> {
     // heading_fusion_sensor's continuously-integrated backbone (see HEADING_FUSION_DESIGN.md
     // -- the full Rotation Vector's magnetometer fusion was excluded from the fusion policy
     // itself as too error-prone in testing, but stays wired for the raw comparison reading).
-    // Geomagnetic RV/Accelerometer exist only for the "heading"/"bno085" test modes' source
-    // comparison, not for this chain.
-    let mut provider = Bno085DataProvider::new(&[SH2_REPORT_ROTATION_VECTOR, SH2_REPORT_GAME_ROTATION_VECTOR]);
+    // Geomagnetic RV/Accelerometer are read directly from Bno085Frame by GnssPage's raw INS
+    // diagnostics block (InfoBlocks::InsData) rather than through the HWInput/sensor-chain
+    // pipeline -- same rationale as GnssPage reading GnssFrame's composite fields directly.
+    let mut provider = Bno085DataProvider::new(&[
+        SH2_REPORT_ROTATION_VECTOR, SH2_REPORT_GAME_ROTATION_VECTOR,
+        SH2_REPORT_GEOMAGNETIC_ROTATION_VECTOR, SH2_REPORT_ACCELEROMETER,
+    ]);
     provider.run().map_err(|e| e.to_string())?;
     Ok(provider)
 }
@@ -580,6 +587,7 @@ fn main() -> std::process::ExitCode {
     // setup consumes the rest of their clones.
     let adc_frame_for_diag = adc_frame.clone();
     let gnss_frame_for_diag = gnss_frame.clone();
+    let bno_frame_for_diag = bno_frame.clone();
     let (sensors, heading_fusion) = setup_sensors(adc_frame, ups_frame, gnss_frame, bno_frame);
     let ui_style = setup_ui_style();
     // Starts disabled: alerts (e.g. engine temp, oil pressure) must not fire against the
@@ -587,7 +595,7 @@ fn main() -> std::process::ExitCode {
     // the real sensor set (PageManager's UIEvent::SwitchSensorSet handler).
     let alert_manager = AlertManager::new(false, &ui_style);
 
-    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag, gnss_frame_for_diag, alert_manager, heading_fusion);
+    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag, gnss_frame_for_diag, bno_frame_for_diag, alert_manager, heading_fusion);
 
     mgr.setup().expect("Failed to setup page manager");
 

@@ -134,24 +134,30 @@ impl AlertManager {
     }
 
     /// Drops expired alerts from the queue, then draws every currently active alert,
-    /// stacked vertically and centered on screen. No-op while the manager is disabled.
+    /// stacked vertically bottom-up (anchored to the bottom of the screen, growing
+    /// upward as more alerts appear), with critical alerts sorted ahead of warnings.
+    /// No-op while the manager is disabled.
     pub fn render_alerts(&mut self, context: &mut GraphicsContext) {
         if !self.enabled {
             return;
         }
-        
+
         // Filter out expired alerts first
         self.alerts.retain(|alert| !alert.1.is_expired());
-        
+
         if self.alerts.is_empty() {
             return;
         }
 
-        // Copy active alerts to calculate layout properly
-        let active_alerts: Vec<&(u32, Alert)> = self.alerts
+        // Copy active alerts to calculate layout properly, critical alerts first
+        let mut active_alerts: Vec<&(u32, Alert)> = self.alerts
             .iter()
             .filter(|&(_, alert)| alert.is_active())
             .collect();
+        active_alerts.sort_by_key(|(_, alert)| match alert.severity() {
+            Severity::Critical => 0,
+            Severity::Warning => 1,
+        });
 
         let screen_width = context.width as f32;
         let screen_height = context.height as f32;
@@ -195,9 +201,10 @@ impl AlertManager {
         let total_alerts_height = (alert_height * active_alert_count as f32) + 
                                  (self.alert_style.margin * (active_alert_count - 1) as f32);
         
-        // Calculate starting Y coordinate to center alerts vertically on screen
+        // Anchor the alert stack to the bottom of the screen; it grows upward as
+        // active_alert_count increases, so the bottom-most alert's position stays fixed.
         let x_offset = (screen_width - max_text_width - self.alert_style.margin) / 2.0;
-        let start_y = (screen_height - total_alerts_height) / 2.0;
+        let start_y = screen_height - total_alerts_height - self.alert_style.margin;
         
         let mut y_offset = start_y;
 
@@ -210,8 +217,10 @@ impl AlertManager {
             self.alert_style.background_color,
         );
 
-        // Render each alert with calculated positioning
-        for alert in active_alerts.iter() {
+        // Render each alert with calculated positioning; iterate in reverse so the
+        // most severe (first in sorted order) lands in the bottom-most slot, closest
+        // to the bottom-anchored edge of the stack.
+        for alert in active_alerts.iter().rev() {
             let bounds = crate::indicators::indicator::IndicatorBounds {
                 x: x_offset + self.alert_style.margin,
                 y: y_offset + self.alert_style.margin,

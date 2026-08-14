@@ -152,8 +152,9 @@ pub struct RotationVectorReport {
 impl RotationVectorReport {
     /// Euler yaw/pitch/roll in radians, ZYX order, per the quaternion->Euler conversion
     /// derived in the research doc ("Report selection: Rotation Vector for heading and
-    /// inclination"). `yaw` is magnetic heading, not true heading. Which axis is physically
-    /// "roll" vs "pitch" depends on board mounting, not resolved here.
+    /// inclination"). `yaw` is magnetic heading, not true heading. `pitch`'s sign is corrected
+    /// for this board's mounting (see quat_to_euler_rad); `roll`'s physical sign still depends
+    /// on mounting and isn't resolved here.
     pub fn euler_rad(&self) -> (f32, f32, f32) {
         quat_to_euler_rad(self.quat_i, self.quat_j, self.quat_k, self.quat_real)
     }
@@ -183,9 +184,16 @@ impl GameRotationVectorReport {
 /// RotationVectorReport and GameRotationVectorReport — same math, just applied to quaternions
 /// from different fusion inputs.
 fn quat_to_euler_rad(i: f32, j: f32, k: f32, r: f32) -> (f32, f32, f32) {
-    let yaw = (2.0 * (r * k + i * j)).atan2(1.0 - 2.0 * (j * j + k * k));
+    // The textbook ZYX formula gives yaw as a right-handed rotation about the (up-pointing) Z
+    // axis, i.e. positive = counter-clockwise viewed from above. heading_deg (both call sites
+    // in bno085_data_provider.rs) needs compass convention: positive = clockwise viewed from
+    // above. Negate here, at the shared source, so all three heading consumers (Rotation
+    // Vector, Geomagnetic RV, Game RV) stay consistent.
+    let yaw = -(2.0 * (r * k + i * j)).atan2(1.0 - 2.0 * (j * j + k * k));
     let roll = (2.0 * (r * i + j * k)).atan2(1.0 - 2.0 * (i * i + j * j));
-    let pitch = (2.0 * (r * j - k * i)).clamp(-1.0, 1.0).asin();
+    // Negated (at the shared source, same as yaw above) so pitch_deg matches this board's
+    // physical mounting -- the x-axis rotation sense came out inverted on hardware.
+    let pitch = -(2.0 * (r * j - k * i)).clamp(-1.0, 1.0).asin();
     (yaw, pitch, roll)
 }
 

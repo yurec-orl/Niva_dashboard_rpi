@@ -90,9 +90,7 @@ impl DigitalSegmentedIndicator {
             &inactive_pattern, scale, font_path, font_size
         )?;
         
-        let text_height = context.calculate_text_height_with_font(
-            &inactive_pattern, scale, font_path, font_size
-        )?;
+        let text_height = context.get_line_height_with_font(scale, font_path, font_size)?;
         
         let x = bounds.x + (bounds.width - text_width) / 2.0;
         let y = bounds.y + (bounds.height - text_height) / 2.0;
@@ -185,9 +183,7 @@ impl Indicator for DigitalSegmentedIndicator {
             &formatted_value, scale, &font_path, font_size
         )?;
         
-        let text_height = context.calculate_text_height_with_font(
-            &formatted_value, scale, &font_path, font_size
-        )?;
+        let text_height = context.get_line_height_with_font(scale, &font_path, font_size)?;
         
         // Right-align the active text within the centered inactive pattern
         let x = inactive_x + inactive_width - text_width;
