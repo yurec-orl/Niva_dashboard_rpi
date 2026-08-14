@@ -22,6 +22,11 @@
 //   - D0..D9:  digital indicator states (0/1)
 //   - B0..B7:  button states (0/1, 1 = pressed)
 //
+// Oscilloscope burst-capture command/response (see OSCILLOSCOPE_STM32_IMPLEMENTATION_PLAN.md):
+//   Pi -> STM32: "$OSCCAP\n"  — request a one-shot high-rate capture on PA3 (12V bus).
+//   STM32 -> Pi: normal telemetry pauses; "$OSCD,<seq>,<v0>,<v1>,...\n" chunks stream the
+//                captured buffer, followed by a "$OSCEND\n" sentinel; telemetry then resumes.
+//
 // NOTE: All 12V car signals MUST go through appropriate voltage dividers
 //       or level shifters before reaching the 3.3V STM32 pins.
 //       K-Line uses an L9637D adapter (12V↔5V) + BSS138 level shifter (5V↔3.3V).
@@ -123,7 +128,10 @@
 //   PA0   | Oil pressure (analog)   | ADC_IN0     | Voltage divider from sensor
 //   PA1   | Fuel level (analog)     | ADC_IN1     | Voltage divider from sensor
 //   PA2   | Coolant temp (analog)   | ADC_IN2     | Voltage divider from sensor
-//   PA3   | 12V voltage (analog)    | ADC_IN3     | Resistive divider 20V→3.3V
+//   PA3   | 12V voltage (analog)    | ADC_IN3     | Resistive divider 20V→3.3V. Time-shared:
+//         |                         |             | normal oversampled telemetry reads vs.
+//         |                         |             | "$OSCCAP" burst-capture DMA streaming —
+//         |                         |             | mutually exclusive, capture is blocking.
 //   PA4   | Button 5                | GPIO IN PU  | Active-low, 3.3V direct
 //   PA5   | Button 4                | GPIO IN PU  | Active-low, 3.3V direct
 //   PA6   | Button 6                | GPIO IN PU  | Active-low, 3.3V direct
@@ -157,6 +165,12 @@
 //   PC13  | On-board LED            | GPIO OUT    | Heartbeat / status blink
 //   PC14  | OSC32_IN                | RTC crystal | (if 32kHz crystal fitted)
 //   PC15  | OSC32_OUT               | RTC crystal | (if 32kHz crystal fitted)
+//
+//   Timer/DMA resource claims (no pins involved):
+//   TIM3          | Oscilloscope ADC trigger — TRGO on update, 50 kHz, free-running only
+//                 | during a "$OSCCAP" capture. No NVIC interrupt attached.
+//   DMA1 Channel1 | ADC1's fixed (non-remappable on F103) DMA channel — used only during
+//                 | a "$OSCCAP" capture to stream PA3 samples into osc_buffer.
 //
 // ============================================================
 // Free pins (available for future expansion):
@@ -237,6 +251,18 @@ HardwareSerial KLine(PB11, PB10);
 #define ADC_OVERSAMPLE      16          // samples averaged per ADC channel
 #define BTN_DEBOUNCE_MASK   0xFF        // 8 consecutive reads to confirm state
 #define KLINE_BUF_SIZE      64          // K-Line RX ring buffer size
+
+// ------------------------------------------------------------
+// Oscilloscope burst capture (see OSCILLOSCOPE_STM32_IMPLEMENTATION_PLAN.md)
+// ------------------------------------------------------------
+// One-shot high-rate capture on PA3 (12V bus), triggered by the Pi sending "$OSCCAP".
+// Normal 50 Hz telemetry is blocked for the ~82 ms capture duration (synchronous/blocking
+// by design — this is a manual, occasional diagnostic action, not a continuous stream).
+#define OSC_ADC_CHANNEL      ADC_CHANNEL_3   // PA3, same pin as telemetry's 12V channel
+#define OSC_SAMPLE_RATE_HZ   50000UL         // TIM3 TRGO rate driving the ADC
+#define OSC_BUF_LEN          4096            // samples per capture (~82 ms window)
+#define OSC_CHUNK_SAMPLES    64              // samples per "$OSCD,<seq>,..." line
+#define OSC_DMA_TIMEOUT_MS   150UL           // bounds the capture; expected ~82 ms
 
 // ------------------------------------------------------------
 // Speed sensor timing
@@ -343,6 +369,22 @@ static uint8_t kline_head = 0;
 static uint8_t kline_tail = 0;
 
 // ============================================================
+// Oscilloscope capture buffer and incoming-command line buffer
+// ============================================================
+
+// File-scope static, not stack: ~8 KB would blow loop()'s stack frame.
+static uint16_t osc_buffer[OSC_BUF_LEN];
+
+// Lazily-constructed TIM3 handle, reused across captures. TIM3 only drives the ADC's
+// hardware trigger (TRGO on update) here — no NVIC interrupt is attached to it.
+static HardwareTimer *osc_trigger_timer = nullptr;
+
+// Shared inbound-serial line reader — parses "$OSCCAP" today, and is the landing spot
+// for the brightness command ("#B,<value>") proposed in BUTTON_BACKLIGHT_DESIGN.md.
+static char cmd_line[32];
+static uint8_t cmd_len = 0;
+
+// ============================================================
 // Helpers
 // ============================================================
 
@@ -363,6 +405,130 @@ static inline uint8_t read_lo(uint32_t pin) {
 // Active-high: HIGH = asserted = 1
 static inline uint8_t read_hi(uint32_t pin) {
     return digitalRead(pin) == HIGH ? 1 : 0;
+}
+
+// ============================================================
+// Oscilloscope capture — "$OSCCAP" command handling
+// ============================================================
+
+// Streams osc_buffer back as chunked "$OSCD,<seq>,<v0>,<v1>,...\n" lines followed by a
+// "$OSCEND\n" sentinel. Uses its own frame buffer rather than the 128-byte telemetry
+// `frame[]` in loop() — that one is on the hot 50 Hz path and shouldn't grow to fit a
+// rare, large, one-shot transfer.
+static void oscilloscope_send_buffer() {
+    char osc_frame[OSC_CHUNK_SAMPLES * 5 + 16]; // "$OSCD,<seq>" + up to 64x",4095" + "\n"
+    uint16_t seq = 0;
+    for (uint16_t i = 0; i < OSC_BUF_LEN; i += OSC_CHUNK_SAMPLES, seq++) {
+        int n = snprintf(osc_frame, sizeof(osc_frame), "$OSCD,%u", (unsigned)seq);
+        for (uint16_t j = 0; j < OSC_CHUNK_SAMPLES; j++) {
+            n += snprintf(osc_frame + n, sizeof(osc_frame) - n, ",%u", osc_buffer[i + j]);
+        }
+        snprintf(osc_frame + n, sizeof(osc_frame) - n, "\n");
+        Serial.print(osc_frame);
+    }
+    Serial.print("$OSCEND\n");
+}
+
+// Blocking one-shot capture: pauses normal telemetry (implicitly — this runs synchronously
+// from the command dispatcher, called before loop()'s tick-flag check), captures OSC_BUF_LEN
+// samples on PA3 at OSC_SAMPLE_RATE_HZ via TIM3-triggered ADC1 DMA, then restores ADC1 to
+// the state analogRead() expects and sends the buffer back.
+//
+// analogRead() (stm32duino core) already performs a full HAL_ADC_Init/.../HAL_ADC_DeInit
+// cycle on every single call — it never assumes any particular prior ADC1 state. That means
+// this function only needs to leave ADC1 in a de-initialized state on exit; it does not need
+// to reconstruct analogRead()'s specific configuration.
+static void run_oscilloscope_capture() {
+    // PA3 may not be in analog mode if this is called unusually early (before the first
+    // telemetry tick has run analogRead() on it) — force it explicitly rather than relying
+    // on that ordering.
+    pinMode(PIN_VOLTAGE_ANA, INPUT_ANALOG);
+
+    // --- TIM3: free-running trigger source, TRGO on update, no NVIC interrupt ---
+    if (osc_trigger_timer == nullptr) {
+        osc_trigger_timer = new HardwareTimer(TIM3);
+    }
+    osc_trigger_timer->pause();
+    osc_trigger_timer->setOverflow(OSC_SAMPLE_RATE_HZ, HERTZ_FORMAT);
+    TIM_MasterConfigTypeDef sMasterConfig = {};
+    sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
+    sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+    HAL_TIMEx_MasterConfigSynchronization(osc_trigger_timer->getHandle(), &sMasterConfig);
+
+    // --- DMA1 Channel1: ADC1's fixed (non-remappable) DMA channel on F103 ---
+    static DMA_HandleTypeDef hdma_osc;
+    hdma_osc = DMA_HandleTypeDef{};
+    hdma_osc.Instance = DMA1_Channel1;
+    hdma_osc.Init.Direction = DMA_PERIPH_TO_MEMORY;
+    hdma_osc.Init.PeriphInc = DMA_PINC_DISABLE;
+    hdma_osc.Init.MemInc = DMA_MINC_ENABLE;
+    hdma_osc.Init.PeriphDataAlignment = DMA_PDATAALIGN_HALFWORD;
+    hdma_osc.Init.MemDataAlignment = DMA_MDATAALIGN_HALFWORD;
+    hdma_osc.Init.Mode = DMA_NORMAL; // one-shot, not circular — matches a single capture
+    hdma_osc.Init.Priority = DMA_PRIORITY_HIGH;
+    HAL_DMA_DeInit(&hdma_osc);
+    HAL_DMA_Init(&hdma_osc);
+
+    // --- ADC1: single channel, hardware-triggered by TIM3 TRGO, DMA destination ---
+    static ADC_HandleTypeDef hadc_osc;
+    hadc_osc = ADC_HandleTypeDef{};
+    hadc_osc.Instance = ADC1;
+    hadc_osc.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+    hadc_osc.Init.ScanConvMode = DISABLE;
+    hadc_osc.Init.ContinuousConvMode = DISABLE; // one conversion per TRGO, not free-run
+    hadc_osc.Init.NbrOfConversion = 1;
+    hadc_osc.Init.DiscontinuousConvMode = DISABLE;
+    hadc_osc.Init.NbrOfDiscConversion = 0;
+    hadc_osc.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T3_TRGO;
+    __HAL_LINKDMA(&hadc_osc, DMA_Handle, hdma_osc);
+    HAL_ADC_DeInit(&hadc_osc);
+    HAL_ADC_Init(&hadc_osc);
+
+    ADC_ChannelConfTypeDef sConfig = {};
+    sConfig.Channel = OSC_ADC_CHANNEL;
+    sConfig.Rank = ADC_REGULAR_RANK_1;
+    sConfig.SamplingTime = ADC_SAMPLETIME_55CYCLES_5; // ~5.7us conv time, ample margin at 20us/sample
+    HAL_ADC_ConfigChannel(&hadc_osc, &sConfig);
+    HAL_ADCEx_Calibration_Start(&hadc_osc);
+
+    // Arm DMA+ADC first (idle, waiting for TRGO), then start the timer so the first sample
+    // lands cleanly on the first trigger instead of racing timer startup.
+    HAL_ADC_Start_DMA(&hadc_osc, (uint32_t *)osc_buffer, OSC_BUF_LEN);
+    osc_trigger_timer->resume();
+
+    HAL_DMA_PollForTransfer(&hdma_osc, HAL_DMA_FULL_TRANSFER, OSC_DMA_TIMEOUT_MS);
+
+    osc_trigger_timer->pause();
+    HAL_ADC_Stop_DMA(&hadc_osc);
+    HAL_ADC_DeInit(&hadc_osc);
+    HAL_DMA_DeInit(&hdma_osc);
+
+    oscilloscope_send_buffer();
+}
+
+static void dispatch_command(const char *line) {
+    if (strcmp(line, "$OSCCAP") == 0) {
+        run_oscilloscope_capture();
+    }
+    // else if (strncmp(line, "#B,", 3) == 0) { ... brightness, per BUTTON_BACKLIGHT_DESIGN.md ... }
+}
+
+// Non-blocking; drains whatever is available and dispatches complete lines. Cheap when
+// Serial is idle. Called once per loop() iteration, ahead of the tick-flag check, so a
+// command can be received and its (blocking) handler run even on a tick that doesn't fire.
+static void poll_incoming_commands() {
+    while (Serial.available()) {
+        char c = (char)Serial.read();
+        if (c == '\n') {
+            cmd_line[cmd_len] = '\0';
+            dispatch_command(cmd_line);
+            cmd_len = 0;
+        } else if (cmd_len < sizeof(cmd_line) - 1) {
+            cmd_line[cmd_len++] = c;
+        } else {
+            cmd_len = 0; // overlong line — drop and resync on next '\n'
+        }
+    }
 }
 
 // ============================================================
@@ -425,6 +591,10 @@ void setup() {
 // ============================================================
 
 void loop() {
+    // Drain/dispatch any inbound command line (e.g. "$OSCCAP") every pass, independent of
+    // the tick — a capture command's (blocking) handler runs here, ahead of the tick check.
+    poll_incoming_commands();
+
     // Spin until the 50 Hz tick fires
     if (!tick_flag) return;
     tick_flag = false;
