@@ -447,6 +447,21 @@ impl Bno085 {
     }
 }
 
+impl Drop for Bno085 {
+    /// rppal's `InputPin::Drop` doesn't clear a pin's interrupt registration -- it lives in a
+    /// process-global cache inside `GpioState`, which stays alive for the whole run because the
+    /// master-warning LED/button hold their own GPIO pins the entire time. Without this, a
+    /// registration left broken by a kernel-side failure (observed: `edge_detector_setup`'s
+    /// `kfifo_alloc` failing with ENOMEM while re-arming HINT's interrupt line) would be
+    /// silently reused, fd and all, by every future `Bno085::open()` on this pin -- producing an
+    /// unrecoverable connect-then-immediately-fail loop for the rest of the process's life
+    /// instead of a normal one-off reconnect. Explicitly clearing it here forces the next
+    /// `set_interrupt()` call to request a fresh kernel line instead.
+    fn drop(&mut self) {
+        let _ = self.hint.clear_interrupt();
+    }
+}
+
 /// "Q<n>" fixed point (SH-2 reference manual convention): divide the raw int16 by 2^n.
 fn q_to_f32(raw: i16, q_point: u8) -> f32 {
     raw as f32 / (1u32 << q_point) as f32
