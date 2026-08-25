@@ -413,19 +413,24 @@ impl HeadingFusionSensor {
         self.last_tick_instant = now;
 
         let game_rv_before = self.game_rv_deg;
-        self.integrate_game_rv();
+        let validated_rv = self.integrate_game_rv();
         let settled_game_rv = self.settled_game_rv(now);
         self.apply_persisted_prior_if_ready(settled_game_rv);
 
-        let validated = self.validated_gnss_correction(now);
-        self.apply_correction(&validated, now);
+        let validated_gnss = self.validated_gnss_correction(now);
+        self.apply_correction(&validated_gnss, now);
         self.advance_display_offset(dt);
 
-        if self.confidence == HeadingConfidence::GnssCorrected && validated.is_none() {
+        if self.confidence == HeadingConfidence::GnssCorrected && validated_gnss.is_none() {
+            // Downgrade confidence if we lose GNSS correction.
             self.confidence = HeadingConfidence::DeadReckoning;
+        } else if self.confidence == HeadingConfidence::PersistedPrior && validated_rv.is_some() {
+            // Upgrade confidence from PersistedPrior to DeadReckoning if we have a new RV reading.
+            self.confidence = HeadingConfidence::DeadReckoning;
+            self.last_correction_instant = Some(Instant::now());
         }
 
-        if validated.is_none() {
+        if validated_gnss.is_none() {
             self.degrade_accuracy(game_rv_before, dt);
         }
 
@@ -436,16 +441,18 @@ impl HeadingFusionSensor {
     /// this is the continuously-running backbone. `displayed_heading()`/`advance_display_offset`
     /// combine it with the correction offsets at read/slew time, so no rotation math happens
     /// here.
-    fn integrate_game_rv(&mut self) {
+    fn integrate_game_rv(&mut self) -> Option<f32> {
         // Not bno_frame.is_stale() -- that's bumped by *any* of the BNO085's report types, so
         // it can read "fresh" before Game RV specifically has ever reported (see
         // Bno085Frame::game_orientation_last_update's doc comment). Using it here let a
         // phantom Default::default() game_orientation (heading_deg: 0.0) get treated as a real
         // reading.
         if self.bno_frame.game_orientation_is_stale() {
-            return;
+            return None;
         }
+
         self.game_rv_deg = Some(self.bno_frame.game_orientation().heading_deg);
+        self.game_rv_deg
     }
 
     /// The heading actually exposed via `output`/persistence: `display_offset_deg` (which
