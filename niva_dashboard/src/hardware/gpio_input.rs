@@ -1,4 +1,4 @@
-use rppal::gpio::{Gpio, InputPin, Level, Bias, Result as GpioResult};
+use rppal::gpio::{Gpio, InputPin, OutputPin, Level, Bias, Result as GpioResult};
 use std::fmt;
 
 /// Represents the logical state of a GPIO input pin
@@ -100,6 +100,28 @@ impl GpioInput {
     /// Check if the pin is configured as active low
     pub fn is_active_low(&self) -> bool {
         self.config.active_low
+    }
+}
+
+/// GPIO output driver for digital outputs (e.g. the master warning LED on GPIO18).
+pub struct GpioOutput {
+    pin: OutputPin,
+}
+
+impl GpioOutput {
+    /// Opens `pin_number` as an output, initially driven low.
+    pub fn new(pin_number: u8) -> GpioResult<Self> {
+        let gpio = Gpio::new()?;
+        let pin = gpio.get(pin_number)?.into_output_low();
+        Ok(Self { pin })
+    }
+
+    pub fn set(&mut self, on: bool) {
+        if on {
+            self.pin.set_high();
+        } else {
+            self.pin.set_low();
+        }
     }
 }
 

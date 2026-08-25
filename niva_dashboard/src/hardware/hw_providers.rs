@@ -19,6 +19,7 @@
 //   HWAnalogProvider -> analog signal processing (filtering, smoothing) ->
 //   -> AnalogSensor(convert raw data to logical values) -> UI Rendering
 
+use crate::hardware::gpio_input::{GpioInput, PinState};
 use crate::util::adc_data_provider::{ADCFrame, AdcChannel};
 use crate::util::bno085_data_provider::Bno085Frame;
 use crate::util::gnss_data_provider::GnssFrame;
@@ -50,6 +51,10 @@ pub enum HWInput {
     HwSpeed,
     HwTacho,
     HwTurnSignal,
+    // Master warning button — GPIO27, pull-up, active-low. Wired directly to the Pi's GPIO
+    // rather than through the STM32 ADC module (see GpioDigitalProvider below and repo TODO
+    // on the button/LED wiring). A confirmed press clears every currently queued alert.
+    HwMasterWarningBtn,
     // Physical MFD buttons (B0..B7 in the STM32 ADC frame)
     HwButton0,
     HwButton1,
@@ -422,6 +427,35 @@ impl HWDigitalProvider for I2CProvider {
     fn read_digital(&self, _input: HWInput) -> Result<Level, String> {
         // Implementation for reading digital value from external controller via I2C
         Ok(Level::Low)
+    }
+}
+
+/// Reads a single rppal-backed GPIO input pin (see hardware::gpio_input::GpioInput),
+/// paired with the HWInput it represents. Currently only used for the master warning
+/// button (GPIO27, pull-up, active-low). Returns the pin's raw level; active-low
+/// interpretation happens at the DigitalSensor stage, same as every other digital chain
+/// here (see ADCChannelProvider) — not in this provider.
+pub struct GpioDigitalProvider {
+    input: HWInput,
+    gpio: GpioInput,
+}
+
+impl GpioDigitalProvider {
+    pub fn new(input: HWInput, gpio: GpioInput) -> Self {
+        GpioDigitalProvider { input, gpio }
+    }
+}
+
+impl HWDigitalProvider for GpioDigitalProvider {
+    fn input(&self) -> HWInput {
+        self.input
+    }
+
+    fn read_digital(&self, _input: HWInput) -> Result<Level, String> {
+        Ok(match self.gpio.read_raw() {
+            PinState::High => Level::High,
+            PinState::Low => Level::Low,
+        })
     }
 }
 

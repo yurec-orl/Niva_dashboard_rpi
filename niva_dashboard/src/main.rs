@@ -31,7 +31,8 @@ use crate::util::logging::init_logging;
 use crate::util::ups_monitor::UpsMonitor;
 use crate::util::ups_i2c_provider::{UpsI2CDataProvider, UpsRawFrame};
 use crate::hardware::sensors::{UpsCurrentSensor, UpsChargeSensor};
-use rppal::gpio::Level;
+use crate::hardware::gpio_input::{GpioInput, GpioInputConfig, GpioOutput};
+use rppal::gpio::{Level, Bias};
 use std::env;
 use std::thread;
 
@@ -200,6 +201,24 @@ fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>, gnss: Option<G
         log::info!("✓ UPS sensor chains added");
     } else {
         log::info!("UPS I2C provider unavailable — UPS sensor chains omitted");
+    }
+
+    // Master warning button — GPIO27 (pull-up, active-low). Wired directly to the Pi's
+    // GPIO rather than through the STM32 ADC module, so it still works while the ADC link
+    // is down, and because the STM32 ran out of pins. Added unconditionally alongside the
+    // UPS/GNSS/BNO085 chains above; the LED side (GPIO18) isn't wired yet.
+    match GpioInput::new(GpioInputConfig { pin_number: 27, bias: Bias::PullUp, active_low: true }) {
+        Ok(gpio) => {
+            let master_warning_chain = SensorDigitalInputChain::new(
+                Box::new(GpioDigitalProvider::new(HWInput::HwMasterWarningBtn, gpio)),
+                vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(100)))],
+                Box::new(GenericDigitalSensor::new("HwMasterWarningBtn".to_string(), "MASTER WARNING".to_string(),
+                                                   Level::Low, ValueConstraints::digital_default())),
+            );
+            mgr.add_digital_sensor_chain(master_warning_chain);
+            log::info!("✓ Master warning button chain added (GPIO27)");
+        }
+        Err(e) => log::warn!("Master warning button GPIO27 unavailable: {}", e),
     }
 
     let Some(frame) = adc else {
@@ -597,7 +616,17 @@ fn main() -> std::process::ExitCode {
     // the real sensor set (PageManager's UIEvent::SwitchSensorSet handler).
     let alert_manager = AlertManager::new(false, &ui_style);
 
-    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag, osc_frame, gnss_frame_for_diag, bno_frame_for_diag, alert_manager, heading_fusion);
+    // Master warning LED — GPIO18, blinks at 2Hz while any alert is active (see
+    // PageManager::event_loop). Pairs with the GPIO27 button chain in setup_sensors.
+    let master_warning_led = match GpioOutput::new(18) {
+        Ok(led) => Some(led),
+        Err(e) => {
+            log::warn!("Master warning LED GPIO18 unavailable: {}", e);
+            None
+        }
+    };
+
+    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag, osc_frame, gnss_frame_for_diag, bno_frame_for_diag, alert_manager, heading_fusion, master_warning_led);
 
     mgr.setup().expect("Failed to setup page manager");
 

@@ -12,6 +12,7 @@ use crate::page_framework::osc_page::OscPage;
 use crate::hardware::sensor_manager::SensorManager;
 use crate::hardware::hw_providers::HWInput;
 use crate::hardware::heading_fusion_sensor::HeadingFusionSensor;
+use crate::hardware::gpio_input::GpioOutput;
 use crate::alerts::alert_manager::{AlertManager, Severity};
 use crate::alerts::watchdog::Watchdog;
 use crate::util::adc_data_provider::{ADCFrame, OscFrame};
@@ -33,6 +34,9 @@ const PAGE_BUTTON_X_MARGIN: f32 = 4.0;      // Move a little from screen edge fo
 // While a button stays physically held past this interval, its on_press callback fires
 // again (e.g. GNSS page's КУРС+/КУРС- continuous heading adjust).
 const BUTTON_HOLD_REPEAT_INTERVAL: Duration = Duration::from_millis(150);
+
+// Half-cycle for the master warning LED's 2Hz blink (on 250ms, off 250ms = 500ms period).
+const MASTER_WARNING_LED_BLINK_HALF_PERIOD: Duration = Duration::from_millis(250);
 
 pub const MAIN_PAGE_ID: u32 = 0;
 pub const DIAG_PAGE_ID: u32 = 1;
@@ -266,6 +270,17 @@ pub struct PageManager {
     // Alert system
     alert_manager: AlertManager,
 
+    // Edge-detects the master warning button (HwMasterWarningBtn, GPIO27) so a press only
+    // clears alerts once rather than on every loop iteration it's held down — mirrors
+    // PhysicalButtonInput's prev_states pattern for the same reason.
+    master_warning_prev: bool,
+
+    // Master warning LED (GPIO18) — blinks at 2Hz while any alert is active, off
+    // otherwise. None if the pin failed to open (e.g. running off-Pi).
+    master_warning_led: Option<GpioOutput>,
+    master_warning_led_on: bool,
+    master_warning_led_last_toggle: Instant,
+
     // Tracks on-battery duration from the UPS sensor chain and triggers a shutdown once it
     // has persisted too long. Its check() is a no-op when no UPS sensor value is available
     // (e.g. I2C unavailable) — see UpsMonitor::check.
@@ -319,7 +334,8 @@ impl PageManager {
                input_sources: Vec<Box<dyn InputSource>>, ups_monitor: UpsMonitor,
                adc_frame: Option<ADCFrame>, osc_frame: Option<OscFrame>, gnss_frame: Option<GnssFrame>,
                bno_frame: Option<Bno085Frame>,
-               alert_manager: AlertManager, heading_fusion: Option<HeadingFusionSensor>) -> Self {
+               alert_manager: AlertManager, heading_fusion: Option<HeadingFusionSensor>,
+               master_warning_led: Option<GpioOutput>) -> Self {
         let mut buttons_map = HashMap::new();
         buttons_map.insert('1', ButtonPosition::Left1);
         buttons_map.insert('2', ButtonPosition::Left2);
@@ -355,6 +371,10 @@ impl PageManager {
             sensor_config_rx,
             sensor_config_tx,
             alert_manager,
+            master_warning_prev: false,
+            master_warning_led,
+            master_warning_led_on: false,
+            master_warning_led_last_toggle: Instant::now(),
             ups_monitor,
             adc_frame,
             osc_frame,
@@ -726,6 +746,32 @@ impl PageManager {
             }
 
             self.alert_manager.check_watchdogs(&self.sensor_manager);
+
+            // Master warning button (GPIO27) — clear every queued alert on the press edge
+            // only, not continuously while held down (see master_warning_prev).
+            let master_warning_active = self.sensor_manager.get_sensor_value(&HWInput::HwMasterWarningBtn)
+                .map(|v| v.is_active())
+                .unwrap_or(false);
+            if master_warning_active && !self.master_warning_prev {
+                log::info!("Master warning button pressed — clearing alerts");
+                self.alert_manager.suppress_alerts();
+            }
+            self.master_warning_prev = master_warning_active;
+
+            // Master warning LED — blink at 2Hz while any alert is active, off otherwise.
+            if let Some(led) = &mut self.master_warning_led {
+                if self.alert_manager.has_active_alerts() {
+                    if self.master_warning_led_last_toggle.elapsed() >= MASTER_WARNING_LED_BLINK_HALF_PERIOD {
+                        self.master_warning_led_on = !self.master_warning_led_on;
+                        led.set(self.master_warning_led_on);
+                        self.master_warning_led_last_toggle = Instant::now();
+                    }
+                } else if self.master_warning_led_on {
+                    self.master_warning_led_on = false;
+                    led.set(false);
+                }
+            }
+
             self.ups_monitor.check(&self.sensor_manager);
 
             // Update FPS counter

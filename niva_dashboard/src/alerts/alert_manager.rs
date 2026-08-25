@@ -100,6 +100,12 @@ impl AlertManager {
         }
     }
 
+    /// True if at least one currently queued alert is active (i.e. would currently be
+    /// rendered by `render_alerts`). Drives the master warning LED blink.
+    pub fn has_active_alerts(&self) -> bool {
+        self.alerts.iter().any(|(_, alert)| alert.is_active())
+    }
+
     /// Registers a watchdog to be polled by `check_watchdogs`, assigning it a unique id
     /// used to match it to the alert it raises.
     pub fn add_watchdog(&mut self, watchdog: Watchdog) {
