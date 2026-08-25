@@ -210,7 +210,7 @@ fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>, gnss: Option<G
     match GpioInput::new(GpioInputConfig { pin_number: 27, bias: Bias::PullUp, active_low: true }) {
         Ok(gpio) => {
             let master_warning_chain = SensorDigitalInputChain::new(
-                Box::new(GpioDigitalProvider::new(HWInput::HwMasterWarningBtn, gpio)),
+                Box::new(GPIOProvider::new(HWInput::HwMasterWarningBtn, gpio)),
                 vec![Box::new(DigitalSignalDebouncer::new(5, std::time::Duration::from_millis(100)))],
                 Box::new(GenericDigitalSensor::new("HwMasterWarningBtn".to_string(), "MASTER WARNING".to_string(),
                                                    Level::Low, ValueConstraints::digital_default())),

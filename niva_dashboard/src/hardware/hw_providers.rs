@@ -5,8 +5,8 @@
 // Defines:
 // - HWInput/HWInput enums for all supported inputs
 // - HWAnalogProvider/HWDigitalProvider traits for hardware abstraction
-// - GPIOProvider: Direct GPIO digital input reading for Raspberry Pi
-// - I2CProvider: External ADC/controller interface via I2C protocol  
+// - GPIOProvider: rppal-backed GPIO digital input reading for Raspberry Pi
+// - I2CProvider: External ADC/controller interface via I2C protocol
 // - TestDataProvider: Fixed test values for development/testing
 //
 // Architecture: Hardware providers supply raw sensor data that will be processed
@@ -19,7 +19,7 @@
 //   HWAnalogProvider -> analog signal processing (filtering, smoothing) ->
 //   -> AnalogSensor(convert raw data to logical values) -> UI Rendering
 
-use crate::hardware::gpio_input::{GpioInput, PinState};
+use crate::hardware::gpio_input::{GpioRead, PinState};
 use crate::util::adc_data_provider::{ADCFrame, AdcChannel};
 use crate::util::bno085_data_provider::Bno085Frame;
 use crate::util::gnss_data_provider::GnssFrame;
@@ -52,7 +52,7 @@ pub enum HWInput {
     HwTacho,
     HwTurnSignal,
     // Master warning button — GPIO27, pull-up, active-low. Wired directly to the Pi's GPIO
-    // rather than through the STM32 ADC module (see GpioDigitalProvider below and repo TODO
+    // rather than through the STM32 ADC module (see GPIOProvider below and repo TODO
     // on the button/LED wiring). A confirmed press clears every currently queued alert.
     HwMasterWarningBtn,
     // Physical MFD buttons (B0..B7 in the STM32 ADC frame)
@@ -369,33 +369,6 @@ impl HWDigitalProvider for Bno085LinkStatusProvider {
     }
 }
 
-// Read directly from GPIO pins
-// Digital inputs only - Raspi does not have built-in ADC
-pub struct GPIOProvider {
-    input: HWInput,
-    // Implementation details for GPIO access
-}
-
-impl GPIOProvider {
-    pub fn new(input: HWInput) -> Self {
-        GPIOProvider {
-            input,
-            // Initialize GPIO access here
-        }
-    }
-}
-
-impl HWDigitalProvider for GPIOProvider {
-    fn input(&self) -> HWInput {
-        self.input.clone()
-    }
-
-    fn read_digital(&self, _input: HWInput) -> Result<Level, String> {
-        // Implementation for reading digital value from GPIO pin
-        Ok(Level::Low)
-    }
-}
-
 pub struct I2CProvider {
     input: HWInput,
     // Implementation details for I2C access
@@ -430,23 +403,24 @@ impl HWDigitalProvider for I2CProvider {
     }
 }
 
-/// Reads a single rppal-backed GPIO input pin (see hardware::gpio_input::GpioInput),
-/// paired with the HWInput it represents. Currently only used for the master warning
-/// button (GPIO27, pull-up, active-low). Returns the pin's raw level; active-low
+/// Reads a single GPIO input pin (see hardware::gpio_input::GpioRead), paired with the
+/// HWInput it represents. Currently only used for the master warning button (GPIO27,
+/// pull-up, active-low). Generic over GpioRead so tests can substitute TestGpioInput for
+/// real hardware (hardware::gpio_input::GpioInput). Returns the pin's raw level; active-low
 /// interpretation happens at the DigitalSensor stage, same as every other digital chain
 /// here (see ADCChannelProvider) — not in this provider.
-pub struct GpioDigitalProvider {
+pub struct GPIOProvider<G: GpioRead> {
     input: HWInput,
-    gpio: GpioInput,
+    gpio: G,
 }
 
-impl GpioDigitalProvider {
-    pub fn new(input: HWInput, gpio: GpioInput) -> Self {
-        GpioDigitalProvider { input, gpio }
+impl<G: GpioRead> GPIOProvider<G> {
+    pub fn new(input: HWInput, gpio: G) -> Self {
+        GPIOProvider { input, gpio }
     }
 }
 
-impl HWDigitalProvider for GpioDigitalProvider {
+impl<G: GpioRead> HWDigitalProvider for GPIOProvider<G> {
     fn input(&self) -> HWInput {
         self.input
     }
@@ -456,6 +430,24 @@ impl HWDigitalProvider for GpioDigitalProvider {
             PinState::High => Level::High,
             PinState::Low => Level::Low,
         })
+    }
+}
+
+/// Fixed-value GPIO input stub for unit tests — always reports the PinState given at
+/// construction, standing in for real hardware (GpioInput) that unit tests can't open.
+pub struct TestGpioInput {
+    state: PinState,
+}
+
+impl TestGpioInput {
+    pub fn new(state: PinState) -> Self {
+        TestGpioInput { state }
+    }
+}
+
+impl GpioRead for TestGpioInput {
+    fn read_raw(&self) -> PinState {
+        self.state
     }
 }
 
@@ -747,28 +739,37 @@ mod tests {
     // Test GPIOProvider
     #[test]
     fn test_gpio_provider_creation() {
-        let provider = GPIOProvider::new(HWInput::HwBrakeFluidLvlLow);
+        let provider = GPIOProvider::new(HWInput::HwBrakeFluidLvlLow, TestGpioInput::new(PinState::Low));
         assert_eq!(provider.input(), HWInput::HwBrakeFluidLvlLow);
     }
 
     #[test]
     fn test_gpio_provider_digital_read() {
-        let provider = GPIOProvider::new(HWInput::HwBrakeFluidLvlLow);
-        
-        // Test reading digital value - should return Ok(Level::Low) based on current implementation
+        let provider = GPIOProvider::new(HWInput::HwBrakeFluidLvlLow, TestGpioInput::new(PinState::Low));
+
+        // Test reading digital value - should reflect the underlying GpioRead's state
         let result = provider.read_digital(HWInput::HwBrakeFluidLvlLow);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Level::Low);
     }
 
     #[test]
+    fn test_gpio_provider_high_read() {
+        let provider = GPIOProvider::new(HWInput::HwMasterWarningBtn, TestGpioInput::new(PinState::High));
+
+        let result = provider.read_digital(HWInput::HwMasterWarningBtn);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Level::High);
+    }
+
+    #[test]
     fn test_gpio_provider_different_inputs() {
-        let provider = GPIOProvider::new(HWInput::HwCharge);
-        
+        let provider = GPIOProvider::new(HWInput::HwCharge, TestGpioInput::new(PinState::Low));
+
         // Test that provider can handle different input types
         let result = provider.read_digital(HWInput::HwSpeed);
         assert!(result.is_ok());
-        
+
         // Test with analog input (should still work based on current implementation)
         let result = provider.read_digital(HWInput::Hw12v);
         assert!(result.is_ok());
@@ -1051,8 +1052,8 @@ mod tests {
     fn test_digital_provider_polymorphism() {
         let test_provider: Box<dyn HWDigitalProvider> = 
             Box::new(TestDigitalDataProvider::new(HWInput::HwBrakeFluidLvlLow));
-        let gpio_provider: Box<dyn HWDigitalProvider> = 
-            Box::new(GPIOProvider::new(HWInput::HwCharge));
+        let gpio_provider: Box<dyn HWDigitalProvider> =
+            Box::new(GPIOProvider::new(HWInput::HwCharge, TestGpioInput::new(PinState::Low)));
         let i2c_provider: Box<dyn HWDigitalProvider> = 
             Box::new(I2CProvider::new(HWInput::HwCheckEngine));
         let pulse_provider: Box<dyn HWDigitalProvider> = 
@@ -1110,7 +1111,7 @@ mod tests {
     #[test]
     fn test_error_handling() {
         // Current implementations don't return errors, but test the Result type
-        let gpio_provider = GPIOProvider::new(HWInput::HwBrakeFluidLvlLow);
+        let gpio_provider = GPIOProvider::new(HWInput::HwBrakeFluidLvlLow, TestGpioInput::new(PinState::Low));
         let i2c_provider = I2CProvider::new(HWInput::Hw12v);
         let test_digital_provider = TestDigitalDataProvider::new(HWInput::HwCheckEngine);
         let test_analog_provider = TestAnalogDataProvider::new(HWInput::HwOilPress);
@@ -1128,7 +1129,7 @@ mod tests {
     #[test]
     fn test_provider_consistency() {
         // Test that provider input() method returns consistent values
-        let gpio_provider = GPIOProvider::new(HWInput::HwBrakeFluidLvlLow);
+        let gpio_provider = GPIOProvider::new(HWInput::HwBrakeFluidLvlLow, TestGpioInput::new(PinState::Low));
         let i2c_provider = I2CProvider::new(HWInput::HwOilPress);
         let test_provider = TestDigitalDataProvider::new(HWInput::HwCheckEngine);
 

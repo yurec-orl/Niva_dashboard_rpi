@@ -44,10 +44,22 @@ impl Default for GpioInputConfig {
     }
 }
 
+/// Abstraction over a single GPIO input pin, letting hw_providers::GPIOProvider be exercised
+/// against a fixed test double (see hw_providers::TestGpioInput) instead of real GPIO hardware.
+pub trait GpioRead {
+    fn read_raw(&self) -> PinState;
+}
+
 /// GPIO input reader for digital inputs
 pub struct GpioInput {
     pin: InputPin,
     config: GpioInputConfig,
+}
+
+impl GpioRead for GpioInput {
+    fn read_raw(&self) -> PinState {
+        GpioInput::read_raw(self)
+    }
 }
 
 impl GpioInput {
