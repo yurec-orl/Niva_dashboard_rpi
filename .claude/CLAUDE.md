@@ -57,7 +57,8 @@ niva_dashboard/
 │   │   ├── diag_page.rs            # Diagnostics page
 │   │   ├── gnss_page.rs            # GNSS/nav page
 │   │   ├── terminal_page.rs        # Log/ADC terminal page
-│   │   ├── osc_page.rs             # Oscilloscope page (orphaned dead code, see TODO)
+│   │   ├── osc_page.rs             # Oscilloscope page (ADC capture waveform view)
+│   │   ├── horz_page.rs            # Artificial horizon page (pitch/roll from BNO085)
 │   │   ├── events.rs               # Event handling / message passing
 │   │   └── input.rs                # Input processing / button handling
 │   ├── hardware/
@@ -141,13 +142,15 @@ No manual frame timing/sleep/target-FPS constant — frame pacing is delegated e
 Boot reduced from ~16.8s to ~5.1s by disabling unused systemd services (`NetworkManager-wait-online`, `e2scrub_reap`, `ModemManager`, `rpi-eeprom-update`, `bluetooth`, `hciuart` — see `/home/user/boot-optimizations.md`). `avahi-daemon` stays enabled for `.local` SSH access. These are OS-level `systemctl disable` calls, not part of this repo — a fresh SD flash needs them reapplied. Remaining ~18s gap is pre-kernel firmware/bootloader stage, invisible to OS tools; further profiling would need a `BOOT_UART=1` serial capture.
 
 ## TODO
-- Data-driven sensor creation: JSON describing hardware inputs, sensor chains, logical sensor parameters
-- [Done] UPS HAT integration (automatic startup/shutdown)
+- Data-driven sensor creation: JSON describing hardware inputs, sensor chains, logical sensor parameters.
+- Improve sensor->watchdog->alert construction: currently, it is a multi-step process involving a lot of parameters, and it's easy to mismatch one of the parameters which can cause the alert to never trigger. Also benefits from data-driven
+  sensor creation (see item above).
+- [Done] UPS HAT integration (automatic startup/shutdown).
 - [Rejected] Display power control (USB port shutdown during boot, re-enable when dashboard ready) - Pi 4 does
   not have individual USB port control, would require shutting down all USB devices.
-- `OscPage` (`page_framework/osc_page.rs`) is orphaned dead code: not declared in `mod.rs`, never constructed in `PageManager::setup`, and likely won't compile (uses `UIStyle` without importing it). Its `process_events` also calls itself recursively (infinite recursion if ever invoked). Either finish wiring it in or remove it (and the `UIEvent::Osc*` variants that exist only to serve it).
+- [Done] `OscPage` (`page_framework/osc_page.rs`) — wired in: declared in `mod.rs`, always registered in `PageManager::setup`, and functional (renders STM32 ADC oscilloscope capture waveforms).
 - [Done] `UIEvent::Restart` — implemented as a system reboot (`sudo reboot`, `page_framework/page_manager.rs`), wired to the diag page's top-right button (`ПЕРЕЗАГР`).
-- `GPIOProvider`/`I2CProvider` (`hardware/hw_providers.rs`) are dead stubs (`read_digital`/`read_analog` unconditionally return `Level::Low`/`0`), never instantiated outside their own unit tests. A separate working GPIO wrapper (`hardware/gpio_input.rs`, rppal-based) exists but doesn't implement the `HWDigitalProvider`/`HWAnalogProvider` traits, so it's disconnected from the sensor chain system. Decide: wire `gpio_input.rs` into the provider traits, or drop the stubs if ADC-over-serial is the only intended transport.
+- `I2CProvider` (`hardware/hw_providers.rs`) is a dead stub (`read_digital`/`read_analog` unconditionally return `Level::Low`/`0`), never instantiated outside its own unit tests.
 - `EngineTemperatureSensor::read` (`hardware/sensors.rs`) uses a placeholder linear conversion (`input as f32 * 0.12`, comment "Example conversion") — needs real ADC-to-temperature calibration.
 - Finalize ui style handling: `graphics/default_style.json` is dead: never loaded (only a commented-out call in `main.rs`), and its keys (`needle_color`, `gauge_minor_mark_count: 4`, etc.) don't match the constants actually used in `ui_style.rs` (`GAUGE_NEEDLE_COLOR`, `GAUGE_MINOR_MARK_COUNT: 37`, ...). Delete it or reconcile it with the real style schema. Saving/loading ui style json is not used as well.
 - Default font paths hardcoded in `ui_style.rs::load_defaults()` are absolute and dev-machine-specific (`/home/user/Work/Niva_Dashboard_Rpi/...`) — will silently fail (falling back to warning-logged defaults) on any other deployment path.
@@ -161,7 +164,6 @@ Boot reduced from ~16.8s to ~5.1s by disabling unused systemd services (`Network
 - Nav page map mode - need to decide on which map data to use and how to render
 - [Done] BNO085 connectivity and related indicators
 - [Done] Out of memory protection: `earlyoom` installed and enabled (OS-level, not part of this repo — a fresh SD flash needs it reinstalled: `apt install earlyoom`). Kills the largest memory consumer before the kernel OOM killer lets the system thrash into unresponsiveness. Config in `/etc/default/earlyoom` avoids killing `sshd` (so remote recovery stays possible) but deliberately does *not* protect the dashboard binary — if it leaks and gets killed, the startup script restarts it fresh, which is the desired behavior.
-- Improve sensor->watchdog->alert construction: currently, it is a multi-step process involving a lot of parameters, and it's easy to mismatch one of the parameters which can cause the alert to never trigger.
 - [Done] ADC firmware design flaw: STM32 used to report counted pulses since last data frame for HwSpeed/HwTacho, which gave low resolution and visible jitter (or, for HwTacho, couldn't latch "engine running" at all in the normal idle range) since expected counts/tick are rarely integers. Fixed by measuring inter-pulse period instead of counting, on both the STM32 firmware side (10us/unit wire encoding, 100_000 ticks/sec) and the Rust side (`hardware::sensors::SpeedSensor`/`TachoSensor`, `main.rs`'s analog chains, self-test simulation). See `SPEED_TACHO_PULSE_PERIOD_DESIGN.md` for the original analysis (100 km/h worked example, wire-format options, Rust-side conversion design).
 - [Done] UPS auto power on/off on ignition: pull UPS power switch pin to GND when ignition is on (UPS ON position). Float UPS switch pin after timeout (~1 m 30 s) when ignition off (UPS OFF position). Timeout is large enough to allow Pi to shut down gracefully. See `UPS_AUTO_POWER_ON_OFF_DESIGN.md`.
 
