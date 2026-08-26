@@ -101,14 +101,19 @@ pub struct Bno085Frame {
     /// "reading" moments before the real first Game RV report landed.
     game_orientation_last_update: Arc<Mutex<Instant>>,
     /// (pitch, roll) correction added to the raw Game RV reading by `game_orientation()` --
-    /// see `PitchRollCalibration`'s doc comment. Loaded from Config at construction, updated
-    /// and re-persisted by `calibrate_pitch_roll()`.
+    /// see `PitchRollCalibration`'s doc comment. Defaults to zero; set at construction via
+    /// `with_calibration()` and updated by `calibrate_pitch_roll()`, which reports the new
+    /// value to `calibration_persist` (if any) rather than touching Config itself.
     pitch_roll_correction_deg: Arc<Mutex<(f32, f32)>>,
+    /// Invoked by `calibrate_pitch_roll()` with the freshly computed calibration so it can be
+    /// persisted -- set via `with_calibration_persist()`. `None` for frames that don't own a
+    /// persisted calibration (e.g. `for_test()`), in which case a calibration press just isn't
+    /// saved.
+    calibration_persist: Option<Arc<dyn Fn(PitchRollCalibration) + Send + Sync>>,
 }
 
 impl Bno085Frame {
     fn new() -> Self {
-        let calibration = Self::load_calibration();
         Bno085Frame {
             orientation: Arc::new(Mutex::new(Bno085Orientation::default())),
             game_orientation: Arc::new(Mutex::new(Bno085Orientation::default())),
@@ -116,13 +121,26 @@ impl Bno085Frame {
             acceleration: Arc::new(Mutex::new(Bno085Acceleration::default())),
             last_update: Arc::new(Mutex::new(Instant::now() - READING_MAX_AGE)),
             game_orientation_last_update: Arc::new(Mutex::new(Instant::now() - READING_MAX_AGE)),
-            pitch_roll_correction_deg: Arc::new(Mutex::new((calibration.pitch_correction_deg, calibration.roll_correction_deg))),
+            pitch_roll_correction_deg: Arc::new(Mutex::new((0.0, 0.0))),
+            calibration_persist: None,
         }
     }
 
-    fn load_calibration() -> PitchRollCalibration {
-        let value = Config::load().section(CALIBRATION_CONFIG_KEY);
-        serde_json::from_value(value).unwrap_or_default()
+    /// Sets the pitch/roll correction applied by `game_orientation()`, without touching Config
+    /// -- callers own loading the initial value.
+    fn with_calibration(self, calibration: PitchRollCalibration) -> Self {
+        *self.pitch_roll_correction_deg.lock().unwrap() = (calibration.pitch_correction_deg, calibration.roll_correction_deg);
+        self
+    }
+
+    /// Registers a callback invoked by `calibrate_pitch_roll()` with the new calibration --
+    /// callers own persisting it (or not).
+    fn with_calibration_persist<F>(mut self, persist: F) -> Self
+    where
+        F: Fn(PitchRollCalibration) + Send + Sync + 'static,
+    {
+        self.calibration_persist = Some(Arc::new(persist));
+        self
     }
 
     /// Latest decoded Rotation Vector orientation (gyro+accel+magnetometer fusion, absolute
@@ -147,9 +165,9 @@ impl Bno085Frame {
     }
 
     /// Handles a КАЛИБР press: sets the pitch/roll correction to minus the current raw
-    /// reading, so `game_orientation()`'s pitch/roll read zero immediately, then persists it --
-    /// survives a restart, unlike the correction previously living page-locally in HorzPage.
-    /// No-op while stale -- no raw reading to zero out.
+    /// reading, so `game_orientation()`'s pitch/roll read zero immediately, then hands it to
+    /// `calibration_persist` (if set) -- survives a restart, unlike the correction previously
+    /// living page-locally in HorzPage. No-op while stale -- no raw reading to zero out.
     pub fn calibrate_pitch_roll(&self) {
         if self.game_orientation_is_stale() {
             return;
@@ -157,8 +175,9 @@ impl Bno085Frame {
         let raw = *self.game_orientation.lock().unwrap();
         let calibration = PitchRollCalibration { pitch_correction_deg: -raw.pitch_deg, roll_correction_deg: -raw.roll_deg };
         *self.pitch_roll_correction_deg.lock().unwrap() = (calibration.pitch_correction_deg, calibration.roll_correction_deg);
-        let Ok(value) = serde_json::to_value(calibration) else { return };
-        Config::load().set_section(CALIBRATION_CONFIG_KEY, value);
+        if let Some(persist) = &self.calibration_persist {
+            persist(calibration);
+        }
     }
 
     /// Latest decoded Geomagnetic Rotation Vector orientation (accel+magnetometer fusion only,
@@ -207,13 +226,7 @@ impl Bno085Frame {
 
     #[cfg(test)]
     pub(crate) fn for_test() -> Self {
-        // Self::new() just read the real default Config path for calibration -- discard
-        // whatever (if anything) it loaded so tests never depend on, or are skewed by, real
-        // persisted state from an actual dashboard run (same reasoning as
-        // heading_fusion_sensor's per-test persist_path override).
-        let frame = Self::new();
-        *frame.pitch_roll_correction_deg.lock().unwrap() = (0.0, 0.0);
-        frame
+        Self::new()
     }
 
     fn set_orientation(&self, report: RotationVectorReport) {
@@ -309,12 +322,23 @@ impl Bno085DataProvider {
     /// listed here. Different test modes want different subsets (e.g. the heading test has no
     /// use for Accelerometer and skips it to keep I2C/report traffic down).
     pub fn new(features: &[u8]) -> Self {
+        let frame = Bno085Frame::new()
+            .with_calibration(Self::load_calibration())
+            .with_calibration_persist(|calibration| {
+                let Ok(value) = serde_json::to_value(calibration) else { return };
+                Config::load().set_section(CALIBRATION_CONFIG_KEY, value);
+            });
         Bno085DataProvider {
             features: features.to_vec(),
             should_stop: Arc::new(AtomicBool::new(false)),
-            frame: Bno085Frame::new(),
+            frame,
             thread: None,
         }
+    }
+
+    fn load_calibration() -> PitchRollCalibration {
+        let value = Config::load().section(CALIBRATION_CONFIG_KEY);
+        serde_json::from_value(value).unwrap_or_default()
     }
 
     pub fn run(&mut self) -> Result<(), Bno085ProviderError> {
