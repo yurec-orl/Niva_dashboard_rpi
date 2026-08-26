@@ -6,7 +6,9 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # ARM64 runner: this crate's raw OpenGL FFI calls rely on c_char being
+    # unsigned, true on ARM (matching the Pi target) but not on x86_64.
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
