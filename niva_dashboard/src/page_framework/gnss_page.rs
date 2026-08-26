@@ -215,7 +215,7 @@ impl GnssPage {
     }
 
     fn na() -> String {
-        "н/д".to_string()
+        "---".to_string()
     }
 
     fn fix_quality_label(q: FixQuality) -> String {
