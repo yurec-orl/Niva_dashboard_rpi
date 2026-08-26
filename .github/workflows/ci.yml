@@ -19,6 +19,7 @@ jobs:
             libdrm-dev \
             libgbm-dev \
             libfreetype6-dev \
+            libudev-dev \
             pkg-config
 
       - name: Install Rust toolchain
