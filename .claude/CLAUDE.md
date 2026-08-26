@@ -127,6 +127,16 @@ No manual frame timing/sleep/target-FPS constant — frame pacing is delegated e
 
 **Rule:** Never call `glGenBuffers`/`glDeleteBuffers` inside a per-frame render function on the RPi V3D driver — `glDeleteBuffers` is deferred until the GPU finishes reading the buffer, and doing this every frame causes an unbounded growth in queued deletions (memory + CPU cost climb over time). Pre-allocate VBOs once at init (see `NEEDLE_VBO`/`MARKS_VBO` pattern using `Once` guards) and stream data via `glBufferData` with `GL_DYNAMIC_DRAW`.
 
+## OpenGL FFI char signedness
+Raw `gl::` calls (`GetUniformLocation`, `GetAttribLocation`, `ShaderSource`, etc., mainly in `context.rs` and `opengl_test.rs`) pass byte-string pointers — `b"...\0".as_ptr()`, always `*const u8` — into parameters typed `*const i8` (`GLchar` aliases `c_char`). This only compiles because `c_char` is **unsigned** on ARM (the Pi target), so `u8`/`c_char` coincide there; on x86_64 `c_char` is signed and every one of these ~80 call sites fails with `E0308: mismatched types`. Not yet fixed at the source level — see CI below and TODO.
+
+## CI
+`.github/workflows/ci.yml` runs `cargo test` via GitHub Actions on every push to `master`.
+- Runner is `ubuntu-24.04-arm`, not `ubuntu-latest` — ARM's ABI makes `c_char` unsigned like the Pi (see OpenGL FFI char signedness above), so the existing code compiles as-is; x86_64 runners fail on ~80 call sites. This also means CI tests the same architecture family the dashboard actually ships on.
+- System deps installed via apt before build: `libegl1-mesa-dev`, `libgles2-mesa-dev`, `libdrm-dev`, `libgbm-dev`, `libfreetype6-dev`, `libudev-dev` (the last for `serialport`'s Linux backend, `libudev-sys`), `pkg-config`.
+- No custom email step — failure notification relies on GitHub's own per-account setting (Settings → Notifications → Actions → "failed workflows only"), not repo config.
+- `build.rs` reads `../.git/HEAD` relative to the crate dir, matching `actions/checkout`'s default layout (`.git` one level above `niva_dashboard/`) — no special checkout config needed.
+
 ## ADC Module Connectivity
 - udev rule (`/etc/udev/rules.d/99-niva-adc.rules`) creates `/dev/niva_adc` symlink for the STM32 (vendor `0483`, product `5740`).
 - **Never read a freshly-created serial/USB-CDC node with `cat`** before forcing raw mode — cooked-mode echo reflects received bytes back down the full-duplex link, and firmware that doesn't drain its RX buffer (like this STM32 firmware) can lock up. Force raw mode first: `stty -F /dev/niva_adc raw -echo -ixon -ixoff 115200`. The Rust app itself is unaffected — it opens the port via the `serialport` crate, which sets raw mode on open.
@@ -156,6 +166,7 @@ Boot reduced from ~16.8s to ~5.1s by disabling unused systemd services (`Network
 - Default font paths hardcoded in `ui_style.rs::load_defaults()` are absolute and dev-machine-specific (`/home/user/Work/Niva_Dashboard_Rpi/...`) — will silently fail (falling back to warning-logged defaults) on any other deployment path.
 - `GaugeIndicator::with_decorators` (`indicators/gauge_indicator.rs`) is a stub that ignores its argument ("decorators not yet integrated"), unlike `NeedleIndicator`/`VerticalBarIndicator`/`DigitalSegmentedIndicator` which all wire decorators through `IndicatorBase`.
 - Doc/code mismatch: the digital/analog signal processing "edge detection"/"low-pass filtering" terms in Core Components don't correspond to any processor by that name (debounce and the EMA `AnalogSignalProcessorDampener` fill those roles under different names).
+- ~80 raw `gl::` FFI call sites (`context.rs`, `opengl_test.rs`, `gauge_indicator.rs`, `needle_indicator.rs`, `compass_indicator.rs`, `vertical_bar_indicator.rs`, `osc_page.rs`) pass `*const u8` where `*const i8` (`GLchar`) is expected, relying on `c_char` being unsigned on ARM — see OpenGL FFI char signedness. Worked around in CI by building on an ARM64 runner rather than fixed at the source; fixing properly means casting each site explicitly (e.g. `as *const i8` / `std::os::raw::c_char`).
 - [Done] 'Master warning' button/indicator to the system: non-latching button with a warning light which lights up when an alert is active, and button press clears active alerts. Wired directly to Pi GPIO because STM32 ran out of pins (and to
   have it still function if no link to ADC module). Power considerations: 16 mA draw per pin and <= 50 mA total GPIO draw. 16 mA should be fine for one LED, possibly even less if brightness is enough for a warning light.
   Pins chosen: **GPIO18 for the LED** (output; PWM0-capable, leaves room for hardware-PWM dimming later), **GPIO27 for the button** (pull-up input, active-low). Neither pin is used elsewhere in this codebase (existing GPIO use is I2C0 on GPIO2/3, shared with the UPS HAT, and the BNO085 HINT pin on GPIO17).
