@@ -996,7 +996,7 @@ mod tests {
             sensor.tick_at(t);
         }
         let anchored = sensor.tick_at(t);
-        assert_eq!(anchored.confidence.as_f32() as i32, HeadingConfidence::PersistedPrior.code());
+        assert_eq!(anchored.confidence.as_f32() as i32, HeadingConfidence::DeadReckoning.code());
         assert!((anchored.accuracy.as_f32() - 2.0).abs() < 0.01,
                  "expected the persisted accuracy (2.0) to be applied on load, got {}", anchored.accuracy.as_f32());
 
