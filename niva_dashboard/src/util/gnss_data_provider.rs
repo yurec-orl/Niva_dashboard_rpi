@@ -109,6 +109,18 @@ impl GnssFrame {
         self.test_mode.store(active, Ordering::Relaxed);
     }
 
+    /// Clears the accumulated fix and backdates `last_update` so `is_stale()`/`status()` read
+    /// as stale immediately, rather than staying (falsely) fresh for up to GNSS_LINK_MAX_AGE.
+    /// Called by GnssDataProvider::run() before every (re)start of its read loop -- necessary
+    /// because several consumers read individual GnssFix fields directly with no staleness
+    /// check of their own (heading_fusion_sensor's validated_gnss_correction, GnssChannelProvider)
+    /// and would otherwise keep treating a frozen last-known fix (real or, after a ТЕСТ toggle,
+    /// synthetic) as a live reading indefinitely.
+    fn reset(&self) {
+        *self.fix.lock().unwrap() = GnssFix::default();
+        *self.last_update.lock().unwrap() = Instant::now() - GNSS_LINK_MAX_AGE;
+    }
+
     /// Link status for display: `Test` when fed by a synthetic provider (regardless of
     /// staleness), `NoData` when no line has been heard from a real receiver recently, `Ok`
     /// otherwise. Prefer this over `is_stale()` for anything shown to the user -- `is_stale()`
@@ -208,6 +220,10 @@ impl GnssDataProvider {
             return Err(GnssDataProviderError::AlreadyStarted);
         }
 
+        // No-op on a genuinely fresh frame (already default), but required on `resume()` after
+        // a `pause()` -- see GnssFrame::reset()'s doc comment.
+        self.frame.reset();
+
         let port = self.port.clone();
         let baud = self.baud;
         let should_stop = Arc::clone(&self.should_stop);
@@ -267,6 +283,25 @@ impl GnssDataProvider {
         self.should_stop.store(true, Ordering::SeqCst);
     }
 
+    /// Stops the background thread and blocks until it exits, then resets internal state so a
+    /// later `run()` (see `resume()`) can restart it. Used to hand the GNSS frame off to a
+    /// synthetic test writer (PageManager's ТЕСТ toggle) without discarding the frame itself --
+    /// unlike `stop()`, which is a one-way shutdown signal only ever paired with `Drop`'s join.
+    pub fn pause(&mut self) {
+        self.should_stop.store(true, Ordering::SeqCst);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+        self.should_stop.store(false, Ordering::SeqCst);
+    }
+
+    /// Restarts the background thread after `pause()`. Just `run()` under another name --
+    /// `run_loop`'s own `ensure_connected` already handles the cold-start reconnect, and
+    /// `run()` itself clears out whatever fix was left in the frame from before the pause.
+    pub fn resume(&mut self) -> Result<(), GnssDataProviderError> {
+        self.run()
+    }
+
     /// Returns a cloneable handle to the shared line buffer for use by the terminal page.
     pub fn frame(&self) -> GnssFrame {
         self.frame.clone()
@@ -305,11 +340,21 @@ pub struct TestGnssDataProvider {
 }
 
 impl TestGnssDataProvider {
-    /// Starts generating synthetic fixes immediately. The returned handle must be kept alive
-    /// for the sweep to keep animating — dropping it stops the background thread.
+    /// Starts generating synthetic fixes immediately into a fresh, standalone frame. The
+    /// returned handle must be kept alive for the sweep to keep animating — dropping it stops
+    /// the background thread. Used only where there's no pre-existing shared frame to hand off
+    /// to (e.g. the standalone compass indicator test) -- PageManager's ТЕСТ toggle uses
+    /// `start_on` instead, so every consumer already holding a clone of the real GnssFrame sees
+    /// the synthetic data too.
     pub fn start() -> Self {
+        Self::start_on(GnssFrame::new())
+    }
+
+    /// Starts generating synthetic fixes into an existing GnssFrame -- the same one already
+    /// cloned out to GnssChannelProvider, GnssPage, heading_fusion_sensor, etc. -- instead of a
+    /// disposable frame of its own, so every consumer switches to test data transparently.
+    pub fn start_on(frame: GnssFrame) -> Self {
         let should_stop = Arc::new(AtomicBool::new(false));
-        let frame = GnssFrame::new();
         frame.set_test_mode(true);
         let thread_should_stop = Arc::clone(&should_stop);
         let thread_frame = frame.clone();
@@ -369,5 +414,10 @@ impl Drop for TestGnssDataProvider {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+        // Clears the flag on the (possibly shared, possibly long-lived) frame this provider
+        // was writing into -- harmless for `start()`'s disposable frame, which is discarded
+        // right after anyway, but required for `start_on()`'s shared frame so status()
+        // reverts once the real provider resumes.
+        self.frame.set_test_mode(false);
     }
 }

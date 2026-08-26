@@ -11,13 +11,13 @@ use crate::page_framework::horz_page::HorzPage;
 use crate::page_framework::osc_page::OscPage;
 use crate::hardware::sensor_manager::SensorManager;
 use crate::hardware::hw_providers::HWInput;
-use crate::hardware::heading_fusion_sensor::HeadingFusionSensor;
+use crate::hardware::heading_fusion_sensor::{HeadingFusionSensor, HeadingAnchorSnapshot};
 use crate::hardware::gpio_input::GpioOutput;
 use crate::alerts::alert_manager::{AlertManager, Severity};
 use crate::alerts::watchdog::Watchdog;
 use crate::util::adc_data_provider::{ADCFrame, OscFrame};
-use crate::util::gnss_data_provider::GnssFrame;
-use crate::util::bno085_data_provider::Bno085Frame;
+use crate::util::gnss_data_provider::{GnssFrame, GnssDataProvider, TestGnssDataProvider};
+use crate::util::bno085_data_provider::{Bno085Frame, Bno085DataProvider, TestBno085DataProvider};
 use crate::util::ups_monitor::UpsMonitor;
 use crate::util::config::Config;
 
@@ -304,6 +304,29 @@ pub struct PageManager {
     // failed to start.
     bno_frame: Option<Bno085Frame>,
 
+    // Owns the real GNSS/BNO085 data providers (moved in from main.rs, which otherwise just
+    // kept them alive for the process lifetime without ever touching them again) so
+    // UIEvent::NavToggleGnssTest can pause/resume them -- see toggle_gnss_test_mode(). None
+    // under the same condition as gnss_frame/bno_frame above.
+    gnss_provider: Option<GnssDataProvider>,
+    bno_provider: Option<Bno085DataProvider>,
+
+    // Synthetic writers for gnss_frame/bno_frame, active only while ТЕСТ mode is toggled on.
+    // Each writes into the same shared frame gnss_frame/bno_frame already points at (see
+    // TestGnssDataProvider::start_on), so every consumer -- GnssPage, heading_fusion_sensor,
+    // HorzPage, the link-status watchdogs -- reads synthetic data transparently, with no
+    // frame-switching logic of their own. Independent of each other: a rig with only one of
+    // GNSS/BNO085 connected can still toggle test mode for whichever one exists.
+    gnss_test_provider: Option<TestGnssDataProvider>,
+    bno_test_provider: Option<TestBno085DataProvider>,
+
+    // heading_fusion's anchor as of the moment test mode was entered, restored verbatim when
+    // it ends -- see toggle_gnss_test_mode(). Without this, the synthetic sweep validates as a
+    // normal GNSS correction through heading_fusion's usual tick() path (it has no notion of
+    // test mode, deliberately) and overwrites the real accumulated correction, which then just
+    // sits there wrong once real data resumes. None outside an active test session.
+    gnss_test_anchor_snapshot: Option<HeadingAnchorSnapshot>,
+
     // Reads GnssFrame/Bno085Frame directly and is ticked once per loop iteration below,
     // independent of `sensor_manager`'s self-test/real handoff -- see
     // hardware::heading_fusion_sensor. None when either source's data provider failed to
@@ -334,6 +357,7 @@ impl PageManager {
                input_sources: Vec<Box<dyn InputSource>>, ups_monitor: UpsMonitor,
                adc_frame: Option<ADCFrame>, osc_frame: Option<OscFrame>, gnss_frame: Option<GnssFrame>,
                bno_frame: Option<Bno085Frame>,
+               gnss_provider: Option<GnssDataProvider>, bno_provider: Option<Bno085DataProvider>,
                alert_manager: AlertManager, heading_fusion: Option<HeadingFusionSensor>,
                master_warning_led: Option<GpioOutput>) -> Self {
         let mut buttons_map = HashMap::new();
@@ -380,6 +404,11 @@ impl PageManager {
             osc_frame,
             gnss_frame,
             bno_frame,
+            gnss_provider,
+            bno_provider,
+            gnss_test_provider: None,
+            bno_test_provider: None,
+            gnss_test_anchor_snapshot: None,
             heading_fusion,
             fps_counter: FpsCounter::new(),
             start_time: Instant::now(),
@@ -929,10 +958,60 @@ impl PageManager {
             UIEvent::NavHeadingDecrease => {
                 self.adjust_manual_heading(-1.0);
             }
+            UIEvent::NavToggleGnssTest => {
+                self.toggle_gnss_test_mode();
+            }
             _ => {}
         }
     }
-    
+
+    // Switches gnss_frame/bno_frame between their real data providers and synthetic test
+    // writers. Both halves (GNSS/BNO085) are handled independently so a rig with only one of
+    // the two connected can still exercise test mode for whichever one exists. GnssPage (and
+    // everything else holding a clone of these frames -- heading_fusion_sensor, HorzPage, the
+    // link-status watchdogs) needs no test-mode logic of its own: it always reads gnss_frame/
+    // bno_frame directly, and LinkStatus::Test on those frames is what makes the switch visible.
+    fn toggle_gnss_test_mode(&mut self) {
+        if self.gnss_test_provider.is_some() || self.bno_test_provider.is_some() {
+            log::info!("GNSS/BNO085 test mode OFF, resuming real data providers");
+            self.gnss_test_provider = None; // Drop clears test_mode + stops the writer thread.
+            self.bno_test_provider = None;
+            if let Some(provider) = self.gnss_provider.as_mut() {
+                if let Err(e) = provider.resume() {
+                    log::error!("Failed to resume GNSS data provider: {}", e);
+                }
+            }
+            if let Some(provider) = self.bno_provider.as_mut() {
+                if let Err(e) = provider.resume() {
+                    log::error!("Failed to resume BNO085 data provider: {}", e);
+                }
+            }
+            // Undo whatever the synthetic sweep did to heading_fusion's accumulated
+            // correction while it was live on the same frames -- see the field's doc comment.
+            if let (Some(fusion), Some(snapshot)) = (self.heading_fusion.as_mut(), self.gnss_test_anchor_snapshot.take()) {
+                fusion.restore_anchor(snapshot);
+            }
+        } else {
+            log::info!("GNSS/BNO085 test mode ON, pausing real data providers");
+            self.gnss_test_anchor_snapshot = self.heading_fusion.as_ref().map(|f| f.snapshot_anchor());
+            if let Some(provider) = self.gnss_provider.as_mut() {
+                provider.pause();
+            }
+            if let Some(provider) = self.bno_provider.as_mut() {
+                provider.pause();
+            }
+            self.gnss_test_provider = self.gnss_frame.clone().map(TestGnssDataProvider::start_on);
+            self.bno_test_provider = self.bno_frame.clone().map(TestBno085DataProvider::start_on);
+            // The raw Game RV baseline is about to jump discontinuously (real -> synthetic,
+            // once the test provider's first tick lands) -- zero the correction now so that
+            // jump becomes the displayed heading outright instead of fighting the old
+            // (real-anchored) correction. See zero_correction()'s doc comment.
+            if let Some(fusion) = self.heading_fusion.as_mut() {
+                fusion.zero_correction();
+            }
+        }
+    }
+
     // Nudges the fused heading's manual anchor by delta_deg, based on the currently
     // displayed heading. No-op if heading fusion isn't running (e.g. BNO085 or GNSS
     // provider failed to start).

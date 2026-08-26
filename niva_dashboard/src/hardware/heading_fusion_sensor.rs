@@ -103,6 +103,19 @@ pub enum HeadingConfidence {
     Manual,
 }
 
+/// Captured by `HeadingFusionSensor::snapshot_anchor`, handed back to `restore_anchor` -- see
+/// those methods' doc comments. Opaque to callers on purpose: the field set is whatever
+/// `apply_correction`/`set_manual_heading` happen to update together, which is an internal
+/// implementation detail, not a stable public shape.
+#[derive(Clone, Copy)]
+pub struct HeadingAnchorSnapshot {
+    correction_offset_deg: Option<f32>,
+    display_offset_deg: Option<f32>,
+    confidence: HeadingConfidence,
+    accuracy_deg: Option<f32>,
+    last_correction_instant: Option<Instant>,
+}
+
 impl HeadingConfidence {
     pub fn code(self) -> i32 {
         match self {
@@ -387,6 +400,52 @@ impl HeadingFusionSensor {
         // Deliberate user action, not a hot path -- persist right away rather than waiting
         // for shutdown, so it survives an unclean exit before the next one.
         self.persist_if_changed(heading_deg, self.accuracy_deg);
+    }
+
+    /// Captures the current anchor -- every field `apply_correction`/`set_manual_heading`
+    /// always update together -- so it can be handed back to `restore_anchor` later, unaffected
+    /// by whatever `tick()` calls happen in between. Used by PageManager to protect the
+    /// accumulated correction from GNSS/BNO085 test mode: this sensor has no notion of test
+    /// mode and shouldn't grow one just for this -- it reads `gnss_frame`/`bno_frame` exactly
+    /// as it always does, and while a test provider is writing synthetic data into those
+    /// frames, `validated_gnss_correction` will happily validate against it just like a real
+    /// fix, updating `correction_offset_deg` to something meaningless once test mode ends. The
+    /// caller is expected to snapshot before starting a test session and restore right after
+    /// ending it.
+    pub fn snapshot_anchor(&self) -> HeadingAnchorSnapshot {
+        HeadingAnchorSnapshot {
+            correction_offset_deg: self.correction_offset_deg,
+            display_offset_deg: self.display_offset_deg,
+            confidence: self.confidence,
+            accuracy_deg: self.accuracy_deg,
+            last_correction_instant: self.last_correction_instant,
+        }
+    }
+
+    /// Restores a previously captured anchor verbatim, bypassing the slew filter the same way
+    /// `set_manual_heading` does -- this is known-correct state being put back, not a fresh
+    /// correction that should visibly ramp in. Deliberately doesn't touch `game_rv_deg` (that's
+    /// re-read from `bno_frame` on the very next `tick()` regardless) or the agreement
+    /// trackers (`course_agreement`/`heading_agreement` self-reset the tick after a test
+    /// session ends, since GnssDataProvider::run() clears the frame's fix back to `None`
+    /// fields first -- see GnssFrame::reset()).
+    pub fn restore_anchor(&mut self, snapshot: HeadingAnchorSnapshot) {
+        self.correction_offset_deg = snapshot.correction_offset_deg;
+        self.display_offset_deg = snapshot.display_offset_deg;
+        self.confidence = snapshot.confidence;
+        self.accuracy_deg = snapshot.accuracy_deg;
+        self.last_correction_instant = snapshot.last_correction_instant;
+    }
+
+    /// Zeroes the correction outright (offset 0, bypassing the slew filter same as
+    /// `set_manual_heading`), so `displayed_heading()` becomes exactly the raw Game RV
+    /// baseline, with no lingering influence from whatever correction was in effect before.
+    pub fn zero_correction(&mut self) {
+        self.correction_offset_deg = Some(0.0);
+        self.display_offset_deg = Some(0.0);
+        self.confidence = HeadingConfidence::Manual;
+        self.accuracy_deg = Some(MANUAL_ANCHOR_ACCURACY_DEG);
+        self.last_correction_instant = Some(Instant::now());
     }
 
     /// How long the current DeadReckoning stretch has lasted, for UI display (e.g. dimming a

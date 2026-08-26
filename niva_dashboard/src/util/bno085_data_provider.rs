@@ -210,9 +210,48 @@ impl Bno085Frame {
 
     /// Marks this frame as fed by a synthetic test source (or not) -- called by whichever
     /// provider owns writing to it, same pattern as GnssFrame::set_test_mode.
-    #[allow(dead_code)]
     pub(crate) fn set_test_mode(&self, active: bool) {
         self.test_mode.store(active, Ordering::Relaxed);
+    }
+
+    /// Clears orientation/acceleration back to their zeroed defaults and backdates every
+    /// freshness timestamp so is_stale()/game_orientation_is_stale() read as stale immediately
+    /// -- mirrors GnssFrame::reset() (see its doc comment for why this matters). Deliberately
+    /// leaves `pitch_roll_correction_deg` untouched: that's the persisted КАЛИБР calibration,
+    /// not a reading, and must survive a provider pause/resume cycle.
+    fn reset(&self) {
+        *self.orientation.lock().unwrap() = Bno085Orientation::default();
+        *self.game_orientation.lock().unwrap() = Bno085Orientation::default();
+        *self.geomagnetic_orientation.lock().unwrap() = Bno085Orientation::default();
+        *self.acceleration.lock().unwrap() = Bno085Acceleration::default();
+        let stale_instant = Instant::now() - READING_MAX_AGE;
+        *self.last_update.lock().unwrap() = stale_instant;
+        *self.game_orientation_last_update.lock().unwrap() = stale_instant;
+    }
+
+    /// Directly sets orientation/acceleration fields and freshness timestamps, bypassing the
+    /// SH-2 report decoding the `set_*` methods below do for real hardware reports -- used by
+    /// TestBno085DataProvider to write synthetic data into an existing (possibly long-lived,
+    /// already widely cloned) frame the same way it writes real reports.
+    pub(crate) fn set_synthetic_orientation(&self, o: Bno085Orientation) {
+        *self.orientation.lock().unwrap() = o;
+        *self.last_update.lock().unwrap() = Instant::now();
+    }
+
+    pub(crate) fn set_synthetic_game_orientation(&self, o: Bno085Orientation) {
+        *self.game_orientation.lock().unwrap() = o;
+        *self.last_update.lock().unwrap() = Instant::now();
+        *self.game_orientation_last_update.lock().unwrap() = Instant::now();
+    }
+
+    pub(crate) fn set_synthetic_geomagnetic_orientation(&self, o: Bno085Orientation) {
+        *self.geomagnetic_orientation.lock().unwrap() = o;
+        *self.last_update.lock().unwrap() = Instant::now();
+    }
+
+    pub(crate) fn set_synthetic_acceleration(&self, a: Bno085Acceleration) {
+        *self.acceleration.lock().unwrap() = a;
+        *self.last_update.lock().unwrap() = Instant::now();
     }
 
     /// Link status for display: `Test` when fed by a synthetic provider (regardless of
@@ -374,6 +413,10 @@ impl Bno085DataProvider {
             return Err(Bno085ProviderError::AlreadyStarted);
         }
 
+        // No-op on a genuinely fresh frame (already default/stale), but required on `resume()`
+        // after a `pause()` -- see Bno085Frame::reset()'s doc comment.
+        self.frame.reset();
+
         let features = self.features.clone();
         let should_stop = Arc::clone(&self.should_stop);
         let frame = self.frame.clone();
@@ -463,6 +506,22 @@ impl Bno085DataProvider {
     pub fn stop(&mut self) {
         self.should_stop.store(true, Ordering::SeqCst);
     }
+
+    /// Stops the background thread and blocks until it exits, then resets internal state so a
+    /// later `run()` (see `resume()`) can restart it -- mirrors GnssDataProvider::pause(), used
+    /// to hand the BNO085 frame off to a synthetic test writer without discarding the frame.
+    pub fn pause(&mut self) {
+        self.should_stop.store(true, Ordering::SeqCst);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+        self.should_stop.store(false, Ordering::SeqCst);
+    }
+
+    /// Restarts the background thread after `pause()`. Just `run()` under another name.
+    pub fn resume(&mut self) -> Result<(), Bno085ProviderError> {
+        self.run()
+    }
 }
 
 impl Drop for Bno085DataProvider {
@@ -471,5 +530,97 @@ impl Drop for Bno085DataProvider {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+    }
+}
+
+/// Sweep period for the synthetic heading rotation, matching TestGnssDataProvider's so the
+/// GNSS page's compass and the BNO085 INS readings rotate in visual sync during test mode.
+const TEST_HEADING_ROTATION_PERIOD: Duration = Duration::from_secs(12);
+/// How often the synthetic frame is refreshed -- same rationale as TestGnssDataProvider::TEST_TICK.
+const TEST_TICK: Duration = Duration::from_millis(50);
+/// Amplitude of the gentle synthetic pitch/roll oscillation, degrees.
+const TEST_PITCH_ROLL_AMPLITUDE_DEG: f32 = 8.0;
+/// Standard gravity, m/s^2 -- synthetic acceleration's Z axis, matching a level, stationary
+/// mounting (chip's native unit, same as real Accelerometer reports).
+const TEST_STANDARD_GRAVITY_MPS2: f32 = 9.80665;
+
+/// Populates a Bno085Frame with synthetic orientation/acceleration data instead of reading the
+/// real I2C sensor -- mirrors TestGnssDataProvider's shape (see gnss_data_provider.rs): writes
+/// into an existing, already-shared frame rather than a disposable one of its own, so every
+/// consumer (GnssPage's INS block, heading_fusion_sensor, HorzPage) sees test data the same way
+/// it would see real hardware. Heading tracks TestGnssDataProvider's sweep so the fused heading
+/// output stays self-consistent (both sources agree) instead of the fusion logic fighting two
+/// independently-moving "sensors".
+pub struct TestBno085DataProvider {
+    should_stop: Arc<AtomicBool>,
+    frame: Bno085Frame,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl TestBno085DataProvider {
+    /// Starts generating synthetic reports immediately into an existing Bno085Frame. The
+    /// returned handle must be kept alive for the sweep to keep animating -- dropping it stops
+    /// the background thread and clears the frame's test_mode flag.
+    pub fn start_on(frame: Bno085Frame) -> Self {
+        let should_stop = Arc::new(AtomicBool::new(false));
+        frame.set_test_mode(true);
+        let thread_should_stop = Arc::clone(&should_stop);
+        let thread_frame = frame.clone();
+
+        let thread = thread::Builder::new()
+            .name("test-bno085-data-provider".into())
+            .spawn(move || Self::run_loop(&thread_should_stop, &thread_frame))
+            .ok();
+
+        TestBno085DataProvider { should_stop, frame, thread }
+    }
+
+    fn run_loop(should_stop: &AtomicBool, frame: &Bno085Frame) {
+        let start = Instant::now();
+        while !should_stop.load(Ordering::Relaxed) {
+            let elapsed = start.elapsed().as_secs_f32();
+            let o = Self::generate_orientation(elapsed);
+            frame.set_synthetic_orientation(o);
+            frame.set_synthetic_game_orientation(o);
+            frame.set_synthetic_geomagnetic_orientation(o);
+            frame.set_synthetic_acceleration(Self::generate_acceleration(elapsed));
+            thread::sleep(TEST_TICK);
+        }
+    }
+
+    /// Heading sweeps through the full 0-360° range in sync with TestGnssDataProvider's own
+    /// sweep; pitch/roll oscillate gently so HorzPage has something to visibly animate too.
+    fn generate_orientation(elapsed: f32) -> Bno085Orientation {
+        let heading_deg = (elapsed / TEST_HEADING_ROTATION_PERIOD.as_secs_f32() * 360.0).rem_euclid(360.0);
+        Bno085Orientation {
+            heading_deg,
+            pitch_deg: TEST_PITCH_ROLL_AMPLITUDE_DEG * (elapsed * 0.2).sin(),
+            roll_deg: TEST_PITCH_ROLL_AMPLITUDE_DEG * (elapsed * 0.15).cos(),
+            heading_accuracy_deg: 2.0,
+            accuracy: Some(Accuracy::High),
+        }
+    }
+
+    /// Roughly 1g on Z (level, stationary orientation) with a small wobble on X/Y so the
+    /// InfoBlocks::InsData block doesn't show a perfectly static reading.
+    fn generate_acceleration(elapsed: f32) -> Bno085Acceleration {
+        Bno085Acceleration {
+            x_mps2: 0.3 * (elapsed * 0.4).sin(),
+            y_mps2: 0.3 * (elapsed * 0.37).cos(),
+            z_mps2: TEST_STANDARD_GRAVITY_MPS2,
+            accuracy: Some(Accuracy::High),
+        }
+    }
+}
+
+impl Drop for TestBno085DataProvider {
+    fn drop(&mut self) {
+        self.should_stop.store(true, Ordering::SeqCst);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+        // Mirrors TestGnssDataProvider's Drop -- required so status() reverts once the real
+        // provider resumes writing to this (shared) frame.
+        self.frame.set_test_mode(false);
     }
 }

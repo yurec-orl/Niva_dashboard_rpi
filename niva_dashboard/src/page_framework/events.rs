@@ -204,7 +204,10 @@ impl SmartEventSender {
             UIEvent::SwitchSensorSet |
             // Manual heading anchor lives in PageManager's heading_fusion, not the page.
             UIEvent::NavHeadingIncrease |
-            UIEvent::NavHeadingDecrease => {
+            UIEvent::NavHeadingDecrease |
+            // GNSS/BNO085 test-mode switching pauses/resumes the real data providers, which
+            // PageManager owns -- not the page.
+            UIEvent::NavToggleGnssTest => {
                 self.global_sender.send(event);
             }
             // Page-specific events go to current page
@@ -220,7 +223,6 @@ impl SmartEventSender {
             UIEvent::NavPnpMode |
             UIEvent::NavInfoMode |
             UIEvent::NavMapMode |
-            UIEvent::NavToggleGnssTest |
             UIEvent::NavHeadingSetMode |
             UIEvent::NavHeadingSetExit |
             UIEvent::HorzCalibrate => {
@@ -291,6 +293,7 @@ mod tests {
             UIEvent::SwitchSensorSet,
             UIEvent::NavHeadingIncrease,
             UIEvent::NavHeadingDecrease,
+            UIEvent::NavToggleGnssTest,
         ]
     }
 

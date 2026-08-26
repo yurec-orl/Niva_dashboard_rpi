@@ -563,8 +563,9 @@ fn main() -> std::process::ExitCode {
     let adc_frame = adc.as_ref().map(|p| p.frame());
     let osc_frame = adc.as_ref().map(|p| p.osc_frame());
 
-    // Kept alive for the process lifetime, same as `adc` — its Drop impl stops the
-    // background thread cleanly on shutdown.
+    // Moved into PageManager below (unlike `adc`, which stays a process-lifetime local) --
+    // PageManager pauses/resumes it to hand the GNSS frame off to a synthetic test writer on
+    // UIEvent::NavToggleGnssTest (see toggle_gnss_test_mode).
     let gnss = match setup_gnss_data_provider() {
         Ok(provider) => {
             log::info!("✓ GNSS data provider started");
@@ -577,8 +578,7 @@ fn main() -> std::process::ExitCode {
     };
     let gnss_frame = gnss.as_ref().map(|p| p.frame());
 
-    // Kept alive for the process lifetime, same as `gnss` — its Drop impl stops the
-    // background thread cleanly on shutdown.
+    // Moved into PageManager below, same as `gnss` — see that comment.
     let bno085 = match setup_bno085_data_provider() {
         Ok(provider) => {
             log::info!("✓ BNO085 data provider started");
@@ -626,7 +626,7 @@ fn main() -> std::process::ExitCode {
         }
     };
 
-    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag, osc_frame, gnss_frame_for_diag, bno_frame_for_diag, alert_manager, heading_fusion, master_warning_led);
+    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag, osc_frame, gnss_frame_for_diag, bno_frame_for_diag, gnss, bno085, alert_manager, heading_fusion, master_warning_led);
 
     mgr.setup().expect("Failed to setup page manager");
 
