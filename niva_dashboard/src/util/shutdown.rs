@@ -26,9 +26,9 @@ extern "C" fn handle_restart_signal(_signal: libc::c_int) {
 /// restart_dashboard.sh — a manual equivalent of the auto-detected binary-rebuild restart).
 pub fn install_signal_handlers() {
     unsafe {
-        libc::signal(libc::SIGTERM, handle_shutdown_signal as usize);
-        libc::signal(libc::SIGINT, handle_shutdown_signal as usize);
-        libc::signal(libc::SIGUSR1, handle_restart_signal as usize);
+        libc::signal(libc::SIGTERM, handle_shutdown_signal as *const () as usize);
+        libc::signal(libc::SIGINT, handle_shutdown_signal as *const () as usize);
+        libc::signal(libc::SIGUSR1, handle_restart_signal as *const () as usize);
     }
 }
 
