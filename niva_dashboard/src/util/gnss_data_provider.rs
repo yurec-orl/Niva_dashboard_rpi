@@ -1,3 +1,4 @@
+use crate::util::link_status::LinkStatus;
 use crate::util::nmea::{self, FixQuality, GnssFix};
 use crate::util::serial_reader::{LineSerialReader, SerialReader};
 
@@ -53,6 +54,14 @@ pub struct GnssFrame {
     lines: Arc<Mutex<VecDeque<String>>>,
     fix: Arc<Mutex<GnssFix>>,
     last_update: Arc<Mutex<Instant>>,
+    /// Whether this frame is currently fed by a synthetic test source (TestGnssDataProvider)
+    /// rather than a real receiver. A shared flag rather than something fixed at construction
+    /// time, so status() below can be reused by an eventual design where one long-lived frame
+    /// (already cloned out to every consumer) gets its data source switched at runtime, instead
+    /// of today's approach of standing up a whole separate GnssFrame for test mode -- flipping
+    /// this flag on the existing Arc would be visible to every clone immediately, no consumer
+    /// needs to be handed a new frame.
+    test_mode: Arc<AtomicBool>,
 }
 
 impl GnssFrame {
@@ -61,6 +70,7 @@ impl GnssFrame {
             lines: Arc::new(Mutex::new(VecDeque::new())),
             fix: Arc::new(Mutex::new(GnssFix::default())),
             last_update: Arc::new(Mutex::new(Instant::now())),
+            test_mode: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -90,6 +100,27 @@ impl GnssFrame {
     /// not whether it currently has a position lock.
     pub fn is_stale(&self) -> bool {
         self.last_update.lock().unwrap().elapsed() > GNSS_LINK_MAX_AGE
+    }
+
+    /// Marks this frame as fed by a synthetic test source (or not) -- called by whichever
+    /// provider owns writing to it (see TestGnssDataProvider::start()). Not exposed outside
+    /// the crate: consumers should only ever read status() via `status()`, not toggle it.
+    pub(crate) fn set_test_mode(&self, active: bool) {
+        self.test_mode.store(active, Ordering::Relaxed);
+    }
+
+    /// Link status for display: `Test` when fed by a synthetic provider (regardless of
+    /// staleness), `NoData` when no line has been heard from a real receiver recently, `Ok`
+    /// otherwise. Prefer this over `is_stale()` for anything shown to the user -- `is_stale()`
+    /// alone can't distinguish "no data" from "test data that happens to look fresh".
+    pub fn status(&self) -> LinkStatus {
+        if self.test_mode.load(Ordering::Relaxed) {
+            LinkStatus::Test
+        } else if self.is_stale() {
+            LinkStatus::NoData
+        } else {
+            LinkStatus::Ok
+        }
     }
 }
 
@@ -279,6 +310,7 @@ impl TestGnssDataProvider {
     pub fn start() -> Self {
         let should_stop = Arc::new(AtomicBool::new(false));
         let frame = GnssFrame::new();
+        frame.set_test_mode(true);
         let thread_should_stop = Arc::clone(&should_stop);
         let thread_frame = frame.clone();
 

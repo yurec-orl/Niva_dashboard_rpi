@@ -3,6 +3,7 @@ pub mod adc_data_provider;
 pub mod gnss_data_provider;
 pub mod bno085_protocol;
 pub mod bno085_data_provider;
+pub mod link_status;
 pub mod nmea;
 pub mod diagnostics;
 pub mod logging;

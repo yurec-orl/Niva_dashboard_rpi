@@ -9,6 +9,7 @@ use crate::util::bno085_protocol::{
     RotationVectorReport, BNO085_ADDR, HINT_PIN, I2C_BUS,
 };
 use crate::util::config::Config;
+use crate::util::link_status::LinkStatus;
 
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -110,6 +111,12 @@ pub struct Bno085Frame {
     /// persisted calibration (e.g. `for_test()`), in which case a calibration press just isn't
     /// saved.
     calibration_persist: Option<Arc<dyn Fn(PitchRollCalibration) + Send + Sync>>,
+    /// Whether this frame is currently fed by a synthetic test source rather than the real
+    /// sensor -- mirrors GnssFrame::test_mode (see its doc comment for why this is a shared,
+    /// independently-settable flag rather than fixed at construction). No synthetic BNO085
+    /// provider exists yet, so nothing sets this true today; status() and the flag are here so
+    /// one can be added later (mirroring TestGnssDataProvider) without an API change.
+    test_mode: Arc<AtomicBool>,
 }
 
 impl Bno085Frame {
@@ -123,6 +130,7 @@ impl Bno085Frame {
             game_orientation_last_update: Arc::new(Mutex::new(Instant::now() - READING_MAX_AGE)),
             pitch_roll_correction_deg: Arc::new(Mutex::new((0.0, 0.0))),
             calibration_persist: None,
+            test_mode: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -198,6 +206,26 @@ impl Bno085Frame {
     /// AdcFrame/GnssFrame's is_stale() does.
     pub fn is_stale(&self) -> bool {
         self.last_update.lock().unwrap().elapsed() > READING_MAX_AGE
+    }
+
+    /// Marks this frame as fed by a synthetic test source (or not) -- called by whichever
+    /// provider owns writing to it, same pattern as GnssFrame::set_test_mode.
+    #[allow(dead_code)]
+    pub(crate) fn set_test_mode(&self, active: bool) {
+        self.test_mode.store(active, Ordering::Relaxed);
+    }
+
+    /// Link status for display: `Test` when fed by a synthetic provider (regardless of
+    /// staleness), `NoData` when no report has arrived recently, `Ok` otherwise. Prefer this
+    /// over `is_stale()` for anything shown to the user.
+    pub fn status(&self) -> LinkStatus {
+        if self.test_mode.load(Ordering::Relaxed) {
+            LinkStatus::Test
+        } else if self.is_stale() {
+            LinkStatus::NoData
+        } else {
+            LinkStatus::Ok
+        }
     }
 
     /// True if Game Rotation Vector specifically hasn't reported within READING_MAX_AGE --

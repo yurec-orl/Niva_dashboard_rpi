@@ -7,6 +7,7 @@ use crate::hardware::sensor_manager::SensorManager;
 use crate::hardware::hw_providers::HWInput;
 use crate::util::gnss_data_provider::GnssFrame;
 use crate::util::bno085_data_provider::Bno085Frame;
+use crate::util::link_status::LinkStatus;
 use crate::util::nmea::{FixQuality, GnssFix};
 use crate::indicators::compass_indicator::{CompassHeadingMarkerDecorator, CompassIndicator, HdopIndicator, UP_ANGLE};
 use crate::indicators::indicator::{Indicator, IndicatorBounds};
@@ -296,7 +297,8 @@ impl GnssPage {
     }
 
     fn get_info_text(&self, sensor_manager: &SensorManager, frame: &GnssFrame, blocks: &[InfoBlocks]) -> Vec<(String, bool, bool)> {
-        let stale = frame.is_stale();
+        let status = frame.status();
+        let stale = status == LinkStatus::NoData;
         let fix = frame.fix();
 
         let link_str = if stale { "НЕТ СВЯЗИ" } else { "НОРМА" }.to_string();
@@ -317,7 +319,7 @@ impl GnssPage {
                     lines.append(&mut vec![
                         (format!("ГНСС:    {}", link_str), false, stale),
                     ]);
-                    if self.test_provider.is_some() {
+                    if status == LinkStatus::Test {
                         lines.push(("ТЕСТ".to_string(), false, true));
                     }
                     lines.push((String::new(), false, false));
@@ -356,7 +358,8 @@ impl GnssPage {
                     ]);
                 },
                 InfoBlocks::InsLinkStatus => {
-                    let ins_stale = self.bno_frame.as_ref().map(|f| f.is_stale()).unwrap_or(true);
+                    let ins_status = self.bno_frame.as_ref().map(|f| f.status()).unwrap_or(LinkStatus::NoData);
+                    let ins_stale = ins_status == LinkStatus::NoData;
                     let ins_link_str = if ins_stale { "НЕТ СВЯЗИ" } else { "НОРМА" }.to_string();
                     lines.append(&mut vec![
                         (format!("ИНС: {}", ins_link_str), false, ins_stale),
@@ -491,7 +494,7 @@ impl GnssPage {
         // the same way the rest of this page's fields already fall back to active_frame().
         // TestGnssDataProvider sweeps heading through the full 0-360° range specifically to
         // exercise the compass, so this keeps the "ТЕСТ" button doing what it's for.
-        let heading_value = if self.test_provider.is_some() {
+        let heading_value = if active_frame.status() == LinkStatus::Test {
             SensorValue::analog(fix.heading_deg.unwrap_or(0.0), 0.0, 359.999, "\u{00B0}", "КУРС", "gnss_test_heading")
         } else {
             match sensor_manager.get_sensor_value(&HWInput::HwHeading) {
@@ -566,14 +569,16 @@ impl GnssPage {
             ins_problem, ValueConstraints::digital_critical(), ValueMetadata::new("", "ИНС", "ins_link"));
         // Red for either "no serial link" (frame stale) or "link up but no fix yet"
         // (fix_quality Invalid or never seen) — both mean the heading/position aren't trustworthy.
-        let gnss_problem = active_frame.is_stale() || fix.fix_quality.map_or(true, |q| q == FixQuality::Invalid);
+        // Test status reads as fine here, same as the ГНСС label above (a separate "ТЕСТ" box
+        // below is what flags synthetic data, not this one going red).
+        let gnss_problem = active_frame.status() == LinkStatus::NoData || fix.fix_quality.map_or(true, |q| q == FixQuality::Invalid);
         let gnss_value = SensorValue::digital_with_constraints_and_metadata(
             gnss_problem, ValueConstraints::digital_critical(), ValueMetadata::new("", "ГНСС", "gnss_link"));
 
         self.pnp_mode.ins_link_indicator.render(&ins_value, ins_bounds, &ui_style, context)?;
         self.pnp_mode.gnss_link_indicator.render(&gnss_value, gnss_bounds, &ui_style, context)?;
 
-        if self.test_provider.is_some() {
+        if active_frame.status() == LinkStatus::Test {
             let test_bounds = IndicatorBounds::new(
                 gnss_bounds.x, gnss_bounds.y + status_box_height,
                 gnss_box_width, status_box_height,
