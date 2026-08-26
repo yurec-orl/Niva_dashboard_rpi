@@ -799,7 +799,7 @@ mod tests {
     }
 
     #[test]
-    fn test_persisted_prior_loaded_as_persisted_prior_not_gps_corrected() {
+    fn test_persisted_prior_switched_to_dead_reckoning() {
         let dir = std::env::temp_dir().join(format!("niva_heading_test_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("heading.json");
@@ -821,7 +821,7 @@ mod tests {
         }
         let HeadingFusionOutput { heading, confidence, .. } = sensor.tick();
         assert!((heading.as_f32() - 123.0).abs() < 0.5);
-        assert_eq!(confidence.as_f32() as i32, HeadingConfidence::PersistedPrior.code());
+        assert_eq!(confidence.as_f32() as i32, HeadingConfidence::DeadReckoning.code());
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -866,7 +866,7 @@ mod tests {
         let HeadingFusionOutput { heading, confidence, .. } = sensor.tick_at(t);
         assert!((heading.as_f32() - 100.0).abs() < 0.5,
                  "expected persisted 100 deg anchored off the settled reading, got {}", heading.as_f32());
-        assert_eq!(confidence.as_f32() as i32, HeadingConfidence::PersistedPrior.code());
+        assert_eq!(confidence.as_f32() as i32, HeadingConfidence::DeadReckoning.code());
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -962,7 +962,7 @@ mod tests {
             sensor.tick();
         }
         let output = sensor.tick();
-        assert_eq!(output.confidence.as_f32() as i32, HeadingConfidence::PersistedPrior.code());
+        assert_eq!(output.confidence.as_f32() as i32, HeadingConfidence::DeadReckoning.code());
         assert!((output.accuracy.as_f32() - 0.0).abs() < 0.01,
                  "no persisted accuracy on disk should default to 0.0, not stay unknown, got {}",
                  output.accuracy.as_f32());
@@ -996,7 +996,7 @@ mod tests {
             sensor.tick_at(t);
         }
         let anchored = sensor.tick_at(t);
-        assert_eq!(anchored.confidence.as_f32() as i32, HeadingConfidence::PersistedPrior.code());
+        assert_eq!(anchored.confidence.as_f32() as i32, HeadingConfidence::DeadReckoning.code());
         assert!((anchored.accuracy.as_f32() - 2.0).abs() < 0.01,
                  "expected the persisted accuracy (2.0) to be applied on load, got {}", anchored.accuracy.as_f32());
 
@@ -1005,7 +1005,7 @@ mod tests {
         bno_frame.set_game_heading_for_test(133.0);
         t += Duration::from_secs(60);
         let output = sensor.tick_at(t);
-        assert_eq!(output.confidence.as_f32() as i32, HeadingConfidence::PersistedPrior.code());
+        assert_eq!(output.confidence.as_f32() as i32, HeadingConfidence::DeadReckoning.code());
         let expected = 2.0 + INERTIAL_DRIFT_DEG_PER_MIN;
         assert!((output.accuracy.as_f32() - expected).abs() < 0.05,
                  "expected accuracy ~{} deg after 1 min dead reckoning from a persisted prior, got {}",
