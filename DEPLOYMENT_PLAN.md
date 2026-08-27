@@ -15,9 +15,9 @@ Surveyed directly on this Pi on 2026-07-29:
 
 | #  | Item                                            | Where it lives now                                                               | In repo? | Scripted? |
 |----|-------------------------------------------------|----------------------------------------------------------------------------------|----------|-----------|
-| 1  | Dashboard autostart + crash-restart loop        | `~/.profile` (lines 30-60)                                                       | No       | No        |
-| 2  | TTY1 autologin override                         | `/etc/systemd/system/getty@tty1.service.d/autologin.conf`                        | No       | No        |
-| 3  | `install-service.sh` + `niva-dashboard.service` | `niva_dashboard/install-service.sh`                                              | Script yes, unit file **missing** | Broken |
+| 1  | Dashboard autostart + crash-restart loop        | `niva-dashboard.service` (systemd unit) running `niva_dashboard/niva-dashboard-run.sh` | Yes      | Yes       |
+| 2  | TTY1 autologin override                         | `/etc/systemd/system/getty@tty1.service.d/autologin.conf` -- kept as an idle login shell for local debugging; the service doesn't need TTY1 ownership, see decision below | No       | No        |
+| 3  | `install-service.sh` + `niva-dashboard.service` | `niva_dashboard/install-service.sh` + `niva_dashboard/niva-dashboard.service`    | Yes      | Yes       |
 | 4  | ADC udev rule                                   | `/etc/udev/rules.d/99-niva-adc.rules`                                            | No       | No        |
 | 5  | GPS udev rule                                   | `/etc/udev/rules.d/99-niva-gps.rules`                                            | No       | No        |
 | 6  | uhubctl sudoers entry                           | `/etc/sudoers.d/niva-uhubctl`                                                    | No       | No        |
@@ -32,12 +32,9 @@ Surveyed directly on this Pi on 2026-07-29:
 Two more things worth flagging that fell out of this survey rather than being
 part of the original ask:
 
-- **Item 3 is actively misleading.** `install-service.sh` copies a
-  `niva-dashboard.service` file that doesn't exist anywhere in the repo or
-  its git history, and this Pi isn't running the dashboard via systemd at
-  all — it's running via the `.profile` autologin loop (item 1). Anyone who
-  runs `install-service.sh` today gets a hard failure. This needs to be
-  either finished or removed, not left as-is.
+- **Item 3 is resolved** (2026-08-27) — see "Decision: autostart mechanism"
+  below. `install-service.sh` now installs a real `niva-dashboard.service`
+  and the dashboard runs under systemd on this Pi.
 - **Item 4's udev rule pins one specific STM32 unit's serial number**
   (`ATTRS{serial}=="8D8E416F4957"`), which CLAUDE.md's ADC section doesn't
   mention (it only calls out that the *GPS* rule can't match on serial).
@@ -106,7 +103,8 @@ deploy/
 ├── 03-udev-rules.sh                        # installs udev/*.rules, runs udevadm control --reload-rules
 ├── 04-sudoers.sh                           # installs sudoers/niva-uhubctl at mode 0440
 ├── 05-earlyoom.sh                          # installs earlyoom/earlyoom.default, restarts the service
-├── 06-autostart.sh                         # installs systemd/autologin.conf + profile.d snippet (incl. sudo plymouth quit line)
+├── 06-autostart.sh                         # installs systemd/autologin.conf (TTY1 idle debug shell) + niva-dashboard.service
+│                                            #   + niva-dashboard-run.sh (wraps install-service.sh's steps)
 ├── 07-splash-screen.sh                     # apt install plymouth plymouth-themes; installs plymouth/ theme + plymouthd.conf;
 │                                            #   appends splash + plymouth.ignore-serial-consoles to cmdline.txt; masks
 │                                            #   plymouth-quit-wait/plymouth-quit; installs systemd/no-tty-reset.conf;
@@ -121,15 +119,15 @@ deploy/
 │   └── earlyoom.default
 ├── systemd/
 │   ├── autologin.conf
-│   └── no-tty-reset.conf                   # getty@tty1.service.d drop-in: TTYReset=no
-├── plymouth/
-│   ├── plymouthd.conf                      # Theme=niva, Renderer=drm
-│   └── themes/niva/
-│       ├── niva.plymouth
-│       ├── niva.script
-│       └── splash.png
-└── profile.d/
-    └── niva-dashboard-autostart.sh
+│   ├── no-tty-reset.conf                   # getty@tty1.service.d drop-in: TTYReset=no
+│   ├── niva-dashboard.service
+│   └── niva-dashboard-run.sh
+└── plymouth/
+    ├── plymouthd.conf                      # Theme=niva, Renderer=drm
+    └── themes/niva/
+        ├── niva.plymouth
+        ├── niva.script
+        └── splash.png
 ```
 
 Each numbered script should be safe to re-run (check-before-write, not
@@ -142,29 +140,69 @@ Boot-time doc: fold `/home/user/boot-optimizations.md`'s content into
 companion `deploy/BOOT_OPTIMIZATIONS.md` (as the rationale/measurements doc,
 moved into the repo).
 
-## Decision needed: autostart mechanism
+## Decision: autostart mechanism (resolved 2026-08-27)
 
-Two competing mechanisms exist right now, and the plan shouldn't paper over
-the conflict:
+Two competing mechanisms existed:
 
-- **What's actually running**: getty@tty1 autologin → `.profile` loop, with
-  specific behavior already load-bearing elsewhere — exit code 0 means
-  "quit intentionally, drop to shell", exit code 42 means "rebuilt on disk,
-  relaunch without counting it as a crash", anything else counts toward a
-  5-strike crash limit. CLAUDE.md's earlyoom section already assumes this
-  exact restart-on-crash behavior.
-- **What's half-built and unused**: `install-service.sh` +
-  `niva-dashboard.service` (missing).
+- getty@tty1 autologin → `.profile` loop, with specific behavior already
+  load-bearing elsewhere — exit code 0 means "quit intentionally, drop to
+  shell", exit code 42 means "rebuilt on disk, relaunch without counting it
+  as a crash", anything else counts toward a 5-strike crash limit.
+  CLAUDE.md's earlyoom section already assumes this exact restart-on-crash
+  behavior.
+- `install-service.sh` + `niva-dashboard.service` (unit file missing,
+  broken).
 
-Recommendation: **keep the `.profile`-based mechanism** — it already encodes
-real, tested behavior (the exit-42 rebuild signal in particular) — but move
-it into a repo-tracked script installed via `deploy/06-autostart.sh` instead
-of a hand-edited dotfile. Delete or finish `install-service.sh` as a
-follow-up; don't leave a broken script that looks authoritative. A systemd
-unit would gain `journalctl` integration and `Restart=on-failure`, but
-reproducing the exit-42 "rebuilt, not a crash" distinction under systemd
-needs an `ExecStopPost` wrapper or similar — worth doing later, not blocking
-this plan.
+This plan originally recommended keeping `.profile` and treating the
+systemd path as a later nice-to-have (journalctl integration,
+`Restart=on-failure`). That turned out to be load-bearing sooner than
+expected: investigating why `HeadingFusionSensor`'s persist-on-`Drop`
+wasn't saving on a diag-page-triggered reboot (but did save on a plain
+dashboard restart) traced back to exactly this. Under the `.profile`
+mechanism the dashboard is just an ordinary process launched from a login
+shell, not a systemd unit — on `reboot`/`poweroff` it isn't covered by any
+unit's ordered stop (SIGTERM + `TimeoutStopSec` grace period); it's only
+caught by the terse, fixed-timeout sweep systemd uses for whatever's still
+running at the very end of shutdown. A `UIEvent::Restart`-issued `sudo
+reboot` races the app's own graceful exit against that sweep's SIGKILL, and
+frequently lost — confirmed live by adding a log line to the SIGTERM
+handler: it fired, but nothing logged after it, consistent with SIGKILL
+arriving before the next event-loop tick.
+
+**Decision: switch to `niva-dashboard.service`.** As a real unit, the
+dashboard now gets a proper ordered stop (SIGTERM, `TimeoutStopSec=15`)
+on every path — `systemctl stop/restart`, and reboot/poweroff — with no
+per-exit-path cleanup code needed in the Rust side. The exit-42 "rebuilt,
+not a crash" distinction is preserved by keeping the *exact* restart-loop
+logic from `.profile`, moved verbatim into `niva_dashboard/niva-dashboard-run.sh`
+(git-tracked, executable), which is the unit's `ExecStart`. The wrapper
+script owns exit-code interpretation and always exits 0 itself; systemd's
+`Restart=on-failure` is purely a backstop for the script/binary dying in a
+way that skips that logic entirely (e.g. OOM-kill), not the primary retry
+mechanism.
+
+Verified on this Pi: `sudo systemctl stop niva-dashboard` drives the same
+SIGTERM path a reboot now takes, and the full graceful-exit-to-persisted-
+heading cycle completes in ~240ms — comfortably inside the 15s window.
+
+Two things this did *not* need, contrary to an earlier assumption baked
+into the old (broken) `install-service.sh`:
+- **Disabling getty@tty1.** DRM (`/dev/dri/card*`), GPIO, I2C, and the
+  ADC/GPS serial devices are all accessible via `user`'s static group
+  membership (`video`/`render`/`gpio`/`i2c`/`dialout`) — there's no
+  logind/seat-ACL dependency on this Pi's setup, so the dashboard doesn't
+  need to own TTY1 to open them. getty@tty1's autologin is left running
+  unchanged, now just an idle debugging shell — `.profile` no longer
+  launches anything from it.
+- **`PAMName=`/`TTYPath=` on the unit.** Same reasoning — no seat session
+  needed. DRM master handoff still works the same way it already did
+  (Plymouth releases it via `plymouth quit --retain-splash`, now called
+  from the top of `niva-dashboard-run.sh` instead of `.profile`; the
+  dashboard acquires it once Plymouth lets go).
+
+`install-service.sh` no longer disables getty@tty1 (that step is gone) and
+now installs a real unit file instead of failing on a missing one. `deploy/`
+item 3's "Broken" status above is resolved as a side effect.
 
 ## Fixing the hardcoded install paths
 
@@ -193,9 +231,11 @@ anywhere other than this exact developer clone path.
    state to confirm it's a no-op.
 3. **Fix the hardcoded paths** per above, so the binary isn't tied to one
    clone location.
-4. **Resolve the install-service.sh / autostart conflict** per the decision
-   above — track the real mechanism in `deploy/`, remove or finish the dead
-   systemd path.
+4. **~~Resolve the install-service.sh / autostart conflict~~ — done.** systemd
+   was chosen (see decision above) and is running on this Pi directly via
+   `niva_dashboard/install-service.sh`. Still outstanding: fold
+   `niva-dashboard.service`/`niva-dashboard-run.sh` into the `deploy/` tree
+   alongside the rest of item 1-13's captured files, once that tree exists.
 5. **Validate end-to-end on a second SD card** — flash stock PiOS, clone the
    repo, run `deploy/install.sh`, reboot, confirm the dashboard comes up with
    no manual steps beyond flashing and cloning. This is the real test; steps

@@ -375,7 +375,7 @@ impl HeadingFusionSensor {
             let _ = std::fs::create_dir_all(parent);
         }
         match std::fs::write(&self.persist_path, json) {
-            Ok(()) => self.last_persisted_deg = Some(heading_deg),
+            Ok(()) => {self.last_persisted_deg = Some(heading_deg); log::info!("Heading fusion: persisted heading to {:?}", self.persist_path); },
             Err(e) => log::warn!("Heading fusion: failed to persist heading: {}", e),
         }
     }

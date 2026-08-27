@@ -1,0 +1,27 @@
+[Unit]
+Description=Niva Dashboard
+After=multi-user.target
+
+[Service]
+Type=simple
+User=user
+Group=user
+WorkingDirectory=/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/niva_dashboard
+ExecStart=/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/niva_dashboard/niva-dashboard-run.sh
+# The run script owns exit-code interpretation (0 = deliberate quit, 42 = rebuild/SIGUSR1
+# relaunch, other = crash-retry up to 5x) and always exits 0 itself -- this is only a
+# backstop for the script/binary dying in a way that skips that logic entirely.
+Restart=on-failure
+RestartSec=5
+# KillMode=control-group (default) sends SIGTERM to the whole cgroup -- both this script
+# and the dashboard binary it's currently running -- so the binary gets the signal
+# directly and independently of the wrapper script's own fate. TimeoutStopSec is how long
+# systemd waits for the cgroup to empty before escalating to SIGKILL; this is the grace
+# window HeadingFusionSensor's persist-on-Drop (and any other exit-path cleanup) depends
+# on, on both `systemctl stop/restart` and a full reboot/poweroff.
+TimeoutStopSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

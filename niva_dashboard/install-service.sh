@@ -7,10 +7,15 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SERVICE_SRC="$SCRIPT_DIR/niva-dashboard.service"
 SERVICE_DST="/etc/systemd/system/niva-dashboard.service"
+RUN_SCRIPT="$SCRIPT_DIR/niva-dashboard-run.sh"
 
-# The dashboard takes exclusive ownership of TTY1; the login prompt must be removed.
-echo "Disabling getty on TTY1..."
-sudo systemctl disable --now getty@tty1.service 2>/dev/null || true
+# getty@tty1 is left running (autologin, unchanged) -- the dashboard doesn't need TTY1
+# ownership. DRM/GPIO/I2C/serial access comes from `user`'s group membership
+# (video/render/gpio/i2c/dialout), not from an active login session on that seat, so the
+# service and an idle tty1 shell coexist fine; whichever process actually calls
+# drmModeSetCrtc (Plymouth, then the dashboard once Plymouth releases it) owns the
+# display, independent of tty ownership.
+chmod +x "$RUN_SCRIPT"
 
 sudo cp "$SERVICE_SRC" "$SERVICE_DST"
 sudo systemctl daemon-reload
