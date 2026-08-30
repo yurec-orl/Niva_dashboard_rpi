@@ -25,8 +25,11 @@ impl Watchdog {
     /// `alert_display_timeout`/`alert_remove_timeout` are passed through unchanged to
     /// the `Alert` this watchdog eventually produces — see their accessor docs below
     /// for exact meaning.
-    pub fn new(hw_input: HWInput, alert_message: String, severity: Severity,
-               alert_display_timeout: Option<std::time::Duration>, alert_remove_timeout: Option<std::time::Duration>,
+    pub fn new(hw_input: HWInput,
+               alert_message: String,
+               severity: Severity,
+               alert_display_timeout: Option<std::time::Duration>,
+               alert_remove_timeout: Option<std::time::Duration>,
                trigger_duration: Option<std::time::Duration>) -> Self {
         Self { hw_input, alert_message, severity, alert_display_timeout,
                alert_remove_timeout, trigger_start_time: None, trigger_duration }
