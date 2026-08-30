@@ -287,9 +287,12 @@ for BSS138 board wiring details.
 
 ---
 
-## Reserved: DS18B20 one-wire temp sensor bus (planned, not yet implemented)
+## DS18B20 one-wire temp sensor bus (design finalized, firmware pending)
 
-PA10 is reserved for a future DS18B20 one-wire temperature sensor bus. No firmware
+PA10 carries the DS18B20 one-wire temperature sensor bus — additional to the analog
+coolant sensor on PA2, not a replacement. Protocol and firmware design are settled in
+`ONEWIRE_TEMP_SENSOR_DESIGN.md` (STM32 discovers sensors and reports raw readings tagged
+by ROM address on a `$T,...` line; up to 10 sensors; DS18B20 family only). No firmware
 support exists yet — pin is currently unused.
 
 DS18B20 operates at 3.0–5.5V, so it can be powered directly from the STM32's 3.3V rail

@@ -16,7 +16,7 @@ Goal: a dedicated, on-demand burst-capture mode — the STM32 pauses its normal 
 - Mechanism: hardware timer (TIM3 — free, same pattern as TIM2's existing 50 Hz tick) triggers the ADC via DMA into a RAM buffer with no per-sample CPU involvement. STM32F103's ADC is rated well past 50 kSPS single-channel, so this is comfortably within spec.
 
 ### Command/response protocol
-- **Pi → STM32:** a command line down the existing USB-CDC serial link, e.g. `$OSCCAP\n`. Capture parameters (channel, rate, sample count) are compiled-in `#define`s rather than passed as arguments — matches how `TICK_HZ`/`ADC_OVERSAMPLE` are already fixed constants, and there's no need for a runtime-configurable capture for a single "check the alternator" action. Kept visually distinct from `$A0,A1,...` telemetry frames and from the `#B,<value>` brightness command proposed in `BUTTON_BACKLIGHT_DESIGN.md`, so all three can't be confused by the parser.
+- **Pi → STM32:** a command line down the existing USB-CDC serial link, e.g. `$OSCCAP\n`. Capture parameters (channel, rate, sample count) are compiled-in `#define`s rather than passed as arguments — matches how `TICK_HZ`/`ADC_OVERSAMPLE` are already fixed constants, and there's no need for a runtime-configurable capture for a single "check the alternator" action. Kept visually distinct from `$A0,A1,...` telemetry frames so the two can't be confused by the parser.
 - **STM32, on receiving `$OSCCAP`:**
   1. Stop the normal tick-driven 50 Hz telemetry send.
   2. Run the DMA capture (blocking, ~82 ms). EXTI-driven tacho/speed counters are unaffected (interrupt-based, independent of `loop()`). K-Line RX draining and button-debounce polling pause for that window — acceptable for a manual, user-initiated capture.
@@ -29,18 +29,18 @@ Goal: a dedicated, on-demand burst-capture mode — the STM32 pauses its normal 
 
 ### Pi-side handling
 - `ADCDataProvider`'s read loop (`adc_data_provider.rs`) currently assumes every line is a telemetry frame. It needs a branch: lines prefixed `$OSCD`/`$OSCEND` route into a new capture-buffer type (e.g. `OscBuffer`, `Arc<Mutex<Vec<u16>>>` alongside the existing `ADCFrame`) instead of overwriting the regular channel frame.
-- Needs the same outbound-write capability described in `BUTTON_BACKLIGHT_DESIGN.md` (retaining a `try_clone()`'d write handle in `ADCSerialReader`, since today it's read-only) — the capture command and the brightness command would share that same new write path.
+- Needs an outbound-write path on the serial link: retain a `try_clone()`'d write handle in `ADCSerialReader`, which today is read-only. This is net-new — the STM32 link has no outbound protocol otherwise.
 - `osc_page.rs`'s `is_running` field becomes "capture in flight" rather than "streaming." A capture is user-triggered (button press → send `$OSCCAP` → wait for `$OSCEND` → render), not continuous.
 - The existing `trigger_level` field becomes a **software** trigger applied post-capture: scan the completed buffer for the first rising edge crossing that level and offset the displayed window there, so repeated captures line up visually instead of jittering frame to frame. No hardware triggering needed since the whole window is already captured before any analysis happens.
 
 ## Firmware changes needed (`stm32_adc_module/Niva_Dashboard_ADC_Module/src/main.cpp`)
 1. Configure TIM3 + DMA for single-channel ADC capture on PA3 at ~50 kSPS into a 4096-sample buffer.
-2. Add `$OSCCAP` command parsing (shares the incoming-serial read loop already proposed for the brightness command in `BUTTON_BACKLIGHT_DESIGN.md`).
+2. Add `$OSCCAP` command parsing on an incoming-serial read loop in `loop()`.
 3. Add the pause/resume around the normal 50 Hz tick send during a capture.
 4. Add the chunked `$OSCD`/`$OSCEND` transmission path.
 
 ## Rust app changes needed
-1. Outbound write path on `ADCSerialReader` (shared prerequisite with the backlight design — see `BUTTON_BACKLIGHT_DESIGN.md`).
+1. Outbound write path on `ADCSerialReader` (net-new — the link is read-only today).
 2. `$OSCD`/`$OSCEND` parsing branch in `ADCDataProvider::run_loop`, feeding a new `OscBuffer` type.
 3. `osc_page.rs`: replace the streaming-UI assumption with capture-triggered request/wait/render; add post-capture software trigger-edge search using the existing `trigger_level` field; render the waveform (currently a `// TODO: Render actual oscilloscope waveform` stub).
 
