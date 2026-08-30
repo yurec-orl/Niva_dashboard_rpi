@@ -96,6 +96,8 @@ pub enum HWInput {
     HwHeadingAccuracy,
     // Elapsed time in dead reckoning mode, in seconds
     HwDeadReckoningElapsed,
+    // Fake input for test alert
+    HwTestAlertInput,
 }
 
 impl HWInput {
@@ -454,6 +456,7 @@ impl GpioRead for TestGpioInput {
 pub struct TestDigitalDataProvider {
     input: HWInput,
     start_time: Instant,
+    timeout: Duration,
 }
 
 impl TestDigitalDataProvider {
@@ -461,7 +464,12 @@ impl TestDigitalDataProvider {
         TestDigitalDataProvider {
             input,
             start_time: Instant::now(),
+            timeout: Duration::from_secs(4),
         }
+    }
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
     }
 }
 
@@ -472,9 +480,9 @@ impl HWDigitalProvider for TestDigitalDataProvider {
 
     fn read_digital(&self, _input: HWInput) -> Result<Level, String> {
         let elapsed = self.start_time.elapsed();
-        let active_duration = Duration::from_secs(4);
+        let active_duration = self.timeout;
         
-        // Return active level for first 4 seconds, then inactive level
+        // Return active level for first <duration> seconds, then inactive level
         if elapsed < active_duration {
             Ok(Level::High)
         } else {

@@ -627,11 +627,27 @@ impl PageManager {
             .unwrap_or(MAIN_PAGE_ID);
         self.switch_page(start_page_id)?;
 
-        // Set up watchdogs for alert manager.
-        // Display timeout: how long alert is displayed on screen before automatically hidden. None means displayed until manually suppressed.
-        // Remove timeout: how long alert stays in queue after is was suppressed and is no longer visible. Suppressed alerts, which are not removed from queue,
-        // prevent alerts of the same type from triggering. Used to prevent alerts flooding. None means no timeout -> removed immediately.
-        // Trigger duration: how long a condition has to persist to trigger an alert.
+        let test_alert_watchdog = Watchdog::new(
+            HWInput::HwTestAlertInput,
+            "СМОТРИ ЭКРАН".to_string(),
+            Severity::Warning,
+            Some(std::time::Duration::from_secs(3)),        // Display for 3 s
+            Some(Duration::MAX),                            // Do not display again
+            None,                                           // Display immediately
+        );
+
+        self.alert_manager.add_watchdog(test_alert_watchdog);   // The only alert active during self-test
+        self.alert_manager.set_enabled(true);
+
+        Ok(())
+    }
+
+    // Set up watchdogs for alert manager.
+    // Display timeout: how long alert is displayed on screen before automatically hidden. None means displayed until manually suppressed.
+    // Remove timeout: how long alert stays in queue after is was suppressed and is no longer visible. Suppressed alerts, which are not removed from queue,
+    // prevent alerts of the same type from triggering. Used to prevent alerts flooding. None means no timeout -> removed immediately.
+    // Trigger duration: how long a condition has to persist to trigger an alert.
+    fn setup_alerts(&mut self) {
         let engine_temp_watchdog = Watchdog::new(
             HWInput::HwEngineCoolantTemp,
             "ТЕМПЕРАТУРА ДВИГАТЕЛЯ".to_string(),
@@ -675,7 +691,7 @@ impl PageManager {
             Severity::Warning,
             Some(std::time::Duration::from_secs(30)),       // Display for 30 s
             Some(std::time::Duration::from_secs(60)),       // Wait 60 s before displaying again
-            Some(std::time::Duration::from_secs(10)),       // Ignore brief transients
+            Some(std::time::Duration::from_secs(5)),       // Ignore brief transients
         );
         // 2 stages: warning on 25% charge and critical on 15% charge (controlled by sensor value constraints).
         let ups_low_charge_watchdog = Watchdog::new(
@@ -702,8 +718,6 @@ impl PageManager {
         self.alert_manager.add_watchdog(ups_on_battery_watchdog);
         self.alert_manager.add_watchdog(ups_low_charge_watchdog);
         self.alert_manager.add_watchdog(ups_crit_charge_watchdog);
-
-        Ok(())
     }
 
     // Do first-time initialization and start main loop.
@@ -950,7 +964,7 @@ impl PageManager {
                 }
                 // Self-test sweep has finished handing off to real sensors — safe to start
                 // raising alerts now that watchdogs read live hardware, not the synthetic sweep.
-                self.alert_manager.set_enabled(true);
+                self.setup_alerts();
             }
             UIEvent::NavHeadingIncrease => {
                 self.adjust_manual_heading(1.0);

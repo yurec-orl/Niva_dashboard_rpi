@@ -35,6 +35,7 @@ use crate::hardware::gpio_input::{GpioInput, GpioInputConfig, GpioOutput};
 use rppal::gpio::{Level, Bias};
 use std::env;
 use std::thread;
+use std::time::Duration;
 
 fn setup_context() -> GraphicsContext {
     let context = GraphicsContext::new_dashboard("Niva Dashboard").expect("Failed to create graphics context");
@@ -61,6 +62,15 @@ fn setup_self_test_sensors() -> (SensorManager, TestADCDataProvider) {
     let mut mgr = SensorManager::new();
     let test_adc = TestADCDataProvider::start();
     add_adc_sensor_chains(&mut mgr, test_adc.frame());
+
+    // Test sensor chain for the `СМОТРИ ЭКРАН` alert.
+    let test_alert_link_chain = SensorDigitalInputChain::new(
+        Box::new(TestDigitalDataProvider::new(HWInput::HwTestAlertInput).with_timeout(Duration::from_secs(30))),
+        vec![],
+        Box::new(GenericDigitalSensor::new("HwTestAlertInput".to_string(), "TEST ALERT".to_string(),
+                                           Level::High, ValueConstraints::digital_warning())),
+    );
+    mgr.add_digital_sensor_chain(test_alert_link_chain);
 
     log::info!("✓ Self-test sensor manager initialized (synthetic ADC sweep)");
 
