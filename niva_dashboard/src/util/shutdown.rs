@@ -57,8 +57,10 @@ pub fn config_updated() -> bool {
 ///
 /// Binary: inode comparison, since a rebuild replaces the file via an atomic rename.
 /// Config: mtime comparison, since a text editor saving over it commonly keeps the same
-/// inode. The config loader's own fail-fast error is what surfaces a missing config file,
-/// not this -- a missing `path` here just means that half of the watch never arms.
+/// inode. `original_mtime` being `None` (config file absent at startup) is itself a
+/// tracked state: if the file later appears, `current_mtime` goes `Some` and that counts
+/// as a change too, so the config-error fallback loop in `main` can recover from a
+/// missing file, not just a malformed one.
 pub fn watch_for_updates(config_path: std::path::PathBuf) {
     let exe_path = std::env::current_exe().ok();
     let original_ino = exe_path.as_ref()
@@ -77,12 +79,10 @@ pub fn watch_for_updates(config_path: std::path::PathBuf) {
             }
         }
 
-        if let Some(original_mtime) = original_mtime {
-            let current_mtime = std::fs::metadata(&config_path).and_then(|m| m.modified()).ok();
-            if current_mtime != Some(original_mtime) {
-                CONFIG_UPDATED.store(true, Ordering::SeqCst);
-                break;
-            }
+        let current_mtime = std::fs::metadata(&config_path).and_then(|m| m.modified()).ok();
+        if current_mtime != original_mtime {
+            CONFIG_UPDATED.store(true, Ordering::SeqCst);
+            break;
         }
     });
 }

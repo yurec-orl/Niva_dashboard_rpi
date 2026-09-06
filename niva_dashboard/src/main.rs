@@ -58,10 +58,10 @@ fn setup_context() -> GraphicsContext {
 //
 // Caller must keep the returned TestADCDataProvider alive for the sweep to animate —
 // dropping it stops the synthetic writer thread.
-fn setup_self_test_sensors() -> (SensorManager, TestADCDataProvider) {
+fn setup_self_test_sensors() -> Result<(SensorManager, TestADCDataProvider), String> {
     let mut mgr = SensorManager::new();
     let test_adc = TestADCDataProvider::start();
-    add_adc_sensor_chains(&mut mgr, test_adc.frame(), test_adc.temp_frame());
+    add_adc_sensor_chains(&mut mgr, test_adc.frame(), test_adc.temp_frame())?;
 
     // Test sensor chain for the `СМОТРИ ЭКРАН` alert.
     let test_alert_link_chain = SensorDigitalInputChain::new(
@@ -74,10 +74,10 @@ fn setup_self_test_sensors() -> (SensorManager, TestADCDataProvider) {
 
     log::info!("✓ Self-test sensor manager initialized (synthetic ADC sweep)");
 
-    (mgr, test_adc)
+    Ok((mgr, test_adc))
 }
 
-fn setup_sensors(adc: Option<ADCFrame>, adc_temp: Option<AdcTempFrame>, ups: Option<UpsRawFrame>, gnss: Option<GnssFrame>, bno: Option<Bno085Frame>) -> (SensorManager, Option<heading_fusion_sensor::HeadingFusionSensor>) {
+fn setup_sensors(adc: Option<ADCFrame>, adc_temp: Option<AdcTempFrame>, ups: Option<UpsRawFrame>, gnss: Option<GnssFrame>, bno: Option<Bno085Frame>) -> Result<(SensorManager, Option<heading_fusion_sensor::HeadingFusionSensor>), String> {
     let mut mgr = SensorManager::new();
     // Cloned before the GNSS scalar-chain block below consumes `gnss` -- needed again for the
     // heading fusion chain further down.
@@ -233,15 +233,15 @@ fn setup_sensors(adc: Option<ADCFrame>, adc_temp: Option<AdcTempFrame>, ups: Opt
 
     let Some(frame) = adc else {
         log::info!("ADC unavailable — real sensor set will be empty");
-        return (mgr, heading_fusion);
+        return Ok((mgr, heading_fusion));
     };
 
     // adc_temp comes from the same ADCDataProvider as `frame`, so it is Some whenever `frame`
     // is; fall back to a detached frame rather than unwrap so a future caller can't panic here.
-    add_adc_sensor_chains(&mut mgr, frame, adc_temp.unwrap_or_default());
+    add_adc_sensor_chains(&mut mgr, frame, adc_temp.unwrap_or_default())?;
     log::info!("✓ Sensor manager initialized with ADC sensor chains");
 
-    (mgr, heading_fusion)
+    Ok((mgr, heading_fusion))
 }
 
 // STM32 frame layout (after stripping '$'):
@@ -254,15 +254,15 @@ fn setup_sensors(adc: Option<ADCFrame>, adc_temp: Option<AdcTempFrame>, ups: Opt
 // Shared by setup_sensors (real, serial-fed ADCFrame) and setup_self_test_sensors
 // (TestADCDataProvider's synthetic ADCFrame) — self-test exercises this exact wiring
 // instead of a hand-duplicated copy, so the two can't silently drift apart.
-fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame, temp_frame: AdcTempFrame) {
+fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame, temp_frame: AdcTempFrame) -> Result<(), String> {
     // Generic digital/analog chains (brake fluid, charge, diff lock, ext lights, fuel
     // level/low, high beam, instrument illumination, oil pressure/low, park brake, turn
     // signal, 12V) plus the one-wire DS18B20 temperature chains (provider "adc_temp", see
     // ONEWIRE_TEMP_SENSOR_RUST_DESIGN.md) are data-driven — see hardware::sensor_config and
-    // DATA_DRIVEN_SENSOR_CONFIG_DESIGN.md. Fail-fast: a bad config entry here is treated
-    // like a build-time mistake, not a runtime hardware absence.
+    // DATA_DRIVEN_SENSOR_CONFIG_DESIGN.md. A bad config file is surfaced to the caller (and
+    // ultimately shown on screen by main's fallback loop), not panicked on.
     hardware::sensor_config::load_chains(&hardware::sensor_config::default_path(), "sensor", frame.clone(), Some(temp_frame), mgr)
-        .expect("Failed to load sensor_config.json");
+        .map_err(|e| format!("sensor_config.json: {}", e))?;
 
     // ---- Chains with real conversion math, out of scope for config (see design doc) ----
 
@@ -286,6 +286,8 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame, temp_frame: A
         Box::new(TachoSensor::new()),
     );
     mgr.add_analog_sensor_chain(tacho_chain);
+
+    Ok(())
 }
 
 // Physical MFD buttons (B0..B7), read from the same STM32 ADC frame as the sensors
@@ -293,7 +295,7 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame, temp_frame: A
 // from setup_sensors' self-test/functional swap, so buttons work from the very first frame.
 // No debouncer — the STM32 already debounces buttons over 8 samples at 50Hz before
 // setting B0..B7; can add one here later if that turns out to be insufficient.
-fn setup_button_sensors(adc: Option<ADCFrame>) -> SensorManager {
+fn setup_button_sensors(adc: Option<ADCFrame>) -> Result<SensorManager, String> {
     let mut mgr = SensorManager::new();
     // Lets adc_link_down() suppress "channel not in frame" log spam while the ADC
     // reconnect loop is doing its thing (see AdcDataProvider).
@@ -301,17 +303,17 @@ fn setup_button_sensors(adc: Option<ADCFrame>) -> SensorManager {
 
     let Some(frame) = adc else {
         log::info!("ADC unavailable — physical buttons will not respond");
-        return mgr;
+        return Ok(mgr);
     };
 
     // Data-driven — see hardware::sensor_config and DATA_DRIVEN_SENSOR_CONFIG_DESIGN.md.
     // No one-wire temperature entries in the "button" group, so no temp frame needed.
     hardware::sensor_config::load_chains(&hardware::sensor_config::default_path(), "button", frame, None, &mut mgr)
-        .expect("Failed to load sensor_config.json");
+        .map_err(|e| format!("sensor_config.json: {}", e))?;
 
     log::info!("✓ Button sensor manager initialized");
 
-    mgr
+    Ok(mgr)
 }
 
 // Builds the input sources for page navigation: physical buttons (backed by the button
@@ -487,16 +489,29 @@ fn main() -> std::process::ExitCode {
     };
     let bno_frame = bno085.as_ref().map(|p| p.frame());
 
-    let context = setup_context();
-    let (self_test_sensors, test_adc_provider) = setup_self_test_sensors();
-    let button_sensors = setup_button_sensors(adc_frame.clone());
-    let input_sources = setup_input_sources(button_sensors);
+    let mut context = setup_context();
     // Keep a handle for the ADC/GNSS diagnostic terminal pages before the sensor-chain
     // setup consumes the rest of their clones.
     let adc_frame_for_diag = adc_frame.clone();
     let gnss_frame_for_diag = gnss_frame.clone();
     let bno_frame_for_diag = bno_frame.clone();
-    let (sensors, heading_fusion) = setup_sensors(adc_frame, adc_temp_frame, ups_frame, gnss_frame, bno_frame);
+
+    // All three of these load sensor_config.json. A malformed or unreadable file used to
+    // panic here (recoverable only by reading the logs); instead, show the error on screen
+    // and idle until watch_for_updates sees the file fixed (or the binary rebuilt) and
+    // triggers a restart.
+    let sensor_setup = (|| -> Result<_, String> {
+        let (self_test_sensors, test_adc_provider) = setup_self_test_sensors()?;
+        let button_sensors = setup_button_sensors(adc_frame.clone())?;
+        let (sensors, heading_fusion) = setup_sensors(adc_frame, adc_temp_frame, ups_frame, gnss_frame, bno_frame)?;
+        Ok((self_test_sensors, test_adc_provider, button_sensors, sensors, heading_fusion))
+    })();
+    let (self_test_sensors, test_adc_provider, button_sensors, sensors, heading_fusion) = match sensor_setup {
+        Ok(v) => v,
+        Err(e) => return config_error_fallback_loop(&mut context, &e),
+    };
+
+    let input_sources = setup_input_sources(button_sensors);
     let ui_style = setup_ui_style();
     // Starts disabled: alerts (e.g. engine temp, oil pressure) must not fire against the
     // synthetic self-test sensor sweep. Enabled once the self-test sequence hands off to
@@ -563,4 +578,122 @@ fn main() -> std::process::ExitCode {
     thread_handle.join().unwrap();
 
     exit_code
+}
+
+// Shown instead of the dashboard when sensor_config.json fails to load. Renders the error
+// and spins until watch_for_updates flags a config edit / binary rebuild / restart request
+// (return RESTART_EXIT_CODE so the launcher relaunches immediately), or a shutdown signal
+// arrives (return SUCCESS, same as a clean quit).
+fn config_error_fallback_loop(context: &mut GraphicsContext, message: &str) -> std::process::ExitCode {
+    let text = format!("Ошибка конфигурации: {}", message);
+    log::error!("{}", text);
+
+    let font = graphics::ui_style::DEFAULT_GLOBAL_FONT_PATH;
+    let font_size: u32 = 24;
+    let line_height = font_size as f32 * 1.6;
+    let lines = wrap_text(&text, 80);
+
+    loop {
+        if crate::util::shutdown::shutdown_requested() {
+            return std::process::ExitCode::SUCCESS;
+        }
+        if crate::util::shutdown::config_updated()
+            || crate::util::shutdown::binary_updated()
+            || crate::util::shutdown::restart_requested()
+        {
+            log::info!("Config error screen: update detected, restarting");
+            return std::process::ExitCode::from(crate::util::shutdown::RESTART_EXIT_CODE);
+        }
+
+        unsafe {
+            gl::Enable(gl::BLEND);
+            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+        }
+
+        context.clear_screen();
+        let block_top = context.height as f32 / 2.0 - (lines.len() as f32 * line_height) / 2.0;
+        for (i, line) in lines.iter().enumerate() {
+            let _ = context.render_text_with_font(
+                line,
+                10.0,
+                block_top + i as f32 * line_height,
+                1.0,
+                (1.0, 1.0, 1.0),
+                font,
+                font_size,
+            );
+        }
+        context.swap_buffers();
+
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+// Greedy word wrap by character count (Unicode scalars, so Cyrillic wraps sanely). Words
+// too long to fit a line on their own — an absolute config-file path being the usual case —
+// are hard-broken into `max_chars`-wide pieces; the pieces after the first carry no leading
+// space so the path isn't rendered with a gap in the middle.
+fn wrap_text(s: &str, max_chars: usize) -> Vec<String> {
+    let max_chars = max_chars.max(1);
+
+    // (piece, space_before): split on whitespace, then chop over-long tokens on char
+    // boundaries so a multi-byte character is never cut.
+    let mut tokens: Vec<(String, bool)> = Vec::new();
+    for word in s.split_whitespace() {
+        if word.chars().count() <= max_chars {
+            tokens.push((word.to_string(), true));
+        } else {
+            let chars: Vec<char> = word.chars().collect();
+            for (i, piece) in chars.chunks(max_chars).enumerate() {
+                tokens.push((piece.iter().collect(), i == 0));
+            }
+        }
+    }
+
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for (token, space_before) in tokens {
+        let sep = if !current.is_empty() && space_before { 1 } else { 0 };
+        if !current.is_empty() && current.chars().count() + sep + token.chars().count() > max_chars {
+            lines.push(std::mem::take(&mut current));
+        }
+        if !current.is_empty() && space_before {
+            current.push(' ');
+        }
+        current.push_str(&token);
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrap_text;
+
+    #[test]
+    fn wraps_on_whitespace_and_keeps_words_intact() {
+        assert_eq!(
+            wrap_text("the quick brown fox jumps", 10),
+            vec!["the quick", "brown fox", "jumps"]
+        );
+    }
+
+    #[test]
+    fn hard_breaks_a_long_unbroken_path_without_inserting_spaces() {
+        let path = "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/niva_dashboard/sensor_config.json";
+        let lines = wrap_text(path, 20);
+        assert!(lines.iter().all(|l| l.chars().count() <= 20));
+        assert_eq!(lines.concat(), path);
+    }
+
+    #[test]
+    fn hard_broken_piece_does_not_glue_to_preceding_word_with_a_space() {
+        let lines = wrap_text("err: aaaaaaaaaaaaaaaaaaaaaaaa", 10);
+        assert_eq!(lines, vec!["err:", "aaaaaaaaaa", "aaaaaaaaaa", "aaaa"]);
+    }
 }
