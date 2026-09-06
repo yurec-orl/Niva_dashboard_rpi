@@ -487,15 +487,6 @@ fn main() -> std::process::ExitCode {
     };
     let bno_frame = bno085.as_ref().map(|p| p.frame());
 
-    // Temporary diagnostic: log raw ADC frame contents once a second to verify
-    // the serial reader thread is actually receiving data from the STM32 module.
-    // if let Some(frame) = adc_frame.clone() {
-    //     thread::spawn(move || loop {
-    //         log::info!("ADC frame: {:?}", frame.get_data());
-    //         thread::sleep(Duration::from_secs(1));
-    //     });
-    // }
-
     let context = setup_context();
     let (self_test_sensors, test_adc_provider) = setup_self_test_sensors();
     let button_sensors = setup_button_sensors(adc_frame.clone());
