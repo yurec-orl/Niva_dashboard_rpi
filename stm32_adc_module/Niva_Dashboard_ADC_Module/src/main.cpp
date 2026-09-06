@@ -27,6 +27,18 @@
 //   STM32 -> Pi: normal telemetry pauses; "$OSCD,<seq>,<v0>,<v1>,...\n" chunks stream the
 //                captured buffer, followed by a "$OSCEND\n" sentinel; telemetry then resumes.
 //
+// One-Wire DS18B20 temperature bus (see ONEWIRE_TEMP_SENSOR_DESIGN.md, ds18b20_bus.cpp):
+//   Autonomous, no command. DS18B20 sensors sharing the PA10 1-Wire bus are discovered
+//   once at startup, then polled continuously. One tagged line per convert->read cycle
+//   (~1 Hz at 10-bit), interleaved between telemetry frames:
+//     "$T,<rom>:<raw>;<rom>:<raw>;...\n"
+//   - <rom>: 16 lowercase hex chars — the 8 ROM bytes (byte 0 = family 0x28) in device
+//            order. The dashboard keys its address->sensor map on this exact string.
+//   - <raw>: signed decimal, the DS18B20 temperature register in units of 1/16 deg C
+//            (its native format). The dashboard computes degC = raw / 16.0.
+//   - A sensor failing scratchpad CRC in a cycle is omitted from that line (no placeholder).
+//   - Zero sensors on the bus still emits "$T\n" each cycle ("bus alive, nothing found").
+//
 // NOTE: All 12V car signals MUST go through appropriate voltage dividers
 //       or level shifters before reaching the 3.3V STM32 pins.
 //       K-Line uses an L9637D adapter (12V↔5V) + BSS138 level shifter (5V↔3.3V).
@@ -80,6 +92,13 @@
 //
 //   Directly connected to 3.3V logic — no level conversion needed.
 //   Buttons short to GND when pressed; internal pull-ups are enabled.
+//
+// === One-Wire Temperature Bus ===
+//
+//   PA10 — DS18B20 1-Wire bus (open-drain), 4.7 kΩ pull-up to 3.3V.
+//          Any number of externally-powered (3-wire) DS18B20 sensors share this pin;
+//          adding/removing a sensor needs no firmware change. See ds18b20_bus.cpp and
+//          ONEWIRE_TEMP_SENSOR_DESIGN.md.
 //
 // === K-Line Interface (OBD-II diagnostics, ISO 9141/14230) ===
 //
@@ -138,7 +157,7 @@
 //   PA7   | Button 7                | GPIO IN PU  | Active-low, 3.3V direct
 //   PA8   | Oil pressure warning    | GPIO IN PU  | Active-low, level shifted
 //   PA9   | Fuel low warning        | GPIO IN PU  | Active-low, level shifted
-//   PA10  | (reserved: DS18B20)     | 1-Wire      | Planned one-wire temp sensor bus, not yet implemented
+//   PA10  | DS18B20 1-Wire bus      | 1-Wire OD    | DS18B20 temp sensors, 4.7k pull-up to 3.3V (ds18b20_bus.cpp)
 //   PA11  | USB D-                  | USB         | To Raspberry Pi
 //   PA12  | USB D+                  | USB         | To Raspberry Pi
 //   PA15  | Diff lock indicator     | GPIO IN PU  | Active-low, level shifted
@@ -174,7 +193,6 @@
 //
 // ============================================================
 // Free pins (available for future expansion):
-//   PA10 — reserved for a planned DS18B20 one-wire temp sensor bus (not yet implemented)
 //   PB2  — free if BOOT1 not needed at runtime (currently tied to GND for normal boot,
 //          so using it as GPIO would require removing that strap)
 // ============================================================
@@ -201,6 +219,8 @@
 
 #include <Arduino.h>
 #include <HardwareTimer.h>
+
+#include "ds18b20_bus.h"
 
 // ============================================================
 // Pin definitions
@@ -580,6 +600,9 @@ void setup() {
     // Serial.begin() hands PA12 to the USB peripheral from here
     Serial.begin(115200);
 
+    // One-Wire DS18B20 temperature bus on PA10 — discovery starts on the first tick
+    ds18b20_setup();
+
     // 50 Hz tick timer — TIM2 (free on Blue Pill, not used by Arduino core)
     HardwareTimer *ticker = new HardwareTimer(TIM2);
     ticker->setOverflow(TICK_HZ, HERTZ_FORMAT);
@@ -740,4 +763,10 @@ void loop() {
         btn_state[4], btn_state[5], btn_state[6], btn_state[7]
     );
     Serial.print(frame);
+
+    // ----------------------------------------------------------
+    // 8. One-Wire DS18B20 bus — one state-machine step per tick. Emits its own
+    //    "$T,..." line (~1 Hz) between telemetry frames. See ds18b20_bus.cpp.
+    // ----------------------------------------------------------
+    ds18b20_tick();
 }

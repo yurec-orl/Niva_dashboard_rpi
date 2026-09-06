@@ -87,12 +87,17 @@ Never wrap a whole transaction in `noInterrupts()` — it would corrupt the tach
 ### Library
 Use Paul Stoffregen's `OneWire` primitives directly (`reset`, `write`, `read`, `search`, `crc8`) and implement the async flow above. `DallasTemperature` is built around blocking `requestTemperatures()` and does not fit the state machine.
 
-## Firmware changes needed
-1. Add `DS18B20_PIN` and the config constants; update the pin-map comments and the "Final Pin Assignment Summary" table (PA10 moves from "reserved/planned" to active use).
-2. Add the device table (`{ uint8_t rom[8]; int16_t raw; bool valid_this_cycle; }` × `MAX_DS18B20`, plus a count), populated once by `OW_SEARCH`.
-3. Add the `OW_*` state machine, ticked from `loop()`.
-4. Add the `$T` line builder + transmit, using bounded `snprintf`.
-5. Update the protocol comment block at the top of `main.cpp` to document the `$T` line alongside the existing `$…` / `$OSCD` / `$OSCEND` descriptions.
+## Firmware changes needed — **[Done]**
+
+Implemented in a dedicated module (`stm32_adc_module/Niva_Dashboard_ADC_Module/src/ds18b20_bus.{h,cpp}`) rather than in `main.cpp`, which only gains the `#include`, a `ds18b20_setup()` call in `setup()`, a `ds18b20_tick()` call per 50 Hz tick in `loop()`, and the comment updates below. `OneWire` added to `platformio.ini` `lib_deps` (`paulstoffregen/OneWire@^2.3.8`). Verified against real sensors: `400` → 25.0 °C (ambient), hand-warmed sensor → ~`500` (31.25 °C); all raw values land on 4-unit steps, confirming the 10-bit resolution write.
+
+1. [Done] `DS18B20_PIN` + config constants (`MAX_DS18B20`, `DS18B20_RES_BITS`, family `0x28`); conversion time and the config-register byte are derived from `DS18B20_RES_BITS`. Pin-map comments and the "Final Pin Assignment Summary" table updated (PA10 now active; removed from the free-pins list); a "One-Wire Temperature Bus" subsection added.
+2. [Done] Device table `{ uint8_t rom[8]; int16_t raw; bool valid_this_cycle; }` × `MAX_DS18B20` + count, populated once by `OW_SEARCH`.
+3. [Done] `OW_SEARCH → OW_CONVERT → OW_WAIT → OW_READ` state machine, one step per `ds18b20_tick()`; `OW_WAIT` timed off `millis()`. On search completion, resolution is written to all devices via SKIP ROM + WRITE SCRATCHPAD (scratchpad RAM only, no EEPROM `COPY SCRATCHPAD`).
+4. [Done] `$T` line builder + transmit via bounded `snprintf` into a file-scope buffer, mirroring `oscilloscope_send_buffer()`. Zero good sensors still emits `$T\n`.
+5. [Done] Protocol comment block at the top of `main.cpp` documents the `$T` line alongside `$…` / `$OSCD` / `$OSCEND`.
+
+Interrupt-interference mitigation: only step 1 (CRC8 + retry-next-cycle) is implemented, as specified. Masking EXTI0/EXTI1 around the scratchpad-read burst (step 2) is left for bench testing to justify.
 
 ## Rust app changes needed
 Deferred — specified separately, alongside `DATA_DRIVEN_SENSOR_CONFIG_DESIGN.md`. In brief, the eventual work is: a `$T`-line parse branch in `ADCDataProvider::run_loop`, a per-address temperature store with per-address staleness on (or beside) `ADCFrame`, an address → logical-sensor map from config, "ignore unknown address" on the main UI, and a `$T` equivalent in `TestADCDataProvider` so self-test exercises the temp indicators.
