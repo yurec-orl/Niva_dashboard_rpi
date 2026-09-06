@@ -323,14 +323,53 @@ linearly interpolates; a raw value past either end clamps to that end's value
 (same spirit as `ValueConstraints` min/max clamping elsewhere) rather than
 extrapolating past datasheet-covered territory.
 
-**Cross-sensor dependency:** unlike every other chain in scope, this sensor's
-`read()` needs a second live input beyond its own raw channel — the current
-`Hw12v` reading, for the compensation step. `SensorManager`/the chain
-abstraction today assumes one hardware input feeds one sensor; this is the
-first calibrated-analog consumer that breaks that assumption and needs
-either a shared handle to the 12V chain's latest value or the 12V raw count
-threaded in as a second argument to `read()`. Needs resolving as part of the
-implementation, not left implicit — see Open questions.
+### Cross-sensor dependency: getting the live 12V reading into read()
+
+Unlike every other chain in scope, this sensor's `read()` needs a second live
+input beyond its own raw channel — the current `Hw12v` reading, for the
+compensation step. `SensorManager`/the chain abstraction assumes one hardware
+input feeds one sensor, so this can't be a trait-signature parameter (would
+force every `AnalogSensor::read()` implementor to accept a value it ignores)
+and can't be a handle back to `SensorManager` (the sensor lives inside a
+chain the manager owns, so a live reference back into `self.sensor_values`
+from inside a sensor `SensorManager::read_all_sensors` is calling `&mut self`
+on isn't something the borrow checker allows).
+
+**Decision: a small shared cell, not a manager handle.**
+
+- `Arc<AtomicU32>`, holding the current 12V reading as bits
+  (`f32::to_bits`/`from_bits`) — `Arc`/atomic rather than `Rc<Cell<_>>`
+  because `Box<dyn AnalogSensor + Send>` already requires the sensor to be
+  `Send`.
+- Created once during chain setup (`main.rs`/`sensor_config.rs`); cloned into
+  the writer and into each `GenericCalibratedAnalogSensor::new(..., v_ref:
+  Arc<AtomicU32>)`.
+- **Writer:** a thin decorator wrapping the `Hw12v` chain's sensor (same
+  pattern as the existing `decorator.rs`), publishing into the `Arc` as a
+  side effect of its own `read()` — not `SensorManager` itself, so the
+  manager and the `AnalogSensor` trait stay untouched.
+- **Ordering:** doesn't matter. Whichever of `Hw12v` or the three calibrated
+  sensors happens to run first within `read_all_sensors`'s `analog_sensors`
+  loop, the calibrated ones see either this tick's or last tick's voltage —
+  at most one tick (~20ms) stale, meaningless against how slowly supply
+  voltage actually moves.
+- **Startup/failure safety:** initialize the `Arc` to the curve's own nominal
+  `v_ref` (12.2V) so ticks before `Hw12v`'s first successful read get a
+  neutral compensation factor of 1.0, not a divide-by-zero. Only write on a
+  *successful* `Hw12v` read, so an ADC link drop leaves the last-known-good
+  voltage in place rather than corrupting every calibrated sensor's reading
+  at once.
+
+**Rejected: stabilizing the OEM supply in hardware.** Would remove the
+software problem entirely, but puts a new component in series with the
+actual stock gauges' power feed — a regression against this project's
+existing passive-tap philosophy (voltage dividers read in parallel, never in
+the gauge's power path; the Master warning light is wired straight to GPIO
+specifically so it still works with no ADC link). A regulator failing open
+would kill all three factory gauges, not just the Pi's copy of the readings
+— software compensation fails soft by comparison. Also doesn't fully remove
+residual error (a regulator has its own tolerance/ripple), unlike the exact
+software relationship derived above.
 
 This also **updates a claim in `DATA_DRIVEN_SENSOR_CONFIG_DESIGN.md`**: that
 doc keeps `EngineTemperatureSensor` and friends hardcoded because "JSON isn't
@@ -411,12 +450,6 @@ rather than a new page:
 
 ## Open questions
 
-- How `GenericCalibratedAnalogSensor::read()` actually gets the live `Hw12v`
-  value for voltage compensation, given the chain/sensor abstraction assumes
-  one hardware input per sensor today — a shared handle to the 12V chain's
-  latest reading, vs. threading it in as an explicit second `read()` argument
-  for this sensor kind only. Needs settling before implementation, not an
-  afterthought.
 - Exact anchor-point procedure per sensor (what's the practical "known true
   value" moment for oil pressure and fuel level, which don't have as easy a
   reference as ambient-temp-at-cold-start) — needs deciding once the car is
