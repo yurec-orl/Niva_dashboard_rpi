@@ -756,6 +756,11 @@ impl PageManager {
                 self.running = false;
                 continue;
             }
+            if crate::util::shutdown::config_updated() {
+                log::info!("Sensor config file changed on disk");
+                self.running = false;
+                continue;
+            }
 
             // Continuous sensor polling - poll sensors every loop iteration
             // This ensures sensor data is always up to date regardless of render timing

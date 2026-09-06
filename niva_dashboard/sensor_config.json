@@ -1,0 +1,305 @@
+[
+  {
+    "group": "sensor",
+    "hw_input": "HwBrakeFluidLvlLow",
+    "provider": "adc",
+    "digital_processors": [
+      { "type": "debounce", "stable_count": 5, "stable_delay_ms": 50 }
+    ],
+    "sensor": {
+      "kind": "generic_digital",
+      "id": "HwBrakeFluidLvlLow",
+      "name": "Brake Fluid Level",
+      "active_level": "high",
+      "constraints": { "digital_preset": "critical" }
+    }
+  },
+  {
+    "group": "sensor",
+    "hw_input": "HwCharge",
+    "provider": "adc",
+    "digital_processors": [
+      { "type": "debounce", "stable_count": 5, "stable_delay_ms": 50 }
+    ],
+    "sensor": {
+      "kind": "generic_digital",
+      "id": "HwCharge",
+      "name": "ЗАРЯД",
+      "active_level": "high",
+      "constraints": { "digital_preset": "critical" }
+    }
+  },
+  {
+    "group": "sensor",
+    "hw_input": "HwDiffLock",
+    "provider": "adc",
+    "digital_processors": [
+      { "type": "debounce", "stable_count": 5, "stable_delay_ms": 50 }
+    ],
+    "sensor": {
+      "kind": "generic_digital",
+      "id": "HwDiffLock",
+      "name": "БЛОК ДИФФ",
+      "active_level": "high",
+      "constraints": { "digital_preset": "warning" }
+    }
+  },
+  {
+    "group": "sensor",
+    "hw_input": "HwExtLights",
+    "provider": "adc",
+    "digital_processors": [
+      { "type": "debounce", "stable_count": 5, "stable_delay_ms": 50 }
+    ],
+    "sensor": {
+      "kind": "generic_digital",
+      "id": "HwExtLights",
+      "name": "ГАБАРИТ",
+      "active_level": "high",
+      "constraints": { "digital_preset": "default" }
+    }
+  },
+  {
+    "group": "sensor",
+    "hw_input": "HwFuelLvlLow",
+    "provider": "adc",
+    "digital_processors": [
+      { "type": "debounce", "stable_count": 5, "stable_delay_ms": 50 }
+    ],
+    "sensor": {
+      "kind": "generic_digital",
+      "id": "HwFuelLvlLow",
+      "name": "УРОВ ТОПЛ",
+      "active_level": "high",
+      "constraints": { "digital_preset": "warning" }
+    }
+  },
+  {
+    "group": "sensor",
+    "hw_input": "HwHighBeam",
+    "provider": "adc",
+    "digital_processors": [
+      { "type": "debounce", "stable_count": 5, "stable_delay_ms": 50 }
+    ],
+    "sensor": {
+      "kind": "generic_digital",
+      "id": "HwHighBeam",
+      "name": "ДАЛЬНИЙ СВЕТ",
+      "active_level": "high",
+      "constraints": { "digital_preset": "default" }
+    }
+  },
+  {
+    "group": "sensor",
+    "hw_input": "HwInstrIllum",
+    "provider": "adc",
+    "digital_processors": [
+      { "type": "debounce", "stable_count": 5, "stable_delay_ms": 50 }
+    ],
+    "sensor": {
+      "kind": "generic_digital",
+      "id": "HwInstrIllum",
+      "name": "ОСВЕЩ",
+      "active_level": "high",
+      "constraints": { "digital_preset": "default" }
+    }
+  },
+  {
+    "group": "sensor",
+    "hw_input": "HwOilPressLow",
+    "provider": "adc",
+    "digital_processors": [
+      { "type": "debounce", "stable_count": 5, "stable_delay_ms": 50 }
+    ],
+    "sensor": {
+      "kind": "generic_digital",
+      "id": "HwOilPressLow",
+      "name": "ДАВЛ МАСЛА",
+      "active_level": "high",
+      "constraints": { "digital_preset": "critical" }
+    }
+  },
+  {
+    "group": "sensor",
+    "hw_input": "HwParkBrake",
+    "provider": "adc",
+    "digital_processors": [
+      { "type": "debounce", "stable_count": 5, "stable_delay_ms": 50 }
+    ],
+    "sensor": {
+      "kind": "generic_digital",
+      "id": "HwParkBrake",
+      "name": "СТОЯН ТОРМ",
+      "active_level": "high",
+      "constraints": { "digital_preset": "warning" }
+    }
+  },
+  {
+    "group": "sensor",
+    "hw_input": "HwTurnSignal",
+    "provider": "adc",
+    "digital_processors": [
+      { "type": "debounce", "stable_count": 5, "stable_delay_ms": 50 }
+    ],
+    "sensor": {
+      "kind": "generic_digital",
+      "id": "HwTurnSignal",
+      "name": "ИНД ПОВОР",
+      "active_level": "high",
+      "constraints": { "digital_preset": "default" }
+    }
+  },
+  {
+    "group": "sensor",
+    "hw_input": "Hw12v",
+    "provider": "adc",
+    "analog_processors": [
+      { "type": "moving_average", "window": 60 }
+    ],
+    "sensor": {
+      "kind": "generic_analog",
+      "id": "Hw12v",
+      "name": "БОРТ СЕТЬ",
+      "units": "В",
+      "scale": 0.02,
+      "constraints": {
+        "min": 0.0, "max": 20.0,
+        "critical_low": 11.0, "warning_low": 13.0, "warning_high": 14.7, "critical_high": 15.0
+      }
+    }
+  },
+  {
+    "group": "sensor",
+    "hw_input": "HwFuelLvl",
+    "provider": "adc",
+    "analog_processors": [
+      { "type": "moving_average", "window": 3600 }
+    ],
+    "sensor": {
+      "kind": "generic_analog",
+      "id": "HwFuelLvl",
+      "name": "УРОВ ТОПЛ",
+      "units": "%",
+      "scale": 0.1,
+      "constraints": {
+        "min": 0.0, "max": 100.0,
+        "critical_low": 10.0, "warning_low": 20.0
+      }
+    }
+  },
+  {
+    "group": "sensor",
+    "hw_input": "HwOilPress",
+    "provider": "adc",
+    "analog_processors": [
+      { "type": "moving_average", "window": 60 }
+    ],
+    "sensor": {
+      "kind": "generic_analog",
+      "id": "HwOilPress",
+      "name": "ДАВЛ МАСЛА",
+      "units": "кгс/см²",
+      "scale": 0.01,
+      "constraints": {
+        "min": 0.0, "max": 8.0,
+        "critical_low": 0.5, "warning_low": 1.0, "warning_high": 7.0, "critical_high": 8.0
+      }
+    }
+  },
+  {
+    "group": "button",
+    "hw_input": "HwButton0",
+    "provider": "adc",
+    "sensor": {
+      "kind": "generic_digital",
+      "id": "HwButton0",
+      "name": "HwButton0",
+      "active_level": "high",
+      "constraints": { "digital_preset": "default" }
+    }
+  },
+  {
+    "group": "button",
+    "hw_input": "HwButton1",
+    "provider": "adc",
+    "sensor": {
+      "kind": "generic_digital",
+      "id": "HwButton1",
+      "name": "HwButton1",
+      "active_level": "high",
+      "constraints": { "digital_preset": "default" }
+    }
+  },
+  {
+    "group": "button",
+    "hw_input": "HwButton2",
+    "provider": "adc",
+    "sensor": {
+      "kind": "generic_digital",
+      "id": "HwButton2",
+      "name": "HwButton2",
+      "active_level": "high",
+      "constraints": { "digital_preset": "default" }
+    }
+  },
+  {
+    "group": "button",
+    "hw_input": "HwButton3",
+    "provider": "adc",
+    "sensor": {
+      "kind": "generic_digital",
+      "id": "HwButton3",
+      "name": "HwButton3",
+      "active_level": "high",
+      "constraints": { "digital_preset": "default" }
+    }
+  },
+  {
+    "group": "button",
+    "hw_input": "HwButton4",
+    "provider": "adc",
+    "sensor": {
+      "kind": "generic_digital",
+      "id": "HwButton4",
+      "name": "HwButton4",
+      "active_level": "high",
+      "constraints": { "digital_preset": "default" }
+    }
+  },
+  {
+    "group": "button",
+    "hw_input": "HwButton5",
+    "provider": "adc",
+    "sensor": {
+      "kind": "generic_digital",
+      "id": "HwButton5",
+      "name": "HwButton5",
+      "active_level": "high",
+      "constraints": { "digital_preset": "default" }
+    }
+  },
+  {
+    "group": "button",
+    "hw_input": "HwButton6",
+    "provider": "adc",
+    "sensor": {
+      "kind": "generic_digital",
+      "id": "HwButton6",
+      "name": "HwButton6",
+      "active_level": "high",
+      "constraints": { "digital_preset": "default" }
+    }
+  },
+  {
+    "group": "button",
+    "hw_input": "HwButton7",
+    "provider": "adc",
+    "sensor": {
+      "kind": "generic_digital",
+      "id": "HwButton7",
+      "name": "HwButton7",
+      "active_level": "high",
+      "constraints": { "digital_preset": "default" }
+    }
+  }
+]

@@ -30,9 +30,9 @@ while true; do
     status=$?
     # Exit code 0 means the dashboard quit intentionally (e.g. 'q' pressed for
     # debugging) -- stop the loop rather than relaunching.
-    # Exit code 42 means it wants an immediate relaunch -- either it detected a fresh
-    # build on disk, or a restart was requested via SIGUSR1 (see restart_dashboard.sh)
-    # -- relaunch right away without touching the crash count.
+    # Exit code 42 means it wants an immediate relaunch -- it detected a fresh build on
+    # disk, sensor_config.json was edited, or a restart was requested via SIGUSR1 (see
+    # restart_dashboard.sh) -- relaunch right away without touching the crash count.
     # Any other exit code means it crashed/errored, so restart it after a short
     # delay, up to MAX_RESTARTS times before giving up.
     if [ "$status" -eq 0 ]; then

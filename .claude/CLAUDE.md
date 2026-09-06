@@ -69,6 +69,7 @@ niva_dashboard/
 │   │   ├── digital_signal_processing.rs
 │   │   ├── analog_signal_processing.rs
 │   │   ├── sensors.rs              # Logical Sensor stage (live code, not legacy)
+│   │   ├── sensor_config.rs        # Data-driven ADC chain loader (see sensor_config.json, TODO)
 │   │   └── heading_fusion_sensor.rs  # BNO085 IMU + GNSS heading fusion
 │   ├── indicators/                 # Indicator widgets
 │   │   ├── indicator.rs            # Shared Indicator trait / IndicatorBase
@@ -152,9 +153,8 @@ Raw `gl::` calls (`GetUniformLocation`, `GetAttribLocation`, `ShaderSource`, etc
 Boot reduced from ~16.8s to ~5.1s by disabling unused systemd services (`NetworkManager-wait-online`, `e2scrub_reap`, `ModemManager`, `rpi-eeprom-update`, `bluetooth`, `hciuart` — see `/home/user/boot-optimizations.md`). `avahi-daemon` stays enabled for `.local` SSH access. These are OS-level `systemctl disable` calls, not part of this repo — a fresh SD flash needs them reapplied. Remaining ~18s gap is pre-kernel firmware/bootloader stage, invisible to OS tools; further profiling would need a `BOOT_UART=1` serial capture.
 
 ## TODO
-- Data-driven sensor creation: JSON describing hardware inputs, sensor chains, logical sensor parameters.
-- Improve sensor->watchdog->alert construction: currently, it is a multi-step process involving a lot of parameters, and it's easy to mismatch one of the parameters which can cause the alert to never trigger. Also benefits from data-driven
-  sensor creation (see item above).
+- [Done] Data-driven sensor creation for the ADC-backed subset: `niva_dashboard/sensor_config.json` (loaded via `hardware::sensor_config::load_chains`) now drives the ~13 generic digital/analog ADC chains in `add_adc_sensor_chains` plus the 8 button chains in `setup_button_sensors` — tuning a debounce count, scale factor, or threshold is a JSON edit, picked up automatically on the next restart (see `util::shutdown::watch_for_config_update`, which mirrors the binary-rebuild auto-restart). Loading is fail-fast: a missing file, malformed JSON, unknown `hw_input`, or a digital/analog chain mismatch panics at startup rather than skipping the bad entry. Sensors with real conversion math (`SpeedSensor`, `TachoSensor`, `EngineTemperatureSensor`, ...) and non-ADC providers (GNSS/UPS/BNO085/link-health) stay hand-built in `main.rs` — see `DATA_DRIVEN_SENSOR_CONFIG_DESIGN.md`'s Scope section. Remaining piece (that doc's Stretch goal): extend `sensor.kind` so those custom sensors' processor params (moving-average windows etc.) also come from config, without touching their conversion math.
+- Improve sensor->watchdog->alert construction: currently, it is a multi-step process involving a lot of parameters, and it's easy to mismatch one of the parameters which can cause the alert to never trigger.
 - [Done] UPS HAT integration (automatic startup/shutdown).
 - [Rejected] Display power control (USB port shutdown during boot, re-enable when dashboard ready) - Pi 4 does
   not have individual USB port control, would require shutting down all USB devices.

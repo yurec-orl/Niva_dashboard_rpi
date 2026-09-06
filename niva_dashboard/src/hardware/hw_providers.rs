@@ -139,6 +139,88 @@ impl HWInput {
             _ => None,
         }
     }
+
+    /// Canonical config-file string for each variant (its own name, e.g. "HwParkBrake") --
+    /// matched over `self`, not the string, so this stays exhaustive with no trailing
+    /// wildcard arm: adding a new `HWInput` variant without adding it here is a compile
+    /// error. (A `match` on an incoming `&str` can never be exhaustive this way -- Rust
+    /// requires a catch-all for string patterns regardless of how many arms are listed --
+    /// so `from_config_name` below is built on top of this instead.)
+    fn config_name(self) -> &'static str {
+        match self {
+            HWInput::Hw12v => "Hw12v",
+            HWInput::HwFuelLvl => "HwFuelLvl",
+            HWInput::HwOilPress => "HwOilPress",
+            HWInput::HwEngineCoolantTemp => "HwEngineCoolantTemp",
+            HWInput::HwBrakeFluidLvlLow => "HwBrakeFluidLvlLow",
+            HWInput::HwCharge => "HwCharge",
+            HWInput::HwCheckEngine => "HwCheckEngine",
+            HWInput::HwDiffLock => "HwDiffLock",
+            HWInput::HwExtLights => "HwExtLights",
+            HWInput::HwFuelLvlLow => "HwFuelLvlLow",
+            HWInput::HwHighBeam => "HwHighBeam",
+            HWInput::HwInstrIllum => "HwInstrIllum",
+            HWInput::HwOilPressLow => "HwOilPressLow",
+            HWInput::HwParkBrake => "HwParkBrake",
+            HWInput::HwSpeed => "HwSpeed",
+            HWInput::HwTacho => "HwTacho",
+            HWInput::HwTurnSignal => "HwTurnSignal",
+            HWInput::HwMasterWarningBtn => "HwMasterWarningBtn",
+            HWInput::HwButton0 => "HwButton0",
+            HWInput::HwButton1 => "HwButton1",
+            HWInput::HwButton2 => "HwButton2",
+            HWInput::HwButton3 => "HwButton3",
+            HWInput::HwButton4 => "HwButton4",
+            HWInput::HwButton5 => "HwButton5",
+            HWInput::HwButton6 => "HwButton6",
+            HWInput::HwButton7 => "HwButton7",
+            HWInput::HwAdcLink => "HwAdcLink",
+            HWInput::HwUPSCurrent => "HwUPSCurrent",
+            HWInput::HwUPSChargeState => "HwUPSChargeState",
+            HWInput::HwUPSLink => "HwUPSLink",
+            HWInput::HwGnssSpeed => "HwGnssSpeed",
+            HWInput::HwGnssMovingHeading => "HwGnssMovingHeading",
+            HWInput::HwGnssAltitude => "HwGnssAltitude",
+            HWInput::HwGnssSatellites => "HwGnssSatellites",
+            HWInput::HwGnssFixQuality => "HwGnssFixQuality",
+            HWInput::HwGnssLink => "HwGnssLink",
+            HWInput::HwBno085Heading => "HwBno085Heading",
+            HWInput::HwBno085Link => "HwBno085Link",
+            HWInput::HwHeading => "HwHeading",
+            HWInput::HwHeadingConfidence => "HwHeadingConfidence",
+            HWInput::HwHeadingAccuracy => "HwHeadingAccuracy",
+            HWInput::HwDeadReckoningElapsed => "HwDeadReckoningElapsed",
+            HWInput::HwTestAlertInput => "HwTestAlertInput",
+        }
+    }
+
+    /// Every `HWInput` variant, for `from_config_name`'s reverse lookup below. Kept in
+    /// sync with the enum manually (like `config_name` above) -- unlike `config_name`,
+    /// this list can't be compiler-enforced against a missed variant, since Rust has no
+    /// exhaustiveness check for "did you list every enum value in this array."
+    const ALL: &'static [HWInput] = &[
+        HWInput::Hw12v, HWInput::HwFuelLvl, HWInput::HwOilPress, HWInput::HwEngineCoolantTemp,
+        HWInput::HwBrakeFluidLvlLow, HWInput::HwCharge, HWInput::HwCheckEngine, HWInput::HwDiffLock,
+        HWInput::HwExtLights, HWInput::HwFuelLvlLow, HWInput::HwHighBeam, HWInput::HwInstrIllum,
+        HWInput::HwOilPressLow, HWInput::HwParkBrake, HWInput::HwSpeed, HWInput::HwTacho,
+        HWInput::HwTurnSignal, HWInput::HwMasterWarningBtn,
+        HWInput::HwButton0, HWInput::HwButton1, HWInput::HwButton2, HWInput::HwButton3,
+        HWInput::HwButton4, HWInput::HwButton5, HWInput::HwButton6, HWInput::HwButton7,
+        HWInput::HwAdcLink, HWInput::HwUPSCurrent, HWInput::HwUPSChargeState, HWInput::HwUPSLink,
+        HWInput::HwGnssSpeed, HWInput::HwGnssMovingHeading, HWInput::HwGnssAltitude,
+        HWInput::HwGnssSatellites, HWInput::HwGnssFixQuality, HWInput::HwGnssLink,
+        HWInput::HwBno085Heading, HWInput::HwBno085Link, HWInput::HwHeading,
+        HWInput::HwHeadingConfidence, HWInput::HwHeadingAccuracy, HWInput::HwDeadReckoningElapsed,
+        HWInput::HwTestAlertInput,
+    ];
+
+    /// Resolves a config-file string (matching a variant's name exactly, e.g.
+    /// "HwParkBrake") to its `HWInput` variant, for `hardware::sensor_config`. Returns
+    /// `None` for an unrecognized string -- the caller (`load_chains`) turns that into a
+    /// fail-fast load error naming the offending string, never a silent skip.
+    pub fn from_config_name(name: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|v| v.config_name() == name)
+    }
 }
 
 // Generic interface for reading input data.
