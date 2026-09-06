@@ -57,5 +57,9 @@ pub fn init_logging() -> LoggerHandle {
         .trigger_rotation()
         .expect("Failed to rotate log file on startup");
 
+    std::panic::set_hook(Box::new(|info| {
+        log::error!("PANIC: {info}");
+    }));
+
     handle
 }

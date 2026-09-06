@@ -20,7 +20,7 @@ use crate::hardware::analog_signal_processing::AnalogSignalProcessorMovingAverag
 use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor, SpeedSensor, TachoSensor, EngineTemperatureSensor, GnssAltitudeSensor};
 use crate::hardware::sensor_value::ValueConstraints;
 use crate::hardware::heading_fusion_sensor;
-use crate::util::adc_data_provider::{ADCDataProvider, ADCFrame, TestADCDataProvider, SELF_TEST_DURATION};
+use crate::util::adc_data_provider::{ADCDataProvider, ADCFrame, AdcTempFrame, TestADCDataProvider, SELF_TEST_DURATION};
 use crate::util::bno085_data_provider::{Bno085DataProvider, Bno085Frame};
 use crate::util::bno085_protocol::{
     SH2_REPORT_ROTATION_VECTOR, SH2_REPORT_GAME_ROTATION_VECTOR,
@@ -61,7 +61,7 @@ fn setup_context() -> GraphicsContext {
 fn setup_self_test_sensors() -> (SensorManager, TestADCDataProvider) {
     let mut mgr = SensorManager::new();
     let test_adc = TestADCDataProvider::start();
-    add_adc_sensor_chains(&mut mgr, test_adc.frame());
+    add_adc_sensor_chains(&mut mgr, test_adc.frame(), test_adc.temp_frame());
 
     // Test sensor chain for the `СМОТРИ ЭКРАН` alert.
     let test_alert_link_chain = SensorDigitalInputChain::new(
@@ -77,7 +77,7 @@ fn setup_self_test_sensors() -> (SensorManager, TestADCDataProvider) {
     (mgr, test_adc)
 }
 
-fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>, gnss: Option<GnssFrame>, bno: Option<Bno085Frame>) -> (SensorManager, Option<heading_fusion_sensor::HeadingFusionSensor>) {
+fn setup_sensors(adc: Option<ADCFrame>, adc_temp: Option<AdcTempFrame>, ups: Option<UpsRawFrame>, gnss: Option<GnssFrame>, bno: Option<Bno085Frame>) -> (SensorManager, Option<heading_fusion_sensor::HeadingFusionSensor>) {
     let mut mgr = SensorManager::new();
     // Cloned before the GNSS scalar-chain block below consumes `gnss` -- needed again for the
     // heading fusion chain further down.
@@ -236,7 +236,9 @@ fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>, gnss: Option<G
         return (mgr, heading_fusion);
     };
 
-    add_adc_sensor_chains(&mut mgr, frame);
+    // adc_temp comes from the same ADCDataProvider as `frame`, so it is Some whenever `frame`
+    // is; fall back to a detached frame rather than unwrap so a future caller can't panic here.
+    add_adc_sensor_chains(&mut mgr, frame, adc_temp.unwrap_or_default());
     log::info!("✓ Sensor manager initialized with ADC sensor chains");
 
     (mgr, heading_fusion)
@@ -252,13 +254,14 @@ fn setup_sensors(adc: Option<ADCFrame>, ups: Option<UpsRawFrame>, gnss: Option<G
 // Shared by setup_sensors (real, serial-fed ADCFrame) and setup_self_test_sensors
 // (TestADCDataProvider's synthetic ADCFrame) — self-test exercises this exact wiring
 // instead of a hand-duplicated copy, so the two can't silently drift apart.
-fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame) {
+fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame, temp_frame: AdcTempFrame) {
     // Generic digital/analog chains (brake fluid, charge, diff lock, ext lights, fuel
     // level/low, high beam, instrument illumination, oil pressure/low, park brake, turn
-    // signal, 12V) are data-driven — see hardware::sensor_config and
+    // signal, 12V) plus the one-wire DS18B20 temperature chains (provider "adc_temp", see
+    // ONEWIRE_TEMP_SENSOR_RUST_DESIGN.md) are data-driven — see hardware::sensor_config and
     // DATA_DRIVEN_SENSOR_CONFIG_DESIGN.md. Fail-fast: a bad config entry here is treated
     // like a build-time mistake, not a runtime hardware absence.
-    hardware::sensor_config::load_chains(&hardware::sensor_config::default_path(), "sensor", frame.clone(), mgr)
+    hardware::sensor_config::load_chains(&hardware::sensor_config::default_path(), "sensor", frame.clone(), Some(temp_frame), mgr)
         .expect("Failed to load sensor_config.json");
 
     // ---- Chains with real conversion math, out of scope for config (see design doc) ----
@@ -302,7 +305,8 @@ fn setup_button_sensors(adc: Option<ADCFrame>) -> SensorManager {
     };
 
     // Data-driven — see hardware::sensor_config and DATA_DRIVEN_SENSOR_CONFIG_DESIGN.md.
-    hardware::sensor_config::load_chains(&hardware::sensor_config::default_path(), "button", frame, &mut mgr)
+    // No one-wire temperature entries in the "button" group, so no temp frame needed.
+    hardware::sensor_config::load_chains(&hardware::sensor_config::default_path(), "button", frame, None, &mut mgr)
         .expect("Failed to load sensor_config.json");
 
     log::info!("✓ Button sensor manager initialized");
@@ -452,6 +456,7 @@ fn main() -> std::process::ExitCode {
     };
     // Obtain frame handles before moving adc into setup_sensors
     let adc_frame = adc.as_ref().map(|p| p.frame());
+    let adc_temp_frame = adc.as_ref().map(|p| p.temp_frame());
     let osc_frame = adc.as_ref().map(|p| p.osc_frame());
 
     // Moved into PageManager below (unlike `adc`, which stays a process-lifetime local) --
@@ -500,7 +505,7 @@ fn main() -> std::process::ExitCode {
     let adc_frame_for_diag = adc_frame.clone();
     let gnss_frame_for_diag = gnss_frame.clone();
     let bno_frame_for_diag = bno_frame.clone();
-    let (sensors, heading_fusion) = setup_sensors(adc_frame, ups_frame, gnss_frame, bno_frame);
+    let (sensors, heading_fusion) = setup_sensors(adc_frame, adc_temp_frame, ups_frame, gnss_frame, bno_frame);
     let ui_style = setup_ui_style();
     // Starts disabled: alerts (e.g. engine temp, oil pressure) must not fire against the
     // synthetic self-test sensor sweep. Enabled once the self-test sequence hands off to

@@ -9,6 +9,7 @@ use crate::page_framework::terminal_page::TerminalPage;
 use crate::page_framework::gnss_page::{GnssPage, GnssMode};
 use crate::page_framework::horz_page::HorzPage;
 use crate::page_framework::osc_page::OscPage;
+use crate::page_framework::temp_page::TempPage;
 use crate::hardware::sensor_manager::SensorManager;
 use crate::hardware::hw_providers::HWInput;
 use crate::hardware::heading_fusion_sensor::{HeadingFusionSensor, HeadingAnchorSnapshot};
@@ -46,6 +47,7 @@ pub const GNSS_TERM_PAGE_ID: u32 = 4;
 pub const GNSS_PAGE_ID: u32 = 5;
 pub const HORZ_PAGE_ID: u32 = 6;
 pub const OSC_PAGE_ID: u32 = 7;
+pub const TEMP_PAGE_ID: u32 = 8;
 
 /// Config section key PageManager persists the last-open page under.
 const LAST_PAGE_CONFIG_KEY: &str = "last_page";
@@ -591,6 +593,13 @@ impl PageManager {
                                               self.osc_frame.clone()));
         self.add_page(osc_page);
 
+        // One-wire temperature page — always registered (like OscPage): with no bus it
+        // renders "НЕТ ДАТЧИКОВ" rather than being absent. Reached from MainPage's Left3.
+        let temp_page = Box::new(TempPage::new(TEMP_PAGE_ID,
+                                                smart_sender.clone(),
+                                                self.get_event_receiver()));
+        self.add_page(temp_page);
+
         // GNSS terminal page only exists when the GNSS data provider actually started —
         // without a frame handle there is nothing for it to display.
         if let Some(frame) = self.gnss_frame.clone() {
@@ -777,7 +786,12 @@ impl PageManager {
                 // periods. Already surfaced per-field by the corresponding indicator
                 // simply showing no data, so it doesn't need error-level logging either.
                 let gnss_field_unavailable = e.starts_with("no GNSS ");
-                if !self.sensor_manager.adc_link_down() && !gnss_field_unavailable {
+                // Suppress a DS18B20 whose `$T` reading is stale/absent — routine on a bus
+                // with fewer sensors than configured (or before the first `$T` line), and
+                // already surfaced by the ТЕМП page showing "НЕТ СВЯЗИ" for that row. Same
+                // rationale as the GNSS case above.
+                let temp_sensor_unavailable = e.starts_with("no fresh DS18B20 reading");
+                if !self.sensor_manager.adc_link_down() && !gnss_field_unavailable && !temp_sensor_unavailable {
                     log::error!("Sensor read error: {}", e);
                 }
             }

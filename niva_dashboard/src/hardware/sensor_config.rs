@@ -12,11 +12,11 @@ use crate::hardware::analog_signal_processing::{
     AnalogSignalProcessor, AnalogSignalProcessorDampener, AnalogSignalProcessorMovingAverage,
 };
 use crate::hardware::digital_signal_processing::{DigitalSignalDebouncer, DigitalSignalProcessor};
-use crate::hardware::hw_providers::{ADCChannelProvider, HWInput};
+use crate::hardware::hw_providers::{ADCChannelProvider, HWInput, OneWireTempChannelProvider};
 use crate::hardware::sensor_manager::{SensorAnalogInputChain, SensorDigitalInputChain, SensorManager};
 use crate::hardware::sensor_value::ValueConstraints;
-use crate::hardware::sensors::{GenericAnalogSensor, GenericDigitalSensor};
-use crate::util::adc_data_provider::ADCFrame;
+use crate::hardware::sensors::{GenericAnalogSensor, GenericDigitalSensor, OneWireTempSensor};
+use crate::util::adc_data_provider::{ADCFrame, AdcTempFrame};
 
 use rppal::gpio::Level;
 use serde::Deserialize;
@@ -32,6 +32,10 @@ struct ChainConfig {
     group: String,
     hw_input: String,
     provider: String,
+    /// Required for `provider: "adc_temp"` — the 16-char lowercase hex DS18B20 ROM address
+    /// this chain reads from the one-wire bus. Ignored by every other provider.
+    #[serde(default)]
+    rom: Option<String>,
     #[serde(default)]
     digital_processors: Vec<DigitalProcessorConfig>,
     #[serde(default)]
@@ -85,6 +89,14 @@ enum SensorConfig {
         name: String,
         units: String,
         scale: f32,
+        constraints: ConstraintsConfig,
+    },
+    /// DS18B20 one-wire temperature (see OneWireTempSensor). Paired with
+    /// `provider: "adc_temp"` and a top-level `rom`. Unit is always °C and the raw→°C
+    /// divisor is intrinsic, so neither `units` nor `scale` is carried here.
+    OneWireTemp {
+        id: String,
+        name: String,
         constraints: ConstraintsConfig,
     },
 }
@@ -162,28 +174,53 @@ pub fn default_path() -> PathBuf {
 /// mixing digital/analog processors with the wrong sensor kind is a `Err` naming the
 /// problem -- callers are expected to treat this like a build-time error (see design doc's
 /// Open questions), not skip the one bad entry and carry on.
-pub fn load_chains(path: &Path, group: &str, frame: ADCFrame, mgr: &mut SensorManager) -> Result<(), String> {
+///
+/// `temp_frame` backs `provider: "adc_temp"` entries (one-wire DS18B20 temperatures, see
+/// ONEWIRE_TEMP_SENSOR_RUST_DESIGN.md). Pass `None` for a group that has none — an
+/// `adc_temp` entry with no frame available is itself a fail-fast load error.
+pub fn load_chains(
+    path: &Path,
+    group: &str,
+    frame: ADCFrame,
+    temp_frame: Option<AdcTempFrame>,
+    mgr: &mut SensorManager,
+) -> Result<(), String> {
     let contents = std::fs::read_to_string(path)
         .map_err(|e| format!("sensor config: failed to read {path:?}: {e}"))?;
     let entries: Vec<ChainConfig> = serde_json::from_str(&contents)
         .map_err(|e| format!("sensor config: failed to parse {path:?}: {e}"))?;
 
     for entry in entries.iter().filter(|e| e.group == group) {
-        build_chain(entry, frame.clone(), mgr)?;
+        build_chain(entry, frame.clone(), temp_frame.as_ref(), mgr)?;
     }
     Ok(())
 }
 
-fn build_chain(entry: &ChainConfig, frame: ADCFrame, mgr: &mut SensorManager) -> Result<(), String> {
-    if entry.provider != "adc" {
-        return Err(format!(
-            "sensor config: hw_input '{}' has unsupported provider '{}' (only \"adc\" is implemented)",
-            entry.hw_input, entry.provider
-        ));
-    }
+fn build_chain(
+    entry: &ChainConfig,
+    frame: ADCFrame,
+    temp_frame: Option<&AdcTempFrame>,
+    mgr: &mut SensorManager,
+) -> Result<(), String> {
     let input = HWInput::from_config_name(&entry.hw_input)
         .ok_or_else(|| format!("sensor config: unknown hw_input '{}'", entry.hw_input))?;
 
+    match entry.provider.as_str() {
+        "adc" => build_adc_chain(entry, input, frame, mgr),
+        "adc_temp" => build_adc_temp_chain(entry, input, temp_frame, mgr),
+        other => Err(format!(
+            "sensor config: hw_input '{}' has unsupported provider '{}' (expected \"adc\" or \"adc_temp\")",
+            entry.hw_input, other
+        )),
+    }
+}
+
+fn build_adc_chain(
+    entry: &ChainConfig,
+    input: HWInput,
+    frame: ADCFrame,
+    mgr: &mut SensorManager,
+) -> Result<(), String> {
     match &entry.sensor {
         SensorConfig::GenericDigital { id, name, active_level, constraints } => {
             if !entry.analog_processors.is_empty() {
@@ -222,7 +259,60 @@ fn build_chain(entry: &ChainConfig, frame: ADCFrame, mgr: &mut SensorManager) ->
             );
             mgr.add_analog_sensor_chain(chain);
         }
+        SensorConfig::OneWireTemp { .. } => {
+            return Err(format!(
+                "sensor config: hw_input '{}' has sensor kind \"one_wire_temp\" but provider is not \"adc_temp\"",
+                entry.hw_input
+            ));
+        }
     }
+    Ok(())
+}
+
+fn build_adc_temp_chain(
+    entry: &ChainConfig,
+    input: HWInput,
+    temp_frame: Option<&AdcTempFrame>,
+    mgr: &mut SensorManager,
+) -> Result<(), String> {
+    let temp_frame = temp_frame.ok_or_else(|| format!(
+        "sensor config: hw_input '{}' uses provider \"adc_temp\" but no one-wire temperature frame is available",
+        entry.hw_input
+    ))?;
+
+    let (id, name, constraints) = match &entry.sensor {
+        SensorConfig::OneWireTemp { id, name, constraints } => (id, name, constraints),
+        _ => return Err(format!(
+            "sensor config: hw_input '{}' uses provider \"adc_temp\" but sensor kind is not \"one_wire_temp\"",
+            entry.hw_input
+        )),
+    };
+
+    let rom = entry.rom.as_deref().ok_or_else(|| format!(
+        "sensor config: hw_input '{}' uses provider \"adc_temp\" but has no \"rom\" address",
+        entry.hw_input
+    ))?;
+    if rom.len() != 16 || !rom.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(format!(
+            "sensor config: hw_input '{}' has malformed rom '{}' (expected 16 hex characters)",
+            entry.hw_input, rom
+        ));
+    }
+
+    if !entry.digital_processors.is_empty() {
+        return Err(format!(
+            "sensor config: hw_input '{}' is a temperature (analog) sensor but lists digital_processors",
+            entry.hw_input
+        ));
+    }
+    let processors: Vec<Box<dyn AnalogSignalProcessor + Send>> =
+        entry.analog_processors.iter().map(AnalogProcessorConfig::build).collect();
+    let chain = SensorAnalogInputChain::new(
+        Box::new(OneWireTempChannelProvider::new(input, rom, temp_frame.clone())),
+        processors,
+        Box::new(OneWireTempSensor::new(id.clone(), name.clone(), constraints.build(&entry.hw_input)?)),
+    );
+    mgr.add_analog_sensor_chain(chain);
     Ok(())
 }
 
@@ -258,7 +348,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(50));
 
         let mut sensor_mgr = SensorManager::new();
-        load_chains(&path, "sensor", frame.clone(), &mut sensor_mgr).expect("sensor group should load");
+        load_chains(&path, "sensor", frame.clone(), None, &mut sensor_mgr).expect("sensor group should load");
         sensor_mgr.read_all_sensors().ok();
         assert!(sensor_mgr.get_sensor_value(&HWInput::HwParkBrake).is_some());
         assert!(sensor_mgr.get_sensor_value(&HWInput::HwButton0).is_none());
@@ -269,7 +359,7 @@ mod tests {
         // error naming channel 16 confirms load_chains actually built a chain wired to
         // HwButton0's mapped ADC channel, not that the value came back populated.
         let mut button_mgr = SensorManager::new();
-        load_chains(&path, "button", frame, &mut button_mgr).expect("button group should load");
+        load_chains(&path, "button", frame, None, &mut button_mgr).expect("button group should load");
         let err = button_mgr.read_all_sensors().expect_err("button channel 16 isn't in the self-test frame");
         assert!(err.contains("16"), "expected error naming ADC channel 16, got: {err}");
         assert!(button_mgr.get_sensor_value(&HWInput::HwParkBrake).is_none());
@@ -290,7 +380,7 @@ mod tests {
         let frame = provider.frame();
         std::thread::sleep(Duration::from_millis(50));
         let mut mgr = SensorManager::new();
-        load_chains(&path, "sensor", frame, &mut mgr).expect("should load");
+        load_chains(&path, "sensor", frame, None, &mut mgr).expect("should load");
         mgr.read_all_sensors().ok();
         let value = mgr.get_sensor_value(&HWInput::HwFuelLvl).expect("HwFuelLvl should have a value");
         assert_eq!(value.constraints.max_value, 100.0);
@@ -307,7 +397,7 @@ mod tests {
         let path = write_temp_config(json);
         let frame = TestADCDataProvider::start().frame();
         let mut mgr = SensorManager::new();
-        let err = load_chains(&path, "sensor", frame, &mut mgr).unwrap_err();
+        let err = load_chains(&path, "sensor", frame, None, &mut mgr).unwrap_err();
         assert!(err.contains("NotARealInput"), "error should name the bad string, got: {err}");
 
         std::fs::remove_file(&path).ok();
@@ -321,7 +411,7 @@ mod tests {
         let path = write_temp_config(json);
         let frame = TestADCDataProvider::start().frame();
         let mut mgr = SensorManager::new();
-        let err = load_chains(&path, "sensor", frame, &mut mgr).unwrap_err();
+        let err = load_chains(&path, "sensor", frame, None, &mut mgr).unwrap_err();
         assert!(err.contains("analog_processors"), "error should mention the mismatch, got: {err}");
 
         std::fs::remove_file(&path).ok();
@@ -334,7 +424,7 @@ mod tests {
         let path = write_temp_config(json);
         let frame = TestADCDataProvider::start().frame();
         let mut mgr = SensorManager::new();
-        let err = load_chains(&path, "sensor", frame, &mut mgr).unwrap_err();
+        let err = load_chains(&path, "sensor", frame, None, &mut mgr).unwrap_err();
         assert!(err.contains("gnss"), "error should name the unsupported provider, got: {err}");
 
         std::fs::remove_file(&path).ok();
@@ -344,7 +434,7 @@ mod tests {
     fn missing_file_is_a_load_error() {
         let frame = TestADCDataProvider::start().frame();
         let mut mgr = SensorManager::new();
-        assert!(load_chains(Path::new("/nonexistent/sensor_config.json"), "sensor", frame, &mut mgr).is_err());
+        assert!(load_chains(Path::new("/nonexistent/sensor_config.json"), "sensor", frame, None, &mut mgr).is_err());
     }
 
     /// Exercises the repo's actual sensor_config.json end to end, so a transcription
@@ -360,9 +450,86 @@ mod tests {
         std::thread::sleep(Duration::from_millis(50));
 
         let mut sensor_mgr = SensorManager::new();
-        load_chains(&path, "sensor", frame.clone(), &mut sensor_mgr).expect("repo config's \"sensor\" group should load");
+        load_chains(&path, "sensor", frame.clone(), Some(provider.temp_frame()), &mut sensor_mgr)
+            .expect("repo config's \"sensor\" group should load");
 
         let mut button_mgr = SensorManager::new();
-        load_chains(&path, "button", frame, &mut button_mgr).expect("repo config's \"button\" group should load");
+        load_chains(&path, "button", frame, None, &mut button_mgr).expect("repo config's \"button\" group should load");
+    }
+
+    /// A `provider: "adc_temp"` entry builds a working OneWireTempSensor chain against the
+    /// synthetic one-wire frame TestADCDataProvider now writes (the bench ROMs sweep a °C
+    /// band during SELF_TEST_DURATION).
+    #[test]
+    fn adc_temp_chain_loads_and_reads_a_temperature() {
+        let json = r#"[
+            {"group":"sensor","hw_input":"HwTempOut","provider":"adc_temp","rom":"2854df6b000000d9",
+             "analog_processors":[{"type":"moving_average","window":1}],
+             "sensor":{"kind":"one_wire_temp","id":"HwTempOut","name":"НАРУЖ",
+               "constraints":{"min":-40.0,"max":80.0,"warning_high":45.0}}}
+        ]"#;
+        let path = write_temp_config(json);
+        let provider = TestADCDataProvider::start();
+        let (frame, temp_frame) = (provider.frame(), provider.temp_frame());
+        std::thread::sleep(Duration::from_millis(50));
+
+        let mut mgr = SensorManager::new();
+        load_chains(&path, "sensor", frame, Some(temp_frame), &mut mgr).expect("should load");
+        mgr.read_all_sensors().ok();
+        let value = mgr.get_sensor_value(&HWInput::HwTempOut).expect("HwTempOut should have a value");
+        // Sweep spans 10..70 °C; any reading in that band means the i16→°C decode ran.
+        assert!(value.as_f32() >= 9.0 && value.as_f32() <= 71.0, "got {}", value.as_f32());
+        assert_eq!(value.constraints.warning_high, Some(45.0));
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn adc_temp_without_rom_is_a_load_error() {
+        let json = r#"[{"group":"sensor","hw_input":"HwTempOut","provider":"adc_temp",
+            "sensor":{"kind":"one_wire_temp","id":"x","name":"x","constraints":{"min":-40.0,"max":80.0}}}]"#;
+        let path = write_temp_config(json);
+        let provider = TestADCDataProvider::start();
+        let mut mgr = SensorManager::new();
+        let err = load_chains(&path, "sensor", provider.frame(), Some(provider.temp_frame()), &mut mgr).unwrap_err();
+        assert!(err.contains("rom"), "error should mention the missing rom, got: {err}");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn adc_temp_with_short_rom_is_a_load_error() {
+        let json = r#"[{"group":"sensor","hw_input":"HwTempOut","provider":"adc_temp","rom":"28ff",
+            "sensor":{"kind":"one_wire_temp","id":"x","name":"x","constraints":{"min":-40.0,"max":80.0}}}]"#;
+        let path = write_temp_config(json);
+        let provider = TestADCDataProvider::start();
+        let mut mgr = SensorManager::new();
+        let err = load_chains(&path, "sensor", provider.frame(), Some(provider.temp_frame()), &mut mgr).unwrap_err();
+        assert!(err.contains("malformed rom"), "got: {err}");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn one_wire_temp_kind_with_plain_adc_provider_is_a_load_error() {
+        let json = r#"[{"group":"sensor","hw_input":"HwTempOut","provider":"adc","rom":"2854df6b000000d9",
+            "sensor":{"kind":"one_wire_temp","id":"x","name":"x","constraints":{"min":-40.0,"max":80.0}}}]"#;
+        let path = write_temp_config(json);
+        let provider = TestADCDataProvider::start();
+        let mut mgr = SensorManager::new();
+        let err = load_chains(&path, "sensor", provider.frame(), Some(provider.temp_frame()), &mut mgr).unwrap_err();
+        assert!(err.contains("one_wire_temp"), "got: {err}");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn adc_temp_with_digital_processors_is_a_load_error() {
+        let json = r#"[{"group":"sensor","hw_input":"HwTempOut","provider":"adc_temp","rom":"2854df6b000000d9",
+            "digital_processors":[{"type":"debounce","stable_count":5,"stable_delay_ms":50}],
+            "sensor":{"kind":"one_wire_temp","id":"x","name":"x","constraints":{"min":-40.0,"max":80.0}}}]"#;
+        let path = write_temp_config(json);
+        let provider = TestADCDataProvider::start();
+        let mut mgr = SensorManager::new();
+        let err = load_chains(&path, "sensor", provider.frame(), Some(provider.temp_frame()), &mut mgr).unwrap_err();
+        assert!(err.contains("digital_processors"), "got: {err}");
+        std::fs::remove_file(&path).ok();
     }
 }

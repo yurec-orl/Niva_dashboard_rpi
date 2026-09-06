@@ -677,8 +677,8 @@ impl UIStyle {
         self.set(ROLL_SCALE_LABEL_FONT_SIZE, UIStyleValue::Integer(32));
 
         // Text defaults
-        self.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#FF7D00".to_string()));
-        self.set(TEXT_SECONDARY_COLOR, UIStyleValue::Color("#b77700".to_string()));
+        self.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
+        self.set(TEXT_SECONDARY_COLOR, UIStyleValue::Color("#A0A0A0".to_string()));
         self.set(TEXT_ACCENT_COLOR, UIStyleValue::Color("#0080FF".to_string()));
         self.set(TEXT_WARNING_COLOR, UIStyleValue::Color("#FFFF00".to_string()));
         self.set(TEXT_ERROR_COLOR, UIStyleValue::Color("#FF0000".to_string()));

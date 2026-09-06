@@ -227,6 +227,51 @@ impl AnalogSensor for EngineTemperatureSensor {
     }
 }
 
+/// Converts a DS18B20 raw temperature register (1/16 °C, signed) to °C. A plain
+/// GenericAnalogSensor can't express this: its `input as f32 * scale` treats the value as
+/// unsigned, so a sub-zero reading (which arrives as a large u16 bit pattern across the
+/// HWAnalogProvider boundary — see OneWireTempChannelProvider) would come out as a huge
+/// positive number. The `(input as i16)` reinterpret here undoes that, same trick as
+/// UpsCurrentSensor. Name and thresholds come from sensor_config.json; the unit is always
+/// °C and the /16 divisor is intrinsic to the wire format, so neither is a parameter.
+pub struct OneWireTempSensor {
+    value: SensorValue,
+    constraints: ValueConstraints,
+    metadata: ValueMetadata,
+}
+
+impl OneWireTempSensor {
+    pub fn new(id: String, name: String, constraints: ValueConstraints) -> Self {
+        OneWireTempSensor {
+            value: SensorValue::empty(),
+            constraints,
+            metadata: ValueMetadata::new("°C", name, id),
+        }
+    }
+}
+
+impl Sensor for OneWireTempSensor {
+    fn id(&self) -> &String { &self.metadata.sensor_id }
+    fn name(&self) -> &String { &self.metadata.label }
+    fn value(&self) -> Result<&SensorValue, String> { Ok(&self.value) }
+    fn constraints(&self) -> &ValueConstraints { &self.constraints }
+    fn metadata(&self) -> &ValueMetadata { &self.metadata }
+    fn min_value(&self) -> f32 { self.constraints.min_value }
+    fn max_value(&self) -> f32 { self.constraints.max_value }
+}
+
+impl AnalogSensor for OneWireTempSensor {
+    fn read(&mut self, input: u16) -> Result<&SensorValue, String> {
+        let celsius = (input as i16) as f32 / 16.0;
+        self.value = SensorValue::analog_with_constraints_and_metadata(
+            celsius.clamp(self.constraints.min_value, self.constraints.max_value),
+            self.constraints.clone(),
+            self.metadata.clone(),
+        );
+        Ok(&self.value)
+    }
+}
+
 /// Decodes GnssChannelProvider's altitude encoding (raw = altitude_m + GNSS_ALTITUDE_OFFSET_M,
 /// see hw_providers.rs) back to meters. A plain GenericAnalogSensor can't express this since
 /// it only supports a multiplicative scale, not an additive offset.
@@ -843,6 +888,37 @@ mod tests {
         } else {
             panic!("Expected analog temperature value");
         }
+    }
+
+    #[test]
+    fn test_one_wire_temp_sensor_decodes_raw_16ths() {
+        let mut sensor = OneWireTempSensor::new(
+            "t".to_string(), "НАРУЖ".to_string(),
+            ValueConstraints::analog_with_thresholds(-40.0, 80.0, None, None, Some(45.0), None),
+        );
+
+        // 404 (1/16 °C) -> 25.25 °C, the live bench reading.
+        sensor.read(404).unwrap();
+        assert!((Sensor::value(&sensor).unwrap().as_f32() - 25.25).abs() < 0.001);
+
+        // Sub-zero: the STM32 sends raw -88, which arrives across the u16 boundary as its
+        // i16 bit pattern; the sensor must reinterpret it back to -5.5 °C.
+        sensor.read((-88_i16) as u16).unwrap();
+        assert!((Sensor::value(&sensor).unwrap().as_f32() - (-5.5)).abs() < 0.001);
+
+        assert_eq!(sensor.metadata().unit, "°C");
+    }
+
+    #[test]
+    fn test_one_wire_temp_sensor_clamps_to_constraints() {
+        let mut sensor = OneWireTempSensor::new(
+            "t".to_string(), "x".to_string(),
+            ValueConstraints::analog(-40.0, 60.0),
+        );
+        sensor.read(2000).unwrap(); // 125.0 °C -> clamped to 60.0
+        assert_eq!(Sensor::value(&sensor).unwrap().as_f32(), 60.0);
+        sensor.read((-1000_i16) as u16).unwrap(); // -62.5 °C -> clamped to -40.0
+        assert_eq!(Sensor::value(&sensor).unwrap().as_f32(), -40.0);
     }
 
     #[test]

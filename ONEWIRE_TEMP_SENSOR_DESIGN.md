@@ -100,7 +100,7 @@ Implemented in a dedicated module (`stm32_adc_module/Niva_Dashboard_ADC_Module/s
 Interrupt-interference mitigation: only step 1 (CRC8 + retry-next-cycle) is implemented, as specified. Masking EXTI0/EXTI1 around the scratchpad-read burst (step 2) is left for bench testing to justify.
 
 ## Rust app changes needed
-Deferred — specified separately, alongside `DATA_DRIVEN_SENSOR_CONFIG_DESIGN.md`. In brief, the eventual work is: a `$T`-line parse branch in `ADCDataProvider::run_loop`, a per-address temperature store with per-address staleness on (or beside) `ADCFrame`, an address → logical-sensor map from config, "ignore unknown address" on the main UI, and a `$T` equivalent in `TestADCDataProvider` so self-test exercises the temp indicators.
+Specified in **`ONEWIRE_TEMP_SENSOR_RUST_DESIGN.md`**. In brief: a `$T`-line parse branch in `ADCDataProvider::run_loop`, a standalone `AdcTempFrame` (ROM-keyed, per-address staleness) off `ADCDataProvider`, `HwTempOut`/`HwTempInt` inputs, `OneWireTempChannelProvider` + `OneWireTempSensor`, an address → logical-sensor map from `sensor_config.json` (extended `load_chains`: `provider: "adc_temp"`, `kind: "one_wire_temp"`, top-level `rom`), a synthetic `AdcTempFrame` in `TestADCDataProvider` for self-test, and a dedicated `ТЕМП` page off `MainPage`'s `Left3` slot.
 
 ## Settled decisions
 - **Resolution: 10-bit** (0.25 °C, 187.5 ms conversion). Fixed via `DS18B20_RES_BITS`.

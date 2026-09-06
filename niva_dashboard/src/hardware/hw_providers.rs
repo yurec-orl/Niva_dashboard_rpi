@@ -20,7 +20,7 @@
 //   -> AnalogSensor(convert raw data to logical values) -> UI Rendering
 
 use crate::hardware::gpio_input::{GpioRead, PinState};
-use crate::util::adc_data_provider::{ADCFrame, AdcChannel};
+use crate::util::adc_data_provider::{ADCFrame, AdcChannel, AdcTempFrame};
 use crate::util::bno085_data_provider::Bno085Frame;
 use crate::util::gnss_data_provider::GnssFrame;
 use crate::util::ups_i2c_provider::UpsRawFrame;
@@ -88,6 +88,13 @@ pub enum HWInput {
     // BNO085 link health (see Bno085LinkStatusProvider, mirrors HwAdcLink/HwGnssLink) — not
     // a physical sensor.
     HwBno085Link,
+    // One-Wire (DS18B20) bus temperatures (see ONEWIRE_TEMP_SENSOR_RUST_DESIGN.md). Read by
+    // 64-bit ROM address from AdcTempFrame via OneWireTempChannelProvider, not by positional
+    // ADC channel, so adc_channel() returns None for these. The bus is discovery-driven but
+    // the dashboard's consumed set is a fixed enum; sensor_config.json maps a ROM string to
+    // one of these, and any unmapped address on the bus is ignored.
+    HwTempOut,   // outside air
+    HwTempInt,   // cabin / interior
     // Fused heading (see hardware::heading_fusion_sensor, HEADING_FUSION_DESIGN.md)
     HwHeading,
     // Confidence tier for HwHeading (see hardware::heading_fusion_sensor::HeadingConfidence)
@@ -186,6 +193,8 @@ impl HWInput {
             HWInput::HwGnssLink => "HwGnssLink",
             HWInput::HwBno085Heading => "HwBno085Heading",
             HWInput::HwBno085Link => "HwBno085Link",
+            HWInput::HwTempOut => "HwTempOut",
+            HWInput::HwTempInt => "HwTempInt",
             HWInput::HwHeading => "HwHeading",
             HWInput::HwHeadingConfidence => "HwHeadingConfidence",
             HWInput::HwHeadingAccuracy => "HwHeadingAccuracy",
@@ -209,7 +218,8 @@ impl HWInput {
         HWInput::HwAdcLink, HWInput::HwUPSCurrent, HWInput::HwUPSChargeState, HWInput::HwUPSLink,
         HWInput::HwGnssSpeed, HWInput::HwGnssMovingHeading, HWInput::HwGnssAltitude,
         HWInput::HwGnssSatellites, HWInput::HwGnssFixQuality, HWInput::HwGnssLink,
-        HWInput::HwBno085Heading, HWInput::HwBno085Link, HWInput::HwHeading,
+        HWInput::HwBno085Heading, HWInput::HwBno085Link,
+        HWInput::HwTempOut, HWInput::HwTempInt, HWInput::HwHeading,
         HWInput::HwHeadingConfidence, HWInput::HwHeadingAccuracy, HWInput::HwDeadReckoningElapsed,
         HWInput::HwTestAlertInput,
     ];
@@ -291,6 +301,38 @@ impl HWDigitalProvider for ADCChannelProvider {
     fn read_digital(&self, _input: HWInput) -> Result<Level, String> {
         self.frame.get_channel(self.channel.index())
             .map(|value| if value > 0 { Level::High } else { Level::Low })
+    }
+}
+
+/// Reads one DS18B20 by ROM address from the shared AdcTempFrame (populated from the STM32's
+/// `$T` line — see ONEWIRE_TEMP_SENSOR_RUST_DESIGN.md). One instance per logical temperature
+/// input, with the ROM string coming from sensor_config.json. Mirrors GnssChannelProvider's
+/// frame-wrapping pattern rather than ADCChannelProvider's positional-index one.
+///
+/// The raw 1/16 °C register is signed; it rides the u16 HWAnalogProvider boundary as its
+/// bit pattern and OneWireTempSensor reverses the reinterpret (`(input as i16) as f32 /
+/// 16.0`), exactly as UPSDataProvider → UpsCurrentSensor does for the INA219's signed
+/// current register. A missing or stale address is an `Err`, which read_all_sensors
+/// tolerates per-chain — the indicator then renders stale rather than a bogus 0 °C.
+pub struct OneWireTempChannelProvider {
+    input: HWInput,
+    rom: String,
+    frame: AdcTempFrame,
+}
+
+impl OneWireTempChannelProvider {
+    pub fn new(input: HWInput, rom: impl Into<String>, frame: AdcTempFrame) -> Self {
+        OneWireTempChannelProvider { input, rom: rom.into(), frame }
+    }
+}
+
+impl HWAnalogProvider for OneWireTempChannelProvider {
+    fn input(&self) -> HWInput { self.input }
+
+    fn read_analog(&self, _input: HWInput) -> Result<u16, String> {
+        self.frame.fresh_raw(&self.rom)
+            .map(|raw| raw as u16)
+            .ok_or_else(|| format!("no fresh DS18B20 reading for {}", self.rom))
     }
 }
 

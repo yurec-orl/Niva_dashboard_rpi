@@ -1,6 +1,6 @@
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
-use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition, DIAG_PAGE_ID, GNSS_PAGE_ID, HORZ_PAGE_ID};
+use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition, DIAG_PAGE_ID, GNSS_PAGE_ID, HORZ_PAGE_ID, TEMP_PAGE_ID};
 use crate::page_framework::events::{EventReceiver, SmartEventSender};
 use crate::hardware::sensor_manager::SensorManager;
 use crate::hardware::hw_providers::{*};
@@ -312,6 +312,10 @@ impl MainPage {
             PageButton::new(ButtonPosition::Left2, "ГОРИЗ".into(), Box::new({
                 let sender = smart_sender.clone();
                 move || sender.send(UIEvent::SwitchToPage(HORZ_PAGE_ID))
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Left3, "ТЕМП".into(), Box::new({
+                let sender = smart_sender.clone();
+                move || sender.send(UIEvent::SwitchToPage(TEMP_PAGE_ID))
             }) as Box<dyn FnMut()>),
             PageButton::new(ButtonPosition::Left4, "СБРОС".into(), Box::new({
                 let sender = smart_sender.clone();

@@ -207,6 +207,40 @@
     }
   },
   {
+    "group": "sensor",
+    "hw_input": "HwTempOut",
+    "provider": "adc_temp",
+    "rom": "2854df6b000000d9",
+    "analog_processors": [
+      { "type": "moving_average", "window": 5 }
+    ],
+    "sensor": {
+      "kind": "one_wire_temp",
+      "id": "HwTempOut",
+      "name": "НАРУЖ",
+      "constraints": {
+        "min": -55.0, "max": 125.0
+      }
+    }
+  },
+  {
+    "group": "sensor",
+    "hw_input": "HwTempInt",
+    "provider": "adc_temp",
+    "rom": "28cb586a00000059",
+    "analog_processors": [
+      { "type": "moving_average", "window": 5 }
+    ],
+    "sensor": {
+      "kind": "one_wire_temp",
+      "id": "HwTempInt",
+      "name": "САЛОН",
+      "constraints": {
+        "min": -55.0, "max": 125.0
+      }
+    }
+  },
+  {
     "group": "button",
     "hw_input": "HwButton0",
     "provider": "adc",

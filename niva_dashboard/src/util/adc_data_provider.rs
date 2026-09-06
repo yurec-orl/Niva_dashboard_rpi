@@ -1,5 +1,6 @@
 use crate::util::serial_reader::{LineSerialReader, SerialReader};
 
+use std::collections::HashMap;
 use std::fmt;
 use std::thread;
 use std::sync::Arc;
@@ -16,6 +17,12 @@ const RECONNECT_INTERVAL: Duration = Duration::from_secs(2);
 /// (suppresses "channel not in frame" read-error logging while the link is known down)
 /// so the two stay in agreement about what counts as "down".
 pub const ADC_LINK_MAX_AGE: Duration = Duration::from_millis(500);
+
+/// A DS18B20 address is considered stale after this long without a fresh `$T` reading for
+/// it (see ONEWIRE_TEMP_SENSOR_RUST_DESIGN.md and AdcTempFrame below). The `$T` cadence is
+/// ~1 Hz, so this is ~5 missed cycles — deliberately far longer than ADC_LINK_MAX_AGE (the
+/// telemetry-frame threshold) so a single dropped CRC never blanks the temperature display.
+pub const TEMP_ADDR_MAX_AGE: Duration = Duration::from_secs(5);
 
 /// USB hub location for the STM32 ADC module, as reported by `uhubctl` (see
 /// PROJECT_CONTEXT.md "ADC module connectivity"). Hardware-specific — must be updated if
@@ -175,6 +182,85 @@ impl ADCFrame {
     }
 }
 
+/// One DS18B20 scratchpad reading: the raw temperature register in 1/16 °C (its native
+/// signed format — negative values are real, e.g. -88 → -5.5 °C) plus when it last arrived.
+#[derive(Clone, Copy)]
+struct TempReading {
+    raw_16ths: i16,
+    updated: Instant,
+}
+
+/// Shared, thread-safe store for the STM32's `$T` one-wire temperature line (see
+/// ONEWIRE_TEMP_SENSOR_RUST_DESIGN.md and ONEWIRE_TEMP_SENSOR_DESIGN.md's wire protocol).
+///
+/// Kept separate from ADCFrame rather than merged into it: `$T` data is keyed by 64-bit ROM
+/// address (a 16-char hex string) not by positional channel index, its values are signed,
+/// and it needs a per-address timestamp for staleness that ADCFrame's single `last_update`
+/// can't express. Same reasoning that keeps GnssFrame / Bno085Frame as their own handles.
+///
+/// The background thread (ADCDataProvider::run_loop, or TestADCDataProvider's synthetic
+/// writer) owns the writer side; the sensor layer only reads, via OneWireTempChannelProvider.
+#[derive(Clone)]
+pub struct AdcTempFrame {
+    readings: Arc<Mutex<HashMap<String, TempReading>>>,
+    /// Bumped on every `$T` line, including the bare `$T\n` "bus alive, nothing found"
+    /// keepalive — lets a consumer tell "one-wire bus reporting" from "no `$T` at all".
+    last_line: Arc<Mutex<Instant>>,
+}
+
+impl AdcTempFrame {
+    pub fn new() -> Self {
+        AdcTempFrame {
+            readings: Arc::new(Mutex::new(HashMap::new())),
+            last_line: Arc::new(Mutex::new(Instant::now())),
+        }
+    }
+
+    /// Raw 1/16 °C register for `rom` if a reading has arrived within TEMP_ADDR_MAX_AGE,
+    /// else None (never seen, or gone stale). Callers treat None as "sensor unavailable
+    /// this cycle" — see OneWireTempChannelProvider.
+    pub fn fresh_raw(&self, rom: &str) -> Option<i16> {
+        self.readings.lock().unwrap().get(rom).and_then(|r| {
+            (r.updated.elapsed() <= TEMP_ADDR_MAX_AGE).then_some(r.raw_16ths)
+        })
+    }
+
+    /// Time since any `$T` line last arrived. Distinguishes "one-wire bus alive" from
+    /// "no `$T` line at all" (firmware predates the feature / link down). Not yet consumed
+    /// — for the ТЕМП page's future "bus down" vs. "all sensors stale" distinction.
+    #[allow(dead_code)]
+    pub fn bus_last_line_age(&self) -> Duration {
+        self.last_line.lock().unwrap().elapsed()
+    }
+
+    /// Every ROM address seen this session, sorted. Not yet consumed — for the deferred
+    /// commissioning view (reading opaque addresses off the running dashboard to build the
+    /// address → logical-sensor map, see ONEWIRE_TEMP_SENSOR_DESIGN.md's open decision).
+    #[allow(dead_code)]
+    pub fn addresses(&self) -> Vec<String> {
+        let mut addrs: Vec<String> = self.readings.lock().unwrap().keys().cloned().collect();
+        addrs.sort();
+        addrs
+    }
+
+    fn update_reading(&self, rom: &str, raw_16ths: i16) {
+        self.readings.lock().unwrap().insert(
+            rom.to_string(),
+            TempReading { raw_16ths, updated: Instant::now() },
+        );
+    }
+
+    fn touch_line(&self) {
+        *self.last_line.lock().unwrap() = Instant::now();
+    }
+}
+
+impl Default for AdcTempFrame {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Outcome of the most recent (or in-progress) oscilloscope burst capture, shared between
 /// ADCDataProvider's background thread (writer) and OscPage (reader) via OscFrame.
 #[derive(Clone)]
@@ -298,6 +384,7 @@ pub struct ADCDataProvider {
     baud: u32,
     should_stop: Arc<AtomicBool>,
     frame: ADCFrame,
+    temp_frame: AdcTempFrame,
     osc_frame: OscFrame,
     thread: Option<thread::JoinHandle<()>>,
 }
@@ -309,6 +396,7 @@ impl ADCDataProvider {
             baud,
             should_stop: Arc::new(AtomicBool::new(false)),
             frame: ADCFrame::new(),
+            temp_frame: AdcTempFrame::new(),
             osc_frame: OscFrame::new(),
             thread: None,
         }
@@ -323,11 +411,12 @@ impl ADCDataProvider {
         let baud = self.baud;
         let should_stop = Arc::clone(&self.should_stop);
         let frame = self.frame.clone();
+        let temp_frame = self.temp_frame.clone();
         let osc_frame = self.osc_frame.clone();
 
         match std::thread::Builder::new()
             .name("adc-data-provider".into())
-            .spawn(move || Self::run_loop(&port, baud, &should_stop, &frame, &osc_frame)) {
+            .spawn(move || Self::run_loop(&port, baud, &should_stop, &frame, &temp_frame, &osc_frame)) {
             Ok(handle) => self.thread = Some(handle),
             Err(e) => return Err(AdcDataProviderError::SpawnFailed(e)),
         }
@@ -338,7 +427,7 @@ impl ADCDataProvider {
     /// Background thread body: (re)opens the serial port whenever there is no live
     /// connection, then reads frames until the link drops, looping back to reconnecting.
     /// Runs until `should_stop` is set.
-    fn run_loop(port: &str, baud: u32, should_stop: &AtomicBool, frame: &ADCFrame, osc_frame: &OscFrame) {
+    fn run_loop(port: &str, baud: u32, should_stop: &AtomicBool, frame: &ADCFrame, temp_frame: &AdcTempFrame, osc_frame: &OscFrame) {
         let mut conn = AdcConnection::new();
         // A hub-wide power cycle is far more intrusive than a routine reconnect (it also
         // drops whatever else shares the hub), so it's attempted at most once per outage —
@@ -369,15 +458,24 @@ impl ADCDataProvider {
 
             match conn.reader.as_mut().unwrap().read_line() {
                 Some(line) if !line.is_empty() => {
-                    // Strip leading '$' frame marker before parsing channel values
-                    let values: Vec<u16> = line
-                        .trim_start_matches('$')
-                        .split(',')
-                        .filter_map(|s| s.trim().parse().ok())
-                        .collect();
-                    if !values.is_empty() {
-                        frame.update(values);
-                        reset_attempted = false;
+                    if let Some(rest) = line.strip_prefix("$T").filter(|r| r.is_empty() || r.starts_with(',')) {
+                        // One-wire temperature line (see ONEWIRE_TEMP_SENSOR_RUST_DESIGN.md):
+                        // asynchronous, ~1 Hz, interleaved with the 50 Hz `$…` frames.
+                        // Deliberately does NOT touch `frame`'s timestamp — a `$T` line says
+                        // nothing about telemetry-frame liveness, and HARD_RESET_STALE_THRESHOLD
+                        // must still fire if `$…` frames stop while only `$T` keeps arriving.
+                        Self::parse_temp_line(rest, temp_frame);
+                    } else {
+                        // Strip leading '$' frame marker before parsing channel values
+                        let values: Vec<u16> = line
+                            .trim_start_matches('$')
+                            .split(',')
+                            .filter_map(|s| s.trim().parse().ok())
+                            .collect();
+                        if !values.is_empty() {
+                            frame.update(values);
+                            reset_attempted = false;
+                        }
                     }
                 }
                 None => {
@@ -402,6 +500,29 @@ impl ADCDataProvider {
                     }
                 }
             }
+        }
+    }
+
+    /// Parses the body of a `$T` line (everything after the `$T` marker — either empty for
+    /// the bare `$T\n` keepalive, or `,<rom>:<raw>;<rom>:<raw>;...`) into `temp_frame`.
+    /// A malformed pair (bad ROM length/charset, non-integer value) is skipped without
+    /// dropping the well-formed pairs alongside it — the one-wire harness is noisy by
+    /// design and the STM32 already omits any sensor that fails its CRC that cycle.
+    fn parse_temp_line(rest: &str, temp_frame: &AdcTempFrame) {
+        temp_frame.touch_line();
+        let Some(pairs) = rest.strip_prefix(',') else { return }; // bare "$T" keepalive
+        for pair in pairs.split(';') {
+            let pair = pair.trim();
+            if pair.is_empty() {
+                continue;
+            }
+            let Some((rom, raw)) = pair.split_once(':') else { continue };
+            let rom = rom.trim();
+            if rom.len() != 16 || !rom.bytes().all(|b| b.is_ascii_hexdigit()) {
+                continue;
+            }
+            let Ok(raw_16ths) = raw.trim().parse::<i16>() else { continue };
+            temp_frame.update_reading(rom, raw_16ths);
         }
     }
 
@@ -490,6 +611,12 @@ impl ADCDataProvider {
         self.frame.clone()
     }
 
+    /// Returns a cloneable handle to the shared one-wire temperature store (see
+    /// OneWireTempChannelProvider). Populated from `$T` lines by the background thread.
+    pub fn temp_frame(&self) -> AdcTempFrame {
+        self.temp_frame.clone()
+    }
+
     /// Returns a cloneable handle for requesting oscilloscope burst captures (see OscPage).
     pub fn osc_frame(&self) -> OscFrame {
         self.osc_frame.clone()
@@ -524,6 +651,15 @@ const SELF_TEST_SPEED_PEAK_KMH: f32 = 200.0;
 /// rpm gauge max (unlike SELF_TEST_SPEED_PEAK_KMH, doesn't need to overshoot it: the point
 /// here is just to exercise a realistic idle-to-redline sweep, not to test gauge clamping).
 const SELF_TEST_TACHO_PEAK_RPM: f32 = 6000.0;
+/// The DS18B20 ROM addresses on the current bench one-wire bus — must match
+/// sensor_config.json's HwTempOut/HwTempInt entries so the config-built temperature chains
+/// have data during the self-test sweep (same "keep synthetic + real in step" coupling as
+/// speed_period_raw_from_kmh above; changing a ROM in the JSON means changing it here too).
+const SELF_TEST_TEMP_ROMS: [&str; 2] = ["2854df6b000000d9", "28cb586a00000059"];
+/// °C span of the temperature sweep (envelope 0 → 1). Crosses the warning thresholds in
+/// sensor_config.json so the ТЕМП page and any temperature watchdog get exercised.
+const SELF_TEST_TEMP_MIN_C: f32 = 10.0;
+const SELF_TEST_TEMP_PEAK_C: f32 = 70.0;
 
 /// Populates an ADCFrame with synthetic values instead of reading the STM32 over serial —
 /// mirrors ADCDataProvider's shape (owns an ADCFrame, updates it from a background thread) so
@@ -535,6 +671,7 @@ const SELF_TEST_TACHO_PEAK_RPM: f32 = 6000.0;
 pub struct TestADCDataProvider {
     should_stop: Arc<AtomicBool>,
     frame: ADCFrame,
+    temp_frame: AdcTempFrame,
     thread: Option<thread::JoinHandle<()>>,
 }
 
@@ -544,15 +681,17 @@ impl TestADCDataProvider {
     pub fn start() -> Self {
         let should_stop = Arc::new(AtomicBool::new(false));
         let frame = ADCFrame::new();
+        let temp_frame = AdcTempFrame::new();
         let thread_should_stop = Arc::clone(&should_stop);
         let thread_frame = frame.clone();
+        let thread_temp_frame = temp_frame.clone();
 
         let thread = thread::Builder::new()
             .name("test-adc-data-provider".into())
-            .spawn(move || Self::run_loop(&thread_should_stop, &thread_frame))
+            .spawn(move || Self::run_loop(&thread_should_stop, &thread_frame, &thread_temp_frame))
             .ok();
 
-        TestADCDataProvider { should_stop, frame, thread }
+        TestADCDataProvider { should_stop, frame, temp_frame, thread }
     }
 
     /// Returns a cloneable handle to the shared frame, same as ADCDataProvider::frame().
@@ -560,7 +699,13 @@ impl TestADCDataProvider {
         self.frame.clone()
     }
 
-    fn run_loop(should_stop: &AtomicBool, frame: &ADCFrame) {
+    /// Returns a cloneable handle to the synthetic one-wire temperature store, same as
+    /// ADCDataProvider::temp_frame().
+    pub fn temp_frame(&self) -> AdcTempFrame {
+        self.temp_frame.clone()
+    }
+
+    fn run_loop(should_stop: &AtomicBool, frame: &ADCFrame, temp_frame: &AdcTempFrame) {
         let start = Instant::now();
         while !should_stop.load(Ordering::Relaxed) {
             let elapsed = start.elapsed();
@@ -568,8 +713,26 @@ impl TestADCDataProvider {
                 break;
             }
             frame.update(Self::generate_channels(elapsed));
+            temp_frame.touch_line();
+            for (rom, raw_16ths) in Self::generate_temp_readings(elapsed) {
+                temp_frame.update_reading(rom, raw_16ths);
+            }
             thread::sleep(SELF_TEST_TICK);
         }
+    }
+
+    /// Synthetic `$T` readings for the bench ROMs, sweeping SELF_TEST_TEMP_MIN_C..PEAK_C off
+    /// the same envelope as the analog channels. Quantised to 0.25 °C (4/16) steps to match
+    /// the real 10-bit DS18B20 resolution; the second sensor trails the first by 0.5 °C so
+    /// the two rows read differently.
+    fn generate_temp_readings(elapsed: Duration) -> [(&'static str, i16); 2] {
+        let level = Self::envelope(elapsed);
+        let celsius = SELF_TEST_TEMP_MIN_C + level * (SELF_TEST_TEMP_PEAK_C - SELF_TEST_TEMP_MIN_C);
+        let raw_16ths = ((celsius * 4.0).round() * 4.0) as i16;
+        [
+            (SELF_TEST_TEMP_ROMS[0], raw_16ths),
+            (SELF_TEST_TEMP_ROMS[1], raw_16ths - 8),
+        ]
     }
 
     /// Triangular envelope: 0.0 -> 1.0 over the rise phase, back to 0.0 over the fall phase.
@@ -632,6 +795,55 @@ impl Drop for TestADCDataProvider {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod temp_frame_tests {
+    use super::*;
+
+    #[test]
+    fn parses_a_multi_sensor_temp_line() {
+        let f = AdcTempFrame::new();
+        ADCDataProvider::parse_temp_line(",2854df6b000000d9:404;28cb586a00000059:408", &f);
+        assert_eq!(f.fresh_raw("2854df6b000000d9"), Some(404));
+        assert_eq!(f.fresh_raw("28cb586a00000059"), Some(408));
+        assert_eq!(f.addresses(), vec!["2854df6b000000d9", "28cb586a00000059"]);
+    }
+
+    #[test]
+    fn decodes_a_negative_raw_value() {
+        let f = AdcTempFrame::new();
+        ADCDataProvider::parse_temp_line(",2854df6b000000d9:-88", &f);
+        assert_eq!(f.fresh_raw("2854df6b000000d9"), Some(-88)); // -5.5 °C
+    }
+
+    #[test]
+    fn skips_a_malformed_pair_without_dropping_the_good_ones() {
+        let f = AdcTempFrame::new();
+        // bad ROM length, non-numeric value, missing colon — all skipped; the last is kept.
+        ADCDataProvider::parse_temp_line(
+            ",28ff:100;deadbeefdeadbeef:xx;garbage;28cb586a00000059:400",
+            &f,
+        );
+        assert_eq!(f.fresh_raw("28cb586a00000059"), Some(400));
+        assert_eq!(f.addresses(), vec!["28cb586a00000059"]);
+    }
+
+    #[test]
+    fn bare_keepalive_bumps_the_bus_timestamp_but_adds_no_readings() {
+        let f = AdcTempFrame::new();
+        std::thread::sleep(Duration::from_millis(10));
+        ADCDataProvider::parse_temp_line("", &f);
+        assert!(f.bus_last_line_age() < Duration::from_millis(5));
+        assert!(f.addresses().is_empty());
+    }
+
+    #[test]
+    fn unknown_address_reads_as_none() {
+        let f = AdcTempFrame::new();
+        ADCDataProvider::parse_temp_line(",2854df6b000000d9:404", &f);
+        assert_eq!(f.fresh_raw("0000000000000000"), None);
     }
 }
 
