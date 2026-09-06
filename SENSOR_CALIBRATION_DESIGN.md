@@ -41,7 +41,7 @@ circuit for the earlier caveat below to appeal to.
   sender disconnected and the circuit unpowered, a multimeter across the
   sender-wire connector pin and the shared +12V supply pin reads the variable
   coil's resistance directly — no need to solve for it indirectly from a live
-  anchor point (see Conversion pipeline below, revised).
+  anchor point (see Conversion pipeline below).
 - **Bad news, and this is the important one:** a ratiometric cross-coil gauge
   is itself insensitive to supply voltage — both coils' currents scale
   together with `V_supply`, so their *ratio* (and thus the needle) doesn't
@@ -52,8 +52,8 @@ circuit for the earlier caveat below to appeal to.
   ratiometric gauge's immunity. The cross-coil design explains why the
   *needle* doesn't care about supply voltage; it does nothing to protect our
   single-point voltage tap. See Problem: floating supply voltage below —
-  that section's worst-case linear model is now confirmed as *the* model,
-  not a pessimistic bound.
+  that section's linear model is the actual behavior to design for, not a
+  pessimistic bound.
 
 ## Sensor specifications (reference data)
 
@@ -136,35 +136,60 @@ case the sender is ever swapped and this needs revisiting.)
 
 ## Decisions
 
-- **Default curves: computed from datasheet + divider math**, not bench- or
-  field-measured up front. Fastest path to a real (non-placeholder) curve;
-  explicitly approximate, refined later via the calibration UI once the car
-  exists to check readings against.
-- **Curve representation: piecewise-linear point table**, not a fitted
-  polynomial/Steinhart-Hart curve. Matches the datasheet tables point-for-point,
-  needs no expression language, and a calibration-UI edit is just "insert/
-  adjust one `(raw, value)` point" — the datasheet tolerance bands (15–40%
-  wide) already dwarf whatever smoothness a curve fit would add.
+- **Default curves: transcribed directly from the datasheet**, not computed
+  through the divider or bench/field-measured up front. Since the curve is
+  stored in Ω (below), a table entry *is* the datasheet value — no forward
+  computation, no assumed `V_supply`, nothing to get arithmetically wrong
+  between spec sheet and JSON.
+- **Curve representation: piecewise-linear table over Ω, not raw ADC
+  counts.** (Supersedes an earlier draft of this doc that stored `(raw,
+  value, v_ref)` triples — see Runtime conversion below for why that turned
+  out to be the wrong domain.) Reasons:
+  - Matches the datasheet point-for-point — the JSON *is* the spec table,
+    nothing derived.
+  - **Voltage-invariant.** Ω is a property of the sender alone; it doesn't
+    need a `v_ref` field per point the way a raw-count table did, because
+    raw counts are meaningless without knowing what supply voltage produced
+    them.
+  - **Interpolates in the physically correct domain.** The datasheet's own
+    non-linearity is defined in Ω; the mapping from Ω to raw ADC count is a
+    *further* non-linear (ratiometric-divider) transform on top of that.
+    Piecewise-linear interpolation between two known points gives a
+    different curve shape depending which domain it's done in — interpolating
+    directly on Ω is the more faithful approximation of the sender's real
+    characteristic, since that's the domain the datasheet itself was
+    tabulated in.
+  - Needs no expression language, and a calibration-UI edit is still just
+    "insert/adjust one point" — the datasheet tolerance bands (15–40% wide)
+    already dwarf whatever smoothness a fitted curve would add.
 
 ## Conversion pipeline and R_series
 
-Full path from sender resistance to raw ADC count, per the PA0/PA1/PA2 divider
-in `stm32_adc_module/WIRING.md`:
+Full path between sender resistance and raw ADC count, per the PA0/PA1/PA2
+divider in `stm32_adc_module/WIRING.md` — invertible in either direction:
 
 ```
-R_sender (Ω, from datasheet table)
-  → V_sensor_wire = V_supply × R_sender / (R_series + R_sender)
-  → V_adc_pin     = V_sensor_wire × R2/(R1+R2)      [10/49, fixed, known]
-  → raw           = V_adc_pin / V_ref × 4095         [12-bit, V_ref ≈ 3.3V]
+R_sender (Ω)
+  ⇄ V_sensor_wire = V_supply × R_sender / (R_series + R_sender)
+  ⇄ V_adc_pin     = V_sensor_wire × R2/(R1+R2)      [10/49, fixed, known]
+  ⇄ raw           = V_adc_pin / V_ref_adc × 4095     [12-bit, V_ref_adc ≈ 3.3V]
 ```
 
 `R1`/`R2` (39kΩ/10kΩ) are known. `R_series` is the cross-coil gauge's variable
 coil winding resistance (see Circuit context above) — fixed and physical.
 `V_supply` is not fixed at all — see Problem: floating supply voltage below.
 
+Since curves are now stored in Ω, **this pipeline is only needed at runtime,
+in the raw→Ω direction** (Runtime conversion section below) — building the
+*default* curve needs none of it; the datasheet tables above are copied in
+directly. The Ω→raw direction is still useful separately, for hardware
+bring-up sanity checks and for `TestADCDataProvider`'s self-test simulation
+to synthesize a plausible raw value for a given simulated physical value —
+but it's no longer on the critical path for producing a calibration curve.
+
 **`R_series` measured directly, per gauge** (multimeter across the shared
 +12V supply pin and each gauge's own sender-wire pin, on a spare cluster
-pulled from the car — see procedure below the table):
+pulled from the car):
 
 | Gauge | R_series (Ω) |
 |---|---|
@@ -177,6 +202,10 @@ as accurate for the installed unit only insofar as OEM coil-winding tolerance
 between two units of the same part is tight, which is a reasonable assumption
 but not a verified one. Cheap to re-check against the installed cluster later
 if a computed curve turns out to disagree with a field calibration point.
+This is now a **runtime constant consumed on every `read()` call** (Runtime
+conversion below), not a one-time curve-generation input — a real advantage
+if it later needs correcting: fix one number, and every reading improves,
+rather than needing to regenerate a whole lookup table.
 
 Measurement procedure (multimeter, battery disconnected, ignition off):
 1. Pull the cluster, expose its harness connector.
@@ -189,38 +218,25 @@ Measurement procedure (multimeter, battery disconnected, ignition off):
    gauge. Battery must be disconnected — a resistance reading on a powered
    circuit is meaningless (and risks the meter).
 
-With `R_series` now known:
-
-1. Pick a nominal `V_supply` for the default curve — 12.2V ("moderately
-   charged battery, engine off," the easiest state to reproduce) — and record
-   it as that curve's `v_ref` (see Fix section below; this is exactly the
-   value the runtime compensation needs to know).
-2. Run the datasheet's Ω values through the now-fully-determined pipeline to
-   generate the curve's `(raw, value)` points.
-
-This produces a **curve accurate at one specific `V_supply`** — it says
-nothing about behavior away from that reference voltage, which is what the
-next section is about.
-
 ## Problem: floating supply voltage
 
-The car's 12V rail is not fixed — it runs roughly 12.2V (moderately charged
-battery, engine off) to 14.5V (alternator charging), a **+18.85%** swing.
-Every calibration curve above is anchored to whatever `V_supply` happened to
-be at the moment of its anchor measurement. If the real supply differs from
-that anchor value while the engine is running, every reading built from these
-three inputs is systematically off — and the size of that error is worse than
-the raw voltage swing itself, for reasons below.
+The curve itself is voltage-invariant (it's just Ω), but converting a *live
+raw ADC reading* into Ω requires knowing the actual `V_supply` at that
+instant. Get this wrong — e.g. hardcode a nominal voltage instead of reading
+it live — and the inferred Ω (and hence the reported value) will be
+systematically off, because the car's 12V rail is not fixed: it runs roughly
+12.2V (moderately charged battery, engine off) to 14.5V (alternator
+charging), a **+18.85%** swing.
 
 ### The swing is exact and R_series-independent for the raw signal itself
 
 For a fixed sender resistance, node voltage (and therefore raw ADC count)
 scales **exactly linearly** with `V_supply` — this falls straight out of the
 divider equation in the Conversion pipeline section above, and holds
-regardless of `R_series`'s (unknown) value:
+regardless of `R_series`'s value:
 
 ```
-raw(R_sender, V_supply) = V_supply × [R_sender / (R_series + R_sender)] × (R2/(R1+R2)) × (4095/V_ref)
+raw(R_sender, V_supply) = V_supply × [R_sender / (R_series + R_sender)] × (R2/(R1+R2)) × (4095/V_ref_adc)
 ```
 
 Everything in brackets and after is fixed for a given `R_sender`; only
@@ -229,23 +245,23 @@ Everything in brackets and after is fixed for a given `R_sender`; only
 `R_series`, as long as neither divider stage saturates or hits the Zener
 clamp.
 
-### But the error in the *reported physical value* is worse, and depends on R_series
+### But the error in the *inferred* Ω is worse, and depends on R_series
 
-The calibration curve inverts a ratiometric fraction, `f = R_sender/(R_series
-+ R_sender)`, back to a physical value assuming a fixed nominal `V_supply`.
-When the real supply differs by factor `α = V_actual/V_calibration`, the
-*apparent* fraction becomes `f_apparent = α · f_true` — and because `f` is a
-ratio, not a percentage, converting that back into an apparent resistance
-(`R_apparent = R_series · f_apparent/(1 − f_apparent)`) is **not** an 18.85%
-error in Ω. The amplification depends on `R_series` — now measured (previous
-section) rather than guessed.
+Inverting the ratiometric fraction, `f = R_sender/(R_series + R_sender)`,
+using the wrong `V_supply` doesn't produce a merely-18.85%-off Ω value. If the
+runtime assumed a fixed reference voltage `V_calibration` instead of the real
+`V_actual`, the *apparent* fraction it would compute is `f_apparent = α ·
+f_true` (`α = V_actual/V_calibration`) — and because `f` is a ratio, not a
+percentage, converting that back into an apparent resistance
+(`R_apparent = R_series · f_apparent/(1 − f_apparent)`) amplifies the error,
+by an amount that depends on `R_series`.
 
-Worked example using the **measured** `R_series` values, showing apparent
-reading if calibrated at 12.2V but actually reading at 14.5V (still a
-representative-point illustration — one sample resistance per sensor, not a
-full curve — but no longer using a guessed `R_series`):
+Worked example using the **measured** `R_series` values, showing what a
+naive fixed-12.2V assumption would infer if the real supply were 14.5V
+(still a representative-point illustration — one sample resistance per
+sensor, not a full curve):
 
-| Sensor | True point | True Ω | R_series (measured) | Apparent Ω at 14.5V | Apparent reading | Error |
+| Sensor | True point | True Ω | R_series (measured) | Apparent Ω if V assumed 12.2V | Apparent reading | Error |
 |---|---|---|---|---|---|---|
 | Coolant temp (ТМ106) | 90 °C | 175.5 | 110.4 | 297.9 | ~74.0 °C | **−16.0 °C** |
 | Oil pressure (ММ393А) | 4 kgf/cm² | 118 | 130.8 | 169.0 | ~2.91 kgf/cm² | **−1.09 kgf/cm²** |
@@ -256,7 +272,7 @@ large next to the "critical `<1 kgf/cm²` at idle" threshold already
 documented for this sensor (`PROJECT_CONTEXT.md`) — a supply-voltage-driven
 error in either direction could mask a real low-oil-pressure condition or
 trigger a false alarm, depending on which way the engine happens to be
-running relative to the anchor voltage.
+running relative to whatever voltage a naive implementation assumed.
 
 **No stabilizer to hope for.** An earlier version of this doc floated the
 possibility that a pulsed instrument voltage stabilizer might be absorbing
@@ -269,96 +285,57 @@ compares two coils' currents, and both scale together), which is irrelevant
 to a single-point voltage tap like ours. **The linear model in this section
 is the actual behavior to design for, not a pessimistic upper bound.**
 
-## Fix: compensate using the existing 12V channel
+## Runtime conversion: raw → Ω → value
 
-The `raw ∝ V_supply` relationship is exact and needs no knowledge of
-`R_series` to *undo* — and the dashboard already measures system voltage
-independently, on PA3 (`HWInput::Hw12v` / `AdcChannel::Voltage12V`, per
-`stm32_adc_module/WIRING.md`'s PA3 divider). No new hardware is needed.
-
-Before running a raw count from any calibrated-curve sensor (coolant temp,
-oil pressure, fuel level) through its curve, scale it:
+This is what `GenericCalibratedAnalogSensor::read()` actually does on every
+tick — the reverse of the Conversion pipeline, using the *live* supply
+voltage rather than an assumed one:
 
 ```
-corrected_raw = raw_measured × (V_calibration_reference / V_measured_now)
+V_adc_pin     = raw / 4095 × V_ref_adc                    [V_ref_adc ≈ 3.3V]
+V_sensor_wire = V_adc_pin × (R1+R2)/R2                     [4.9, fixed, known]
+R_sender      = R_series × V_sensor_wire / (V_supply_now − V_sensor_wire)
 ```
 
-- `V_measured_now` — read live from the `Hw12v` chain on every tick.
-- `V_calibration_reference` — the system voltage recorded *at the time each
-  curve's anchor point was captured* (bring-up procedure above, and later any
-  field-UI-captured point), stored alongside the curve/points so the
-  correction is anchored to the right reference, not a hardcoded constant.
+then linearly interpolate `value` from the sensor's `(ohm, value)` curve
+using `R_sender`, clamping past either end (same spirit as `ValueConstraints`
+min/max clamping elsewhere) rather than extrapolating past datasheet-covered
+territory.
 
-This removes the error identified above **without ever needing to
-characterize `R_series`** — it corrects the one thing that's exactly known
-(the linear relationship to `V_supply`) rather than trying to model the
-unknown OEM resistance more precisely. It should be treated as a required
-step in the conversion pipeline for all three calibrated sensors, not an
-optional refinement — implemented once, in the shared curve-lookup code
-(`GenericCalibratedAnalogSensor::read`), not per-sensor.
+- `R1`, `R2`, `V_ref_adc`, and the 4095 (12-bit) scale become explicit named
+  runtime constants — following the precedent already set by `osc_page.rs`'s
+  `OSC_DIVIDER_R1_OHM`/`OSC_DIVIDER_R2_OHM` and its own inverse-divider
+  helper for the PA3 voltage channel, not a new pattern for this codebase.
+- `R_series` is the per-sensor measured constant from the previous section.
+- `V_supply_now` comes from the live `Hw12v` reading — see Cross-sensor
+  dependency below for how it reaches `read()`. No new hardware needed
+  (`HWInput::Hw12v` / `AdcChannel::Voltage12V`, per
+  `stm32_adc_module/WIRING.md`'s PA3 divider, already exists) and no
+  separate "correction factor" step — supplying the right `V_supply_now` is
+  simply what makes the raw→Ω conversion correct in the first place, rather
+  than a compensation bolted on afterward.
+- **Fault handling: `read()` returns `Err`.** As `R_sender` (from the
+  datasheet) approaches or exceeds `R_series`, `V_sensor_wire` approaches
+  `V_supply_now` and the denominator shrinks — normal within these three
+  sensors' real ranges, but a disconnected sender or ADC noise pushing
+  `V_sensor_wire` at or above `V_supply_now` would blow the computed
+  `R_sender` up to a huge or negative value. Rather than compute and clamp a
+  nonsensical resistance, `read()` treats `(V_supply_now − V_sensor_wire)`
+  falling at or below a small margin (a few mV, to absorb ADC noise near the
+  boundary rather than triggering only on exact equality) as a fault and
+  returns `Err(...)` — no signature change needed, since `AnalogSensor::read`
+  already returns `Result<&SensorValue, String>`.
 
-Consequence for the calibration data format: each curve (default and
-overlay) needs to record the reference voltage its points were taken at, not
-just `(raw, value)`:
-
-```jsonc
-"curve": [
-  { "raw": 3550, "value": 30.0, "v_ref": 12.2 },
-  { "raw": 90,   "value": 130.0, "v_ref": 12.2 }
-]
-```
-
-`v_ref` defaults to a documented nominal (e.g. 12.2V, "moderately charged
-battery, engine off" — the easiest state to reliably reproduce when taking an
-anchor reading) if omitted, so hand-authored default curves that predate this
-field don't break.
-
-## Sensor-side representation
-
-New `AnalogSensor` impl, `GenericCalibratedAnalogSensor` (alongside
-`GenericAnalogSensor`'s linear scale), holding a `Vec<(u16, f32, f32)>`
-(raw, value, `v_ref`) sorted ascending by raw count. `read()` applies the
-voltage-compensation fix above first, then finds the bracketing pair and
-linearly interpolates; a raw value past either end clamps to that end's value
-(same spirit as `ValueConstraints` min/max clamping elsewhere) rather than
-extrapolating past datasheet-covered territory.
-
-### Cross-sensor dependency: getting the live 12V reading into read()
-
-Unlike every other chain in scope, this sensor's `read()` needs a second live
-input beyond its own raw channel — the current `Hw12v` reading, for the
-compensation step. `SensorManager`/the chain abstraction assumes one hardware
-input feeds one sensor, so this can't be a trait-signature parameter (would
-force every `AnalogSensor::read()` implementor to accept a value it ignores)
-and can't be a handle back to `SensorManager` (the sensor lives inside a
-chain the manager owns, so a live reference back into `self.sensor_values`
-from inside a sensor `SensorManager::read_all_sensors` is calling `&mut self`
-on isn't something the borrow checker allows).
-
-**Decision: a small shared cell, not a manager handle.**
-
-- `Arc<AtomicU32>`, holding the current 12V reading as bits
-  (`f32::to_bits`/`from_bits`) — `Arc`/atomic rather than `Rc<Cell<_>>`
-  because `Box<dyn AnalogSensor + Send>` already requires the sensor to be
-  `Send`.
-- Created once during chain setup (`main.rs`/`sensor_config.rs`); cloned into
-  the writer and into each `GenericCalibratedAnalogSensor::new(..., v_ref:
-  Arc<AtomicU32>)`.
-- **Writer:** a thin decorator wrapping the `Hw12v` chain's sensor (same
-  pattern as the existing `decorator.rs`), publishing into the `Arc` as a
-  side effect of its own `read()` — not `SensorManager` itself, so the
-  manager and the `AnalogSensor` trait stay untouched.
-- **Ordering:** doesn't matter. Whichever of `Hw12v` or the three calibrated
-  sensors happens to run first within `read_all_sensors`'s `analog_sensors`
-  loop, the calibrated ones see either this tick's or last tick's voltage —
-  at most one tick (~20ms) stale, meaningless against how slowly supply
-  voltage actually moves.
-- **Startup/failure safety:** initialize the `Arc` to the curve's own nominal
-  `v_ref` (12.2V) so ticks before `Hw12v`'s first successful read get a
-  neutral compensation factor of 1.0, not a divide-by-zero. Only write on a
-  *successful* `Hw12v` read, so an ADC link drop leaves the last-known-good
-  voltage in place rather than corrupting every calibrated sensor's reading
-  at once.
+  This also means no new plumbing in `SensorManager`: `read_analog_sensor`
+  already propagates a chain's `Err` without touching `sensor_values` for
+  that tick, and `read_all_sensors` already treats one chain's failure as
+  independent of every other chain's (`sensor_manager.rs`'s existing
+  resilience, exercised by
+  `test_read_all_sensors_one_failing_chain_does_not_block_others`). A fault
+  on, say, the coolant sender simply leaves `HwCoolantTemp` absent from
+  `sensor_values` for that tick — the same "no value this tick" behavior
+  every other transient read failure already produces (a routine GNSS
+  no-fix, an ADC link drop), not a new failure mode for callers to handle.
 
 **Rejected: stabilizing the OEM supply in hardware.** Would remove the
 software problem entirely, but puts a new component in series with the
@@ -370,6 +347,55 @@ would kill all three factory gauges, not just the Pi's copy of the readings
 — software compensation fails soft by comparison. Also doesn't fully remove
 residual error (a regulator has its own tolerance/ripple), unlike the exact
 software relationship derived above.
+
+## Sensor-side representation
+
+New `AnalogSensor` impl, `GenericCalibratedAnalogSensor` (alongside
+`GenericAnalogSensor`'s linear scale), holding:
+- `curve: Vec<(f32, f32)>` — `(ohm, value)`, sorted ascending by `ohm`.
+- `r_series_ohm: f32` — the measured constant from Conversion pipeline above.
+- a handle to the live supply voltage (Cross-sensor dependency, below).
+
+`read()` performs the raw→Ω conversion (Runtime conversion above), then
+finds the bracketing pair in `curve` and linearly interpolates `value`.
+
+### Cross-sensor dependency: getting the live 12V reading into read()
+
+Unlike every other chain in scope, this sensor's `read()` needs a second live
+input beyond its own raw channel — the current `Hw12v` reading, as
+`V_supply_now` in the conversion above. `SensorManager`/the chain abstraction
+assumes one hardware input feeds one sensor, so this can't be a
+trait-signature parameter (would force every `AnalogSensor::read()`
+implementor to accept a value it ignores) and can't be a handle back to
+`SensorManager` (the sensor lives inside a chain the manager owns, so a live
+reference back into `self.sensor_values` from inside a sensor
+`SensorManager::read_all_sensors` is calling `&mut self` on isn't something
+the borrow checker allows).
+
+**Decision: a small shared cell, not a manager handle.**
+
+- `Arc<AtomicU32>`, holding the current 12V reading as bits
+  (`f32::to_bits`/`from_bits`) — `Arc`/atomic rather than `Rc<Cell<_>>`
+  because `Box<dyn AnalogSensor + Send>` already requires the sensor to be
+  `Send`.
+- Created once during chain setup (`main.rs`/`sensor_config.rs`); cloned into
+  the writer and into each `GenericCalibratedAnalogSensor::new(..., v_supply:
+  Arc<AtomicU32>, r_series_ohm: f32, curve: Vec<(f32, f32)>, ...)`.
+- **Writer:** a thin decorator wrapping the `Hw12v` chain's sensor (same
+  pattern as the existing `decorator.rs`), publishing into the `Arc` as a
+  side effect of its own `read()` — not `SensorManager` itself, so the
+  manager and the `AnalogSensor` trait stay untouched.
+- **Ordering:** doesn't matter. Whichever of `Hw12v` or the three calibrated
+  sensors happens to run first within `read_all_sensors`'s `analog_sensors`
+  loop, the calibrated ones see either this tick's or last tick's voltage —
+  at most one tick (~20ms) stale, meaningless against how slowly supply
+  voltage actually moves.
+- **Startup/failure safety:** initialize the `Arc` to a documented nominal
+  (12.2V) so ticks before `Hw12v`'s first successful read get a sane
+  `V_supply_now`, not zero (which would make the conversion's denominator
+  `V_supply_now − V_sensor_wire` degenerate). Only write on a *successful*
+  `Hw12v` read, so an ADC link drop leaves the last-known-good voltage in
+  place rather than corrupting every calibrated sensor's reading at once.
 
 This also **updates a claim in `DATA_DRIVEN_SENSOR_CONFIG_DESIGN.md`**: that
 doc keeps `EngineTemperatureSensor` and friends hardcoded because "JSON isn't
@@ -395,20 +421,31 @@ really is arithmetic, not a lookup, so they stay hardcoded as that doc says.
     "id": "HwCoolantTemp",
     "name": "ТЕМП ОХЛ",
     "units": "°C",
+    "r_series_ohm": 110.4,
     "curve": [
-      { "raw": 3550, "value": 30.0, "v_ref": 12.2 },
-      { "raw": 2500, "value": 40.0, "v_ref": 12.2 },
-      { "raw": 1750, "value": 50.0, "v_ref": 12.2 },
-      { "raw": 90,   "value": 130.0, "v_ref": 12.2 }
+      { "ohm": 1615.0, "value": 30.0 },
+      { "ohm": 1050.0, "value": 40.0 },
+      { "ohm": 702.5,  "value": 50.0 },
+      { "ohm": 482.5,  "value": 60.0 },
+      { "ohm": 335.0,  "value": 70.0 },
+      { "ohm": 241.0,  "value": 80.0 },
+      { "ohm": 175.5,  "value": 90.0 },
+      { "ohm": 130.0,  "value": 100.0 },
+      { "ohm": 98.0,   "value": 110.0 },
+      { "ohm": 75.0,   "value": 120.0 },
+      { "ohm": 58.0,   "value": 130.0 }
     ],
     "constraints": { "min": 0.0, "max": 120.0, "warning_high": 105.0, "critical_high": 115.0 }
   }
 }
 ```
 
-`curve` needs at least 2 points; load fails otherwise, matching the existing
-config loader's fail-fast stance (`DATA_DRIVEN_SENSOR_CONFIG_DESIGN.md`'s
-"bad config is a build-time-equivalent mistake" precedent).
+`curve` values above are the ТМ106 table's per-point midpoints (min…max
+averaged) — the direct transcription this design was meant to enable, not a
+placeholder. `curve` needs at least 2 points; load fails otherwise, matching
+the existing config loader's fail-fast stance
+(`DATA_DRIVEN_SENSOR_CONFIG_DESIGN.md`'s "bad config is a build-time-equivalent
+mistake" precedent).
 
 ## Calibration overlay file (for the field UI)
 
@@ -420,11 +457,11 @@ comments/formatting or corrupting unrelated entries. Instead:
 - A separate `sensor_calibration.json`, keyed by sensor `id`, holding only
   calibration-point overrides:
   ```jsonc
-  { "HwCoolantTemp": [ { "raw": 3480, "value": 30.0 } ] }
+  { "HwCoolantTemp": [ { "ohm": 168.0, "value": 30.0 } ] }
   ```
 - Loaded after `sensor_config.json`; for each matching sensor `id`, its points
   are merged into the base curve — replacing any existing point at the same
-  `raw` (within a small tolerance) and inserting new ones, then re-sorting.
+  `ohm` (within a small tolerance) and inserting new ones, then re-sorting.
 - Not checked into the repo (per-vehicle, per-harness data — `.gitignore`d
   like other machine-specific runtime state), but survives rebuilds/restarts
   since it's a plain file next to `sensor_config.json`.
@@ -437,16 +474,20 @@ sensor values — natural place to add a "capture calibration point" action
 rather than a new page:
 
 1. Operator selects a calibrated sensor (coolant temp / oil pressure / fuel
-   level) and sees its current live raw count.
+   level) and sees its current live reading.
 2. Operator enters the known true physical value for the current moment
    (typed via the existing button-driven input, no keyboard needed — same
    affordance style as other diag-page interactions).
-3. Confirm writes/updates `(current_raw, entered_value, current_v_ref)` into
-   `sensor_calibration.json` — `current_v_ref` read from the live `Hw12v`
-   chain at the same instant, not asked of the operator — and applies it to
-   the running sensor's curve immediately (no restart needed) — mirrors the
-   existing hot-reload pattern (`util::shutdown::watch_for_config_update`)
-   already used for `sensor_config.json` edits.
+3. Confirm computes `current_ohm` from the current raw reading using the
+   *same* raw→Ω conversion `GenericCalibratedAnalogSensor::read()` uses
+   internally (the sensor's `r_series_ohm` plus the live `Hw12v` voltage at
+   that instant) — no separate voltage bookkeeping needed, since the result
+   is already voltage-normalized by construction. Writes/updates
+   `(current_ohm, entered_value)` into `sensor_calibration.json` and applies
+   it to the running sensor's curve immediately (no restart needed) —
+   mirrors the existing hot-reload pattern
+   (`util::shutdown::watch_for_config_update`) already used for
+   `sensor_config.json` edits.
 
 ## Open questions
 
@@ -454,12 +495,12 @@ rather than a new page:
   value" moment for oil pressure and fuel level, which don't have as easy a
   reference as ambient-temp-at-cold-start) — needs deciding once the car is
   available to test against, not before.
-- Whether `raw`-based curve points (this doc's choice, since that's what the
-  sensor actually reads and what a live capture naturally produces) should
-  also carry the corresponding Ω value as a comment/second field for
-  traceability back to the datasheet table — leaning yes, as a non-functional
-  `_ohm_reference` field for humans reading the JSON later, not consumed by
-  the loader.
+- Whether the Ω→raw forward direction (Conversion pipeline above) needs a
+  shared helper of its own for `TestADCDataProvider`'s self-test simulation
+  (to synthesize a plausible raw value for a simulated physical value), or
+  whether that's simple enough to leave inline per call site.
 
 ---
 *Created: September 6, 2026*
+*Revised: September 7, 2026 — curve representation changed from raw-ADC-based
+`(raw, value, v_ref)` points to Ω-based `(ohm, value)` points; see Decisions.*
