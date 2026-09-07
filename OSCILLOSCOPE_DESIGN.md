@@ -18,11 +18,13 @@ Goal: a dedicated, on-demand burst-capture mode — the STM32 pauses its normal 
 ### Command/response protocol
 - **Pi → STM32:** a command line down the existing USB-CDC serial link, e.g. `$OSCCAP\n`. Capture parameters (channel, rate, sample count) are compiled-in `#define`s rather than passed as arguments — matches how `TICK_HZ`/`ADC_OVERSAMPLE` are already fixed constants, and there's no need for a runtime-configurable capture for a single "check the alternator" action. Kept visually distinct from `$A0,A1,...` telemetry frames so the two can't be confused by the parser.
 - **STM32, on receiving `$OSCCAP`:**
-  1. Stop the normal tick-driven 50 Hz telemetry send.
-  2. Run the DMA capture (blocking, ~82 ms). EXTI-driven tacho/speed counters are unaffected (interrupt-based, independent of `loop()`). K-Line RX draining and button-debounce polling pause for that window — acceptable for a manual, user-initiated capture.
-  3. Resume normal 50 Hz telemetry.
-  4. Stream the captured buffer back.
+  1. Emit `$OSCACK\n` immediately, before anything blocks. Lets the Pi distinguish "command never arrived" (no ack) from "command ran but the capture produced nothing" (ack, no `$OSCD`). The command parser also strips a trailing `\r`, so a CRLF sender still matches.
+  2. Stop the normal tick-driven 50 Hz telemetry send.
+  3. Run the DMA capture (blocking, ~82 ms). EXTI-driven tacho/speed counters are unaffected (interrupt-based, independent of `loop()`). K-Line RX draining and button-debounce polling pause for that window — acceptable for a manual, user-initiated capture.
+  4. Resume normal 50 Hz telemetry.
+  5. Stream the captured buffer back. Each line is written with a retry that rides out transient host read-stalls (USB-CDC `write()` gives up the instant the host lags >3 ms), bounded so a vanished host can't hang the firmware.
 - **Framing the buffer back:** the existing Pi-side reader (`adc_serial_reader.rs`) reads line-by-line (`BufReader::read_line`), and the current `char frame[128]` is sized for one CSV telemetry line — not 4096 samples. Rather than changing that reader's fundamental shape, chunk the capture into many ASCII lines with a distinct prefix:
+  - `$OSCACK\n` — sent first, on command receipt (see above).
   - `$OSCD,<seq>,<v0>,<v1>,...,<v63>\n` — 64 lines of 64 samples each (tunable), sequence-numbered so the Pi side can detect drops/reorder.
   - `$OSCEND\n` — sentinel marking the capture complete.
   - Native USB-CDC throughput is well above the nominal 115200 baud setting (that number is largely a formality for a CDC-ACM virtual serial port), so ASCII-encoding ~20KB of samples isn't a real bottleneck for a one-shot transfer.

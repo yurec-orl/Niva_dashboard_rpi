@@ -22,10 +22,19 @@
 //   - D0..D9:  digital indicator states (0/1)
 //   - B0..B7:  button states (0/1, 1 = pressed)
 //
+// Build revision / diagnostics:
+//   STM32 -> Pi: "$VER,<rev>\n" once at boot, and again whenever the Pi sends "$VER\n".
+//                <rev> is the short git hash the firmware was built from ("-dirty" if the
+//                module's working tree had uncommitted changes, "unknown" outside a git
+//                checkout). The boot line is usually missed — the Pi app connects long after
+//                the STM32 powers up — so use the "$VER" query, or a monitor across a reset.
+//
 // Oscilloscope burst-capture command/response (see OSCILLOSCOPE_STM32_IMPLEMENTATION_PLAN.md):
 //   Pi -> STM32: "$OSCCAP\n"  — request a one-shot high-rate capture on PA3 (12V bus).
-//   STM32 -> Pi: normal telemetry pauses; "$OSCD,<seq>,<v0>,<v1>,...\n" chunks stream the
-//                captured buffer, followed by a "$OSCEND\n" sentinel; telemetry then resumes.
+//   STM32 -> Pi: "$OSCACK\n" acknowledges receipt (sent before telemetry pauses, so the Pi
+//                can distinguish "command not received" from "capture produced nothing").
+//                Then "$OSCD,<seq>,<v0>,<v1>,...\n" chunks stream the captured buffer,
+//                followed by a "$OSCEND\n" sentinel; telemetry then resumes.
 //
 // One-Wire DS18B20 temperature bus (see ONEWIRE_TEMP_SENSOR_DESIGN.md, ds18b20_bus.cpp):
 //   Autonomous, no command. DS18B20 sensors sharing the PA10 1-Wire bus are discovered
@@ -219,6 +228,7 @@
 
 #include <Arduino.h>
 #include <HardwareTimer.h>
+#include <string.h>
 
 #include "ds18b20_bus.h"
 
@@ -272,6 +282,12 @@ HardwareSerial KLine(PB11, PB10);
 #define BTN_DEBOUNCE_MASK   0xFF        // 8 consecutive reads to confirm state
 #define KLINE_BUF_SIZE      64          // K-Line RX ring buffer size
 
+// Git revision, injected by git_rev.py (PlatformIO pre-build hook). Fallback keeps plain
+// `pio run` outside a checkout, or a build with extra_scripts stripped, compiling.
+#ifndef FW_GIT_REV
+#define FW_GIT_REV "unknown"
+#endif
+
 // ------------------------------------------------------------
 // Oscilloscope burst capture (see OSCILLOSCOPE_STM32_IMPLEMENTATION_PLAN.md)
 // ------------------------------------------------------------
@@ -283,6 +299,7 @@ HardwareSerial KLine(PB11, PB10);
 #define OSC_BUF_LEN          4096            // samples per capture (~82 ms window)
 #define OSC_CHUNK_SAMPLES    64              // samples per "$OSCD,<seq>,..." line
 #define OSC_DMA_TIMEOUT_MS   150UL           // bounds the capture; expected ~82 ms
+#define OSC_SEND_TIMEOUT_MS  2000UL          // bounds the buffer dump if the host stops reading
 
 // ------------------------------------------------------------
 // Speed sensor timing
@@ -431,6 +448,25 @@ static inline uint8_t read_hi(uint32_t pin) {
 // Oscilloscope capture — "$OSCCAP" command handling
 // ============================================================
 
+// Writes the whole string or gives up after OSC_SEND_TIMEOUT_MS. USBSerial::write() returns
+// short the moment CDC_connected() goes false, which happens on any host read stall longer
+// than USB_CDC_TRANSMIT_TIMEOUT (3 ms) — likely at least once during the ~20 KB dump. A
+// plain Serial.print() there silently drops samples with the Pi's only clue being a missing
+// "$OSCEND". Retrying past the transient stall keeps the transfer whole.
+static bool osc_write_all(const char *s) {
+    size_t len = strlen(s);
+    size_t off = 0;
+    uint32_t start = millis();
+    while (off < len) {
+        off += Serial.write((const uint8_t *)s + off, len - off);
+        if (off < len) {
+            if (millis() - start > OSC_SEND_TIMEOUT_MS) return false; // host stopped reading
+            delay(1); // let the host drain; USBD_CDC_TransmitCplt clears the transmit timeout
+        }
+    }
+    return true;
+}
+
 // Streams osc_buffer back as chunked "$OSCD,<seq>,<v0>,<v1>,...\n" lines followed by a
 // "$OSCEND\n" sentinel. Uses its own frame buffer rather than the 128-byte telemetry
 // `frame[]` in loop() — that one is on the hot 50 Hz path and shouldn't grow to fit a
@@ -444,9 +480,9 @@ static void oscilloscope_send_buffer() {
             n += snprintf(osc_frame + n, sizeof(osc_frame) - n, ",%u", osc_buffer[i + j]);
         }
         snprintf(osc_frame + n, sizeof(osc_frame) - n, "\n");
-        Serial.print(osc_frame);
+        if (!osc_write_all(osc_frame)) return; // host vanished mid-dump — no point sending $OSCEND
     }
-    Serial.print("$OSCEND\n");
+    osc_write_all("$OSCEND\n");
 }
 
 // Blocking one-shot capture: pauses normal telemetry (implicitly — this runs synchronously
@@ -532,7 +568,12 @@ static void run_oscilloscope_capture() {
 
 static void dispatch_command(const char *line) {
     if (strcmp(line, "$OSCCAP") == 0) {
+        // Ack before run_oscilloscope_capture() blocks (and pauses telemetry for ~82 ms) so
+        // the Pi can tell a received command from one that never arrived.
+        Serial.print("$OSCACK\n");
         run_oscilloscope_capture();
+    } else if (strcmp(line, "$VER") == 0) {
+        Serial.print("$VER," FW_GIT_REV "\n");
     }
     // else if (strncmp(line, "#B,", 3) == 0) { ... brightness, per BUTTON_BACKLIGHT_DESIGN.md ... }
 }
@@ -544,6 +585,7 @@ static void poll_incoming_commands() {
     while (Serial.available()) {
         char c = (char)Serial.read();
         if (c == '\n') {
+            if (cmd_len > 0 && cmd_line[cmd_len - 1] == '\r') cmd_len--; // tolerate CRLF senders
             cmd_line[cmd_len] = '\0';
             dispatch_command(cmd_line);
             cmd_len = 0;
@@ -599,6 +641,10 @@ void setup() {
 
     // Serial.begin() hands PA12 to the USB peripheral from here
     Serial.begin(115200);
+
+    // Build revision — see the "$VER" note in the file header. Best-effort at boot (the host
+    // usually isn't attached yet); the "$VER" command is the reliable path.
+    Serial.print("$VER," FW_GIT_REV "\n");
 
     // One-Wire DS18B20 temperature bus on PA10 — discovery starts on the first tick
     ds18b20_setup();

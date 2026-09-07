@@ -35,8 +35,12 @@ impl LineSerialReader {
     /// Writes raw bytes to the port (e.g. an `$OSCCAP\n` command line). The reader wraps the
     /// port in a `BufReader`, which only buffers reads — writes go straight through.
     pub fn write_line(&mut self, s: &str) -> Result<(), String> {
-        self.reader.get_mut().write_all(s.as_bytes())
-            .map_err(|e| format!("serial write failed: {}", e))
+        let port = self.reader.get_mut();
+        port.write_all(s.as_bytes())
+            .map_err(|e| format!("serial write failed: {}", e))?;
+        // Drain the OS buffer before returning — callers treat a successful write as "the
+        // command is on the wire", and the next thing they do is block waiting for a reply.
+        port.flush().map_err(|e| format!("serial flush failed: {}", e))
     }
 }
 

@@ -352,7 +352,9 @@ fn run_osc_capture_test() {
     };
     let mut reader = BufReader::new(port);
 
-    if let Err(e) = reader.get_mut().write_all(b"$OSCCAP\n") {
+    let sent = reader.get_mut().write_all(b"$OSCCAP\n");
+    let sent = sent.and_then(|()| reader.get_mut().flush());
+    if let Err(e) = sent {
         log::error!("Failed to send $OSCCAP: {}", e);
         return;
     }
@@ -366,6 +368,7 @@ fn run_osc_capture_test() {
     let mut malformed_lines = 0usize;
     let start = Instant::now();
     let mut got_end = false;
+    let mut got_ack = false;
     let mut line = String::new();
 
     while start.elapsed() < OSC_CAPTURE_TIMEOUT {
@@ -377,6 +380,9 @@ fn run_osc_capture_test() {
                 if trimmed == "$OSCEND" {
                     got_end = true;
                     break;
+                } else if trimmed == "$OSCACK" {
+                    got_ack = true;
+                    log::info!("STM32 acknowledged $OSCCAP");
                 } else if let Some(rest) = trimmed.strip_prefix("$OSCD,") {
                     let mut parts = rest.split(',');
                     let seq = match parts.next().and_then(|s| s.parse::<usize>().ok()) {
@@ -414,6 +420,15 @@ fn run_osc_capture_test() {
 
     if !got_end {
         let received = chunks.iter().filter(|c| c.is_some()).count();
+        if !got_ack && received == 0 {
+            log::error!(
+                "No $OSCACK and no data after {:?} — the flashed firmware likely predates the \
+                 $OSCCAP handler (reflash from stm32_adc_module/), or the STM32 is not reading \
+                 its USB serial RX",
+                OSC_CAPTURE_TIMEOUT
+            );
+            return;
+        }
         log::error!(
             "Timed out after {:?} waiting for $OSCEND ({} of {} chunks received)",
             OSC_CAPTURE_TIMEOUT, received, OSC_EXPECTED_CHUNKS

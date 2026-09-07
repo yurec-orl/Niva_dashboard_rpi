@@ -542,6 +542,7 @@ impl ADCDataProvider {
         let mut chunks: Vec<Option<Vec<u16>>> = vec![None; OSC_EXPECTED_CHUNKS];
         let start = Instant::now();
         let mut got_end = false;
+        let mut got_ack = false;
 
         while start.elapsed() < OSC_CAPTURE_TIMEOUT {
             frame.touch();
@@ -550,6 +551,8 @@ impl ADCDataProvider {
                     if line == "$OSCEND" {
                         got_end = true;
                         break;
+                    } else if line == "$OSCACK" {
+                        got_ack = true;
                     } else if let Some(rest) = line.strip_prefix("$OSCD,") {
                         let mut parts = rest.split(',');
                         if let Some(seq) = parts.next().and_then(|s| s.parse::<usize>().ok()).filter(|&s| s < OSC_EXPECTED_CHUNKS) {
@@ -568,6 +571,11 @@ impl ADCDataProvider {
 
         if !got_end {
             let received = chunks.iter().filter(|c| c.is_some()).count();
+            if !got_ack && received == 0 {
+                return Err("STM32 never acknowledged $OSCCAP (no $OSCACK, no data) — flashed \
+                            firmware likely predates the oscilloscope handler, or the serial \
+                            RX path is down".to_string());
+            }
             return Err(format!("timed out waiting for $OSCEND ({} of {} chunks received)", received, OSC_EXPECTED_CHUNKS));
         }
 

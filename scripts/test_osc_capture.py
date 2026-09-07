@@ -3,9 +3,12 @@
 test_osc_capture.py — Exercise the STM32 oscilloscope burst-capture path directly.
 
 Sends "$OSCCAP" to the ADC module and reassembles the chunked
-"$OSCD,<seq>,v0..v63" / "$OSCEND" response into one PA3 sample buffer, then
-reports on it. Use to isolate whether "oscilloscope mode stopped working" is a
-firmware/capture problem or a Pi-side (ADCDataProvider / OscPage) problem.
+"$OSCACK" / "$OSCD,<seq>,v0..v63" / "$OSCEND" response into one PA3 sample
+buffer, then reports on it. The "$OSCACK" line (sent as soon as the STM32 parses
+the command, before the blocking capture) separates "command never received"
+from "capture produced nothing". Use to isolate whether "oscilloscope mode
+stopped working" is a firmware/capture problem or a Pi-side (ADCDataProvider /
+OscPage) problem.
 
 The dashboard must NOT be running — it holds the port open exclusively:
     sudo systemctl stop niva-dashboard
@@ -64,18 +67,22 @@ def read_baseline_frames(port, n=10):
 
 
 def capture(port):
-    """Send $OSCCAP, collect chunks. Returns (samples_or_None, chunks_seen_set, extra_lines)."""
+    """Send $OSCCAP, collect chunks.
+
+    Returns (samples_or_None, chunks_seen_set, extra_lines, got_end, got_ack).
+    """
     chunks = [None] * OSC_EXPECTED_CHUNKS
     seen = set()
     extra = []
     got_end = False
+    got_ack = False
 
     port.reset_input_buffer()
     try:
         port.write(b"$OSCCAP\n")
         port.flush()
     except serial.SerialTimeoutException:
-        return None, seen, [("write-timeout", "STM32 not reading USB RX — command not delivered")], False
+        return None, seen, [("write-timeout", "STM32 not reading USB RX — command not delivered")], False, False
 
     start = time.monotonic()
     while time.monotonic() - start < CAPTURE_TIMEOUT_S:
@@ -86,6 +93,9 @@ def capture(port):
         if line == "$OSCEND":
             got_end = True
             break
+        if line == "$OSCACK":
+            got_ack = True
+            continue
         if line.startswith("$OSCD,"):
             fields = line[len("$OSCD,"):].split(",")
             try:
@@ -105,15 +115,15 @@ def capture(port):
             extra.append(("other", line[:80]))
 
     if not got_end and len(seen) < OSC_EXPECTED_CHUNKS:
-        return None, seen, extra, got_end
+        return None, seen, extra, got_end, got_ack
 
     if len(seen) < OSC_EXPECTED_CHUNKS:
-        return None, seen, extra, got_end
+        return None, seen, extra, got_end, got_ack
 
     samples = []
     for c in chunks:
         samples.extend(c)
-    return samples, seen, extra, got_end
+    return samples, seen, extra, got_end, got_ack
 
 
 def ascii_plot(samples, width=72, height=14):
@@ -158,9 +168,10 @@ def main():
 
         print("Sending $OSCCAP ...")
         t0 = time.monotonic()
-        samples, seen, extra, got_end = capture(port)
+        samples, seen, extra, got_end, got_ack = capture(port)
         dt = time.monotonic() - t0
         print(f"  capture round-trip: {dt * 1000:.0f} ms, "
+              f"$OSCACK={'yes' if got_ack else 'NO'}, "
               f"{len(seen)}/{OSC_EXPECTED_CHUNKS} chunks, $OSCEND={'yes' if got_end else 'NO'}")
 
         tel = sum(1 for k, _ in extra if k == "telemetry")
@@ -177,10 +188,16 @@ def main():
                 print("  write() to the STM32 timed out — the module is not reading its")
                 print("  USB serial RX at all. The flashed firmware predates the $OSCCAP")
                 print("  handler (poll_incoming_commands). Reflash from stm32_adc_module/.")
+            elif not got_ack and not seen:
+                print("  No $OSCACK and zero $OSCD chunks — the STM32 never saw the command.")
+                print("   - firmware on the STM32 predates the $OSCCAP/$OSCACK handler")
+                print("     (reflash from stm32_adc_module/), or")
+                print("   - the command is not reaching the MCU (RX path / wrong port)")
+            elif got_ack and not seen:
+                print("  $OSCACK received but no $OSCD chunks — command got through, but the")
+                print("  capture/DMA path produced nothing. Check TIM3 TRGO, DMA1 clock, ADC cfg.")
             elif not seen:
-                print("  Zero $OSCD chunks received. Likely causes:")
-                print("   - firmware on the STM32 predates the $OSCCAP command")
-                print("   - command not reaching the MCU (RX path / wrong port)")
+                print("  Zero $OSCD chunks received despite reaching the MCU.")
             elif missing:
                 print(f"  Missing chunk seqs: {missing}")
             sys.exit(2)
