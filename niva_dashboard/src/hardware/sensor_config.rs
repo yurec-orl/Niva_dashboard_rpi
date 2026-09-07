@@ -15,7 +15,7 @@ use crate::hardware::digital_signal_processing::{DigitalSignalDebouncer, Digital
 use crate::hardware::hw_providers::{ADCChannelProvider, HWInput, OneWireTempChannelProvider};
 use crate::hardware::sensor_manager::{SensorAnalogInputChain, SensorDigitalInputChain, SensorManager};
 use crate::hardware::sensor_value::ValueConstraints;
-use crate::hardware::sensors::{GenericAnalogSensor, GenericDigitalSensor, OneWireTempSensor};
+use crate::hardware::sensors::{GenericAnalogSensor, GenericDigitalSensor, OneWireTempSensor, VoltageDividerSensor};
 use crate::util::adc_data_provider::{ADCFrame, AdcTempFrame};
 
 use rppal::gpio::Level;
@@ -99,6 +99,22 @@ enum SensorConfig {
         name: String,
         constraints: ConstraintsConfig,
     },
+    /// Direct resistive-divider voltage tap (see VoltageDividerSensor), for the `Hw12v`
+    /// 12V-system channel. The divider ratio and ADC reference are fixed PCB constants in
+    /// VoltageDividerSensor, not config; `trim` (optional, default 1.0) is the only
+    /// field-adjustable knob -- a multiplicative bench correction.
+    VoltageDividerAnalog {
+        id: String,
+        name: String,
+        units: String,
+        #[serde(default = "default_trim")]
+        trim: f32,
+        constraints: ConstraintsConfig,
+    },
+}
+
+fn default_trim() -> f32 {
+    1.0
 }
 
 #[derive(Deserialize)]
@@ -259,6 +275,25 @@ fn build_adc_chain(
             );
             mgr.add_analog_sensor_chain(chain);
         }
+        SensorConfig::VoltageDividerAnalog { id, name, units, trim, constraints } => {
+            if !entry.digital_processors.is_empty() {
+                return Err(format!(
+                    "sensor config: hw_input '{}' is an analog sensor but lists digital_processors",
+                    entry.hw_input
+                ));
+            }
+            let processors: Vec<Box<dyn AnalogSignalProcessor + Send>> =
+                entry.analog_processors.iter().map(AnalogProcessorConfig::build).collect();
+            let chain = SensorAnalogInputChain::new(
+                Box::new(ADCChannelProvider::new(input, frame)),
+                processors,
+                Box::new(VoltageDividerSensor::new(
+                    id.clone(), name.clone(), units.clone(),
+                    constraints.build(&entry.hw_input)?, *trim,
+                )),
+            );
+            mgr.add_analog_sensor_chain(chain);
+        }
         SensorConfig::OneWireTemp { .. } => {
             return Err(format!(
                 "sensor config: hw_input '{}' has sensor kind \"one_wire_temp\" but provider is not \"adc_temp\"",
@@ -386,6 +421,30 @@ mod tests {
         assert_eq!(value.constraints.max_value, 100.0);
         assert_eq!(value.constraints.critical_low, Some(10.0));
         assert_eq!(value.constraints.warning_low, Some(20.0));
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn voltage_divider_kind_loads_with_default_trim_and_produces_a_bounded_value() {
+        let json = r#"[
+            {"group":"sensor","hw_input":"Hw12v","provider":"adc",
+             "analog_processors":[{"type":"moving_average","window":1}],
+             "sensor":{"kind":"voltage_divider_analog","id":"Hw12v","name":"БОРТ СЕТЬ","units":"В",
+               "constraints":{"min":0.0,"max":20.0,"critical_low":11.0,"warning_high":14.7}}}
+        ]"#;
+        let path = write_temp_config(json);
+        let provider = TestADCDataProvider::start();
+        let frame = provider.frame();
+        std::thread::sleep(Duration::from_millis(50));
+        let mut mgr = SensorManager::new();
+        load_chains(&path, "sensor", frame, None, &mut mgr).expect("should load without an explicit trim");
+        mgr.read_all_sensors().ok();
+        let value = mgr.get_sensor_value(&HWInput::Hw12v).expect("Hw12v should have a value");
+        assert_eq!(value.constraints.max_value, 20.0);
+        assert_eq!(value.constraints.warning_high, Some(14.7));
+        let volts = value.as_f32();
+        assert!((0.0..=20.0).contains(&volts), "reading should be within the divider's clamped range, got {volts}");
 
         std::fs::remove_file(&path).ok();
     }

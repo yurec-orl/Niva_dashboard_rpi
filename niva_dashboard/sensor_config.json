@@ -157,11 +157,10 @@
       { "type": "moving_average", "window": 60 }
     ],
     "sensor": {
-      "kind": "generic_analog",
+      "kind": "voltage_divider_analog",
       "id": "Hw12v",
       "name": "БОРТ СЕТЬ",
       "units": "В",
-      "scale": 0.02,
       "constraints": {
         "min": 0.0, "max": 20.0,
         "critical_low": 11.0, "warning_low": 13.0, "warning_high": 14.7, "critical_high": 15.0

@@ -159,6 +159,68 @@ impl AnalogSensor for GenericAnalogSensor {
     }
 }
 
+/// PA3 12V-system-voltage divider and ADC constants (stm32_adc_module/WIRING.md, "PA3 --
+/// 12V system voltage"): R1 = 51 kΩ from the 12V line, R2 = 10 kΩ to GND, ADC pin taps the
+/// junction; ADC is 12-bit referenced to 3.3V. These mirror osc_page.rs's OSC_DIVIDER_* /
+/// OSC_ADC_* -- one physical circuit read from opposite ends of the codebase; keep the two
+/// sets in sync if the divider ever changes.
+const V12_DIVIDER_R1_OHM: f32 = 51_000.0;
+const V12_DIVIDER_R2_OHM: f32 = 10_000.0;
+const V12_ADC_VREF: f32 = 3.3;
+const V12_ADC_MAX_CODE: f32 = 4095.0;
+
+/// Converts a raw 12-bit ADC code from a resistive voltage divider back to the real tapped
+/// voltage: `code / ADC_MAX * V_REF * (R1 + R2) / R2 * trim`. Used for the `Hw12v` channel.
+/// Unlike the resistive senders (see SENSOR_CALIBRATION_DESIGN.md) this needs no resistance
+/// curve or live-supply cross-dependency -- the divider is a single exact linear relation.
+///
+/// `trim` is one multiplicative correction (1.0 = none) for the combined tolerance of the
+/// two divider resistors, the ADC reference, and ADC gain error; set it from a bench
+/// measurement against a known supply voltage.
+pub struct VoltageDividerSensor {
+    value: SensorValue,
+    constraints: ValueConstraints,
+    metadata: ValueMetadata,
+    volts_per_code: f32,
+}
+
+impl VoltageDividerSensor {
+    pub fn new(id: String, name: String, units: String,
+               constraints: ValueConstraints, trim: f32) -> Self {
+        let volts_per_code = V12_ADC_VREF / V12_ADC_MAX_CODE
+            * (V12_DIVIDER_R1_OHM + V12_DIVIDER_R2_OHM) / V12_DIVIDER_R2_OHM
+            * trim;
+        VoltageDividerSensor {
+            value: SensorValue::empty(),
+            constraints,
+            metadata: ValueMetadata::new(units, name, id),
+            volts_per_code,
+        }
+    }
+}
+
+impl Sensor for VoltageDividerSensor {
+    fn id(&self) -> &String { &self.metadata.sensor_id }
+    fn name(&self) -> &String { &self.metadata.label }
+    fn value(&self) -> Result<&SensorValue, String> { Ok(&self.value) }
+    fn constraints(&self) -> &ValueConstraints { &self.constraints }
+    fn metadata(&self) -> &ValueMetadata { &self.metadata }
+    fn min_value(&self) -> f32 { self.constraints.min_value }
+    fn max_value(&self) -> f32 { self.constraints.max_value }
+}
+
+impl AnalogSensor for VoltageDividerSensor {
+    fn read(&mut self, input: u16) -> Result<&SensorValue, String> {
+        let volts = input as f32 * self.volts_per_code;
+        self.value = SensorValue::analog_with_constraints_and_metadata(
+            volts.clamp(self.constraints.min_value, self.constraints.max_value),
+            self.constraints.clone(),
+            self.metadata.clone(),
+        );
+        Ok(&self.value)
+    }
+}
+
 pub struct EngineTemperatureSensor {
     value: SensorValue,
     constraints: ValueConstraints,
@@ -856,6 +918,42 @@ mod tests {
         } else {
             panic!("Expected analog value");
         }
+    }
+
+    #[test]
+    fn test_voltage_divider_sensor_converts_code_to_volts() {
+        let mut sensor = VoltageDividerSensor::new(
+            "Hw12v".to_string(), "БОРТ СЕТЬ".to_string(), "В".to_string(),
+            ValueConstraints::analog(0.0, 20.0), 1.0,
+        );
+        // factor = 3.3/4095 * 61/10 ≈ 0.0049159 V/code; 12.6 V -> ~2563 codes.
+        let volts = sensor.read(2563).unwrap().as_f32();
+        assert!((volts - 12.6).abs() < 0.05, "expected ~12.6 V, got {volts}");
+    }
+
+    #[test]
+    fn test_voltage_divider_sensor_trim_scales_output() {
+        let mut plain = VoltageDividerSensor::new(
+            "v".to_string(), "v".to_string(), "В".to_string(),
+            ValueConstraints::analog(0.0, 30.0), 1.0,
+        );
+        let mut trimmed = VoltageDividerSensor::new(
+            "v".to_string(), "v".to_string(), "В".to_string(),
+            ValueConstraints::analog(0.0, 30.0), 1.05,
+        );
+        let base = plain.read(2000).unwrap().as_f32();
+        let scaled = trimmed.read(2000).unwrap().as_f32();
+        assert!((scaled - base * 1.05).abs() < 0.001, "trim should scale linearly");
+    }
+
+    #[test]
+    fn test_voltage_divider_sensor_clamps_to_constraints() {
+        let mut sensor = VoltageDividerSensor::new(
+            "v".to_string(), "v".to_string(), "В".to_string(),
+            ValueConstraints::analog(0.0, 20.0), 1.0,
+        );
+        // Full-scale code ~20.13 V raw -> clamped to the 20.0 V gauge max.
+        assert_eq!(sensor.read(4095).unwrap().as_f32(), 20.0);
     }
 
     #[test]
