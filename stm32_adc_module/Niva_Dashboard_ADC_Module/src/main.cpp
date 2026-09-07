@@ -225,6 +225,12 @@
 //   plain "Open Folder" in VS Code) — otherwise the PlatformIO extension
 //   may not pick up the project environment correctly and build/upload
 //   will fail.
+//
+//   REQUIRED build flag: -DUSBD_CDC_USE_SINGLE_BUFFER (in platformio.ini).
+//   Without it, the stm32duino default double-buffered CDC OUT endpoint on this
+//   MCU comes up stuck NAKing every host->device bulk packet, so the Pi cannot
+//   send any command ($OSCCAP, $VER, ...) — only device->host telemetry works.
+//   Full analysis: OSCILLOSCOPE_FIRMWARE_DIAGNOSIS.md.
 
 #include <Arduino.h>
 #include <HardwareTimer.h>
