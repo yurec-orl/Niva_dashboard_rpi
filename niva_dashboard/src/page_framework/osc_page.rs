@@ -240,12 +240,25 @@ impl Page for OscPage {
         let graph_w = graph_x1 - graph_x0;
         let graph_h = graph_y1 - graph_y0;
 
-        // Amplitude axis is scaled to this capture's own min/max (not the full 12-bit ADC
-        // range), so the waveform fills the available vertical space regardless of signal
-        // amplitude. A little padding keeps peaks off the grid edge; a flat-line capture
-        // (min == max) falls back to a 1-unit span so the math below stays well-defined.
-        let data_min = *samples.iter().min().unwrap() as f32;
-        let data_max = *samples.iter().max().unwrap() as f32;
+        // Visible time window and the sample index range covering it -- one extra sample each
+        // side so the drawn trace stays continuous where it leaves the grid. Shared by the
+        // stats/auto-scale below and the waveform draw further down.
+        let t_start = view.offset_ms;
+        let t_end = view.offset_ms + window_ms;
+        let n = samples.len();
+        let sample_ms = OSC_TOTAL_MS / (n - 1) as f32;
+        let first = ((t_start / sample_ms).floor() as isize - 1).max(0) as usize;
+        let last = (((t_end / sample_ms).ceil() as usize) + 1).min(n);
+
+        // MIN/MAX/Δ and the amplitude auto-scale cover only the visible slice, so they
+        // describe what's currently on screen rather than the whole ~82 ms capture. Scaling
+        // to the slice's own min/max (not the full 12-bit ADC range) also makes the waveform
+        // fill the available vertical space at any zoom. A little padding keeps peaks off the
+        // grid edge; a flat slice (min == max) falls back to a 1-unit span so the math below
+        // stays well-defined.
+        let visible = &samples[first..last];
+        let data_min = *visible.iter().min().unwrap() as f32;
+        let data_max = *visible.iter().max().unwrap() as f32;
 
         let min_v = adc_code_to_volts(data_min);
         let max_v = adc_code_to_volts(data_max);
@@ -277,8 +290,6 @@ impl Page for OscPage {
 
         // Time grid lines + labels, every TIME_GRID_STEP_MS across the visible window
         // [t_start, t_end]; labels are absolute capture time.
-        let t_start = view.offset_ms;
-        let t_end = view.offset_ms + window_ms;
         let mut t = (t_start / TIME_GRID_STEP_MS).ceil() * TIME_GRID_STEP_MS;
         while t <= t_end + 0.01 {
             let x = graph_x0 + (t - t_start) / window_ms * graph_w;
@@ -292,13 +303,8 @@ impl Page for OscPage {
         context.render_line((graph_x0, graph_y0), (graph_x0, graph_y1), AXIS_COLOR, 1.5)?;
         context.render_line((graph_x0, graph_y1), (graph_x1, graph_y1), AXIS_COLOR, 1.5)?;
 
-        // Signal waveform -- only the samples inside the visible time window, mapped so that
+        // Signal waveform -- the visible-window sample slice computed above, mapped so that
         // window fills the graph width, in one batched draw call (see osc_waveform module doc).
-        // One extra sample each side keeps the trace continuous where it leaves the grid.
-        let n = samples.len();
-        let sample_ms = OSC_TOTAL_MS / (n - 1) as f32;
-        let first = ((t_start / sample_ms).floor() as isize - 1).max(0) as usize;
-        let last = (((t_end / sample_ms).ceil() as usize) + 1).min(n);
         let points: Vec<(f32, f32)> = (first..last).map(|i| {
             let t_ms = i as f32 * sample_ms;
             let x = graph_x0 + (t_ms - t_start) / window_ms * graph_w;
