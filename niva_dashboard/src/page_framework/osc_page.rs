@@ -4,6 +4,8 @@ use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosi
 use crate::page_framework::events::{UIEvent, EventReceiver, SmartEventSender};
 use crate::hardware::sensor_manager::SensorManager;
 use crate::util::adc_data_provider::{OscFrame, OscCaptureState, OSC_BUF_LEN, OSC_SAMPLE_RATE_HZ};
+use std::cell::Cell;
+use std::rc::Rc;
 use gl;
 
 const TITLE_Y: f32 = 15.0;
@@ -20,6 +22,62 @@ const TIME_GRID_STEP_MS: f32 = 10.0;
 const AMPLITUDE_DIVISIONS: u32 = 4;
 const WAVEFORM_THICKNESS: f32 = 2.0;
 
+/// Time-axis view controls. The capture buffer spans OSC_TOTAL_MS (~81.9 ms =
+/// OSC_BUF_LEN / OSC_SAMPLE_RATE_HZ). ЛУПА+/ЛУПА- walk the visible window through the
+/// fixed OSC_ZOOM_WINDOWS_MS ladder -- 20 ms steps down to 20 ms, then 5 ms steps to a
+/// 5 ms window for supply-ripple detail. <СДВИГ/СДВИГ> pan by one window width, capped at
+/// OSC_PAN_STEP_MAX_MS. The widest rung is the nominal 80 ms rather than the true ~81.9 ms,
+/// so at full zoom the ~2 ms tail can still be panned into view.
+const OSC_TOTAL_MS: f32 = OSC_BUF_LEN as f32 / OSC_SAMPLE_RATE_HZ as f32 * 1000.0;
+const OSC_ZOOM_WINDOWS_MS: [f32; 8] = [80.0, 60.0, 40.0, 20.0, 10.0, 5.0, 2.0, 1.0];
+const OSC_PAN_STEP_MAX_MS: f32 = 20.0;
+
+#[derive(Clone, Copy)]
+struct OscView {
+    zoom_idx: usize,
+    offset_ms: f32,
+}
+
+impl OscView {
+    fn full() -> Self {
+        OscView { zoom_idx: 0, offset_ms: 0.0 }
+    }
+
+    fn window_ms(&self) -> f32 {
+        OSC_ZOOM_WINDOWS_MS[self.zoom_idx]
+    }
+
+    fn max_offset(&self) -> f32 {
+        (OSC_TOTAL_MS - self.window_ms()).max(0.0)
+    }
+
+    /// One window width per press, so the finer zoom rungs don't skip past regions --
+    /// but never more than OSC_PAN_STEP_MAX_MS on the wide rungs.
+    fn pan_step(&self) -> f32 {
+        self.window_ms().min(OSC_PAN_STEP_MAX_MS)
+    }
+
+    fn zoom_in(&mut self) {
+        if self.zoom_idx + 1 < OSC_ZOOM_WINDOWS_MS.len() {
+            self.zoom_idx += 1;
+        }
+        self.offset_ms = self.offset_ms.min(self.max_offset());
+    }
+
+    fn zoom_out(&mut self) {
+        self.zoom_idx = self.zoom_idx.saturating_sub(1);
+        self.offset_ms = self.offset_ms.min(self.max_offset());
+    }
+
+    fn pan_left(&mut self) {
+        self.offset_ms = (self.offset_ms - self.pan_step()).max(0.0);
+    }
+
+    fn pan_right(&mut self) {
+        self.offset_ms = (self.offset_ms + self.pan_step()).min(self.max_offset());
+    }
+}
+
 /// STM32 ADC1 is 12-bit, referenced to VDDA (3.3V) -- see OSCILLOSCOPE_DESIGN.md and
 /// test/run_test.rs's dump_osc_buffer_csv, which uses the same conversion.
 const OSC_ADC_MAX_CODE: f32 = 4095.0;
@@ -32,11 +90,18 @@ const OSC_ADC_VREF: f32 = 3.3;
 const OSC_DIVIDER_R1_OHM: f32 = 51_000.0;
 const OSC_DIVIDER_R2_OHM: f32 = 10_000.0;
 
-/// Converts a raw ADC code to real 12V-system volts (ADC pin voltage scaled back up through
-/// the PA3 divider -- see OSC_DIVIDER_* doc comment above).
+/// Multiplicative calibration for the combined divider-resistor / ADC-reference / ADC-gain
+/// error on the PA3 channel. Must equal `sensor_config.json`'s `Hw12v` `trim` -- same
+/// physical circuit, converted here instead of through VoltageDividerSensor. A guard test
+/// (osc_v12_trim_matches_sensor_config) fails if the two drift apart; removing the
+/// duplication entirely is tracked as GitHub issue #12.
+const OSC_V12_TRIM: f32 = 1.036;
+
+/// Converts a raw ADC code to real 12V-system volts: ADC pin voltage scaled back up through
+/// the PA3 divider (see OSC_DIVIDER_* doc comment above) and the OSC_V12_TRIM calibration.
 fn adc_code_to_volts(code: f32) -> f32 {
     let adc_pin_volts = code * OSC_ADC_VREF / OSC_ADC_MAX_CODE;
-    adc_pin_volts * (OSC_DIVIDER_R1_OHM + OSC_DIVIDER_R2_OHM) / OSC_DIVIDER_R2_OHM
+    adc_pin_volts * (OSC_DIVIDER_R1_OHM + OSC_DIVIDER_R2_OHM) / OSC_DIVIDER_R2_OHM * OSC_V12_TRIM
 }
 
 const GRID_COLOR: (f32, f32, f32) = (0.25, 0.25, 0.25);
@@ -58,6 +123,9 @@ pub struct OscPage {
     last_capture: Option<Vec<u16>>,
     // Shown above the graph while a capture is in flight or failed; cleared on success.
     status_message: Option<String>,
+
+    // Time-axis zoom/pan state, shared with the ЛУПА/СДВИГ button callbacks.
+    view: Rc<Cell<OscView>>,
 }
 
 impl OscPage {
@@ -69,6 +137,7 @@ impl OscPage {
             osc_frame,
             last_capture: None,
             status_message: None,
+            view: Rc::new(Cell::new(OscView::full())),
         };
         page.setup_buttons();
         page
@@ -76,13 +145,29 @@ impl OscPage {
 
     fn setup_buttons(&mut self) {
         let buttons = vec![
-            PageButton::new(ButtonPosition::Left1, "ЗАХВ".into(), Box::new({
+            PageButton::new(ButtonPosition::Left1, "ЛУПА+".into(), Box::new({
+                let view = self.view.clone();
+                move || { let mut v = view.get(); v.zoom_in(); view.set(v); }
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Left2, "ЛУПА-".into(), Box::new({
+                let view = self.view.clone();
+                move || { let mut v = view.get(); v.zoom_out(); view.set(v); }
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Left4, "ЗАХВ".into(), Box::new({
                 let osc_frame = self.osc_frame.clone();
                 move || {
                     if let Some(osc) = &osc_frame {
                         osc.request_capture();
                     }
                 }
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Right1, "<СДВИГ".into(), Box::new({
+                let view = self.view.clone();
+                move || { let mut v = view.get(); v.pan_left(); view.set(v); }
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Right2, "СДВИГ>".into(), Box::new({
+                let view = self.view.clone();
+                move || { let mut v = view.get(); v.pan_right(); view.set(v); }
             }) as Box<dyn FnMut()>),
             PageButton::new(ButtonPosition::Right4, "ВОЗВР".into(), Box::new({
                 let sender = self.smart_event_sender.clone();
@@ -131,6 +216,15 @@ impl Page for OscPage {
         if let Some(status) = &self.status_message {
             context.render_text_with_font(status, GRAPH_LEFT_MARGIN, STATUS_Y, 1.0, text_color, &text_font, text_font_size)?;
         }
+
+        let view = self.view.get();
+        let window_ms = view.window_ms();
+        let view_label = format!("ОКНО {:.0}мс  СДВИГ {:.0}мс", window_ms, view.offset_ms);
+        let view_label_w = context.calculate_text_width_with_font(&view_label, 1.0, &text_font, text_font_size)?;
+        context.render_text_with_font(
+            &view_label, context.width as f32 - GRAPH_RIGHT_MARGIN - view_label_w, TITLE_Y + 2.0,
+            1.0, text_color, &text_font, text_font_size,
+        )?;
 
         let samples = match &self.last_capture {
             Some(s) if s.len() > 1 => s,
@@ -181,12 +275,13 @@ impl Page for OscPage {
             context.render_text_with_font(&label, graph_x0 - label_w - 8.0, y - text_font_size as f32 * 0.5, 1.0, text_color, &text_font, text_font_size)?;
         }
 
-        // Time grid lines + labels, every TIME_GRID_STEP_MS across the full capture window.
-        let total_ms = (OSC_BUF_LEN as f64 / OSC_SAMPLE_RATE_HZ * 1000.0) as f32;
-        let mut t = 0.0f32;
-        while t <= total_ms + 0.01 {
-            let frac = t / total_ms;
-            let x = graph_x0 + frac * graph_w;
+        // Time grid lines + labels, every TIME_GRID_STEP_MS across the visible window
+        // [t_start, t_end]; labels are absolute capture time.
+        let t_start = view.offset_ms;
+        let t_end = view.offset_ms + window_ms;
+        let mut t = (t_start / TIME_GRID_STEP_MS).ceil() * TIME_GRID_STEP_MS;
+        while t <= t_end + 0.01 {
+            let x = graph_x0 + (t - t_start) / window_ms * graph_w;
             context.render_line((x, graph_y0), (x, graph_y1), GRID_COLOR, 1.0)?;
             let label = format!("{:.0}мс", t);
             context.render_text_with_font(&label, x - 12.0, graph_y1 + 8.0, 1.0, text_color, &text_font, text_font_size)?;
@@ -197,10 +292,17 @@ impl Page for OscPage {
         context.render_line((graph_x0, graph_y0), (graph_x0, graph_y1), AXIS_COLOR, 1.5)?;
         context.render_line((graph_x0, graph_y1), (graph_x1, graph_y1), AXIS_COLOR, 1.5)?;
 
-        // Signal waveform -- every sample, one batched draw call (see osc_waveform module doc).
-        let points: Vec<(f32, f32)> = samples.iter().enumerate().map(|(i, &v)| {
-            let x = graph_x0 + (i as f32 / (samples.len() - 1) as f32) * graph_w;
-            let y = graph_y1 - ((v as f32 - y_min) / y_span) * graph_h;
+        // Signal waveform -- only the samples inside the visible time window, mapped so that
+        // window fills the graph width, in one batched draw call (see osc_waveform module doc).
+        // One extra sample each side keeps the trace continuous where it leaves the grid.
+        let n = samples.len();
+        let sample_ms = OSC_TOTAL_MS / (n - 1) as f32;
+        let first = ((t_start / sample_ms).floor() as isize - 1).max(0) as usize;
+        let last = (((t_end / sample_ms).ceil() as usize) + 1).min(n);
+        let points: Vec<(f32, f32)> = (first..last).map(|i| {
+            let t_ms = i as f32 * sample_ms;
+            let x = graph_x0 + (t_ms - t_start) / window_ms * graph_w;
+            let y = graph_y1 - ((samples[i] as f32 - y_min) / y_span) * graph_h;
             (x, y)
         }).collect();
 
@@ -216,6 +318,7 @@ impl Page for OscPage {
 
     fn on_enter(&mut self) -> Result<(), String> {
         log::info!("Entering Oscilloscope page");
+        self.view.set(OscView::full());
         self.request_capture();
         Ok(())
     }
@@ -376,5 +479,43 @@ void main() {
 
         let vertex_count = (vertices.len() / 5) as i32;
         gl::DrawArrays(gl::TRIANGLES, 0, vertex_count);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::OSC_V12_TRIM;
+    use std::path::Path;
+
+    /// OSC_V12_TRIM duplicates `sensor_config.json`'s `Hw12v` `trim` (see the constant's doc
+    /// comment). This fails `cargo test` the moment the two drift, which is the only thing
+    /// keeping the duplication safe until the shared-conversion refactor lands (issue #12).
+    #[test]
+    fn osc_v12_trim_matches_sensor_config() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("sensor_config.json");
+        let json: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&path).expect("repo sensor_config.json should be readable"),
+        )
+        .expect("sensor_config.json should be valid JSON");
+
+        let hw12v = json
+            .as_array()
+            .expect("sensor_config.json is a JSON array")
+            .iter()
+            .find(|entry| {
+                entry.pointer("/sensor/id").and_then(|v| v.as_str()) == Some("Hw12v")
+            })
+            .expect("an Hw12v sensor entry in sensor_config.json");
+        let trim = hw12v
+            .pointer("/sensor/trim")
+            .expect("the Hw12v entry has a `trim` field")
+            .as_f64()
+            .expect("`trim` is a number") as f32;
+
+        assert!(
+            (trim - OSC_V12_TRIM).abs() < 1e-6,
+            "sensor_config.json Hw12v trim ({trim}) != osc_page OSC_V12_TRIM ({OSC_V12_TRIM}) -- \
+             update the constant in osc_page.rs to match",
+        );
     }
 }
