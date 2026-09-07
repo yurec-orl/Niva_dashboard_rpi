@@ -49,11 +49,9 @@ impl MainPage {
 
     fn setup_test_indicators(ui_style: &UIStyle) -> IndicatorSet {
         let mut indicators: Vec<Box<dyn Indicator>> = Vec::new();
+        // Order must match indicator construction below: 12 digital indicators first,
+        // then the 4 analog indicators with per-sensor precision.
         let inputs: Vec<HWInput> = vec![
-            HWInput::Hw12v,
-            HWInput::HwFuelLvl,
-            HWInput::HwOilPress,
-            HWInput::HwEngineCoolantTemp,
             HWInput::HwBrakeFluidLvlLow,
             HWInput::HwCharge,
             HWInput::HwCheckEngine,
@@ -65,7 +63,11 @@ impl MainPage {
             HWInput::HwParkBrake,
             HWInput::HwSpeed,
             HWInput::HwTacho,
-            HWInput::HwTurnSignal
+            HWInput::HwTurnSignal,
+            HWInput::Hw12v,
+            HWInput::HwFuelLvl,
+            HWInput::HwOilPress,
+            HWInput::HwEngineCoolantTemp,
         ];
         let mut indicator_bounds: Vec<IndicatorBounds> = Vec::new();
 
@@ -116,19 +118,19 @@ impl MainPage {
         }
 
         // Analog sensors (4 total) - with different precision settings
-        // 12V (1 decimal place)
+        // 12V (2 decimal place)
         indicators.push(Box::new(
             TextIndicator::new()
-                .with_precision(1)
+                .with_precision(2)
                 .with_font(indicator_font.clone(), indicator_font_size, 1.0)
                 .with_colors(indicator_color, indicator_warning_color, indicator_error_color),
         ));
         indicator_bounds.push(create_bounds_and_advance(&mut col, &mut row));
 
-        // Fuel Level (1 decimal place)
+        // Fuel Level (2 decimal place)
         indicators.push(Box::new(
             TextIndicator::new()
-                .with_precision(1)
+                .with_precision(2)
                 .with_font(indicator_font.clone(), indicator_font_size, 1.0)
                 .with_colors(indicator_color, indicator_warning_color, indicator_error_color),
         ));
