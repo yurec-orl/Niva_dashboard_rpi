@@ -16,7 +16,7 @@ use crate::hardware::heading_fusion_sensor::{HeadingFusionSensor, HeadingAnchorS
 use crate::hardware::gpio_input::GpioOutput;
 use crate::alerts::alert_manager::{AlertManager, Severity};
 use crate::alerts::watchdog::Watchdog;
-use crate::util::adc_data_provider::{ADCFrame, OscFrame};
+use crate::util::adc_data_provider::{ADCFrame, AdcVersionFrame, OscFrame};
 use crate::util::gnss_data_provider::{GnssFrame, GnssDataProvider, TestGnssDataProvider};
 use crate::util::bno085_data_provider::{Bno085Frame, Bno085DataProvider, TestBno085DataProvider};
 use crate::util::ups_monitor::UpsMonitor;
@@ -296,6 +296,10 @@ pub struct PageManager {
     // under the same condition as adc_frame (they come from the same provider).
     osc_frame: Option<OscFrame>,
 
+    // STM32 ADC firmware commit hash ($VER reply), shown on the diag page. None under the
+    // same condition as adc_frame.
+    adc_version_frame: Option<AdcVersionFrame>,
+
     // Handle to the shared GNSS line buffer, used to build the GNSS diagnostic terminal
     // page. None when the GNSS data provider failed to start.
     gnss_frame: Option<GnssFrame>,
@@ -357,7 +361,8 @@ pub struct PageManager {
 impl PageManager {
     pub fn new(context: GraphicsContext, sensor_manager: SensorManager, ui_style: UIStyle,
                input_sources: Vec<Box<dyn InputSource>>, ups_monitor: UpsMonitor,
-               adc_frame: Option<ADCFrame>, osc_frame: Option<OscFrame>, gnss_frame: Option<GnssFrame>,
+               adc_frame: Option<ADCFrame>, osc_frame: Option<OscFrame>,
+               adc_version_frame: Option<AdcVersionFrame>, gnss_frame: Option<GnssFrame>,
                bno_frame: Option<Bno085Frame>,
                gnss_provider: Option<GnssDataProvider>, bno_provider: Option<Bno085DataProvider>,
                alert_manager: AlertManager, heading_fusion: Option<HeadingFusionSensor>,
@@ -404,6 +409,7 @@ impl PageManager {
             ups_monitor,
             adc_frame,
             osc_frame,
+            adc_version_frame,
             gnss_frame,
             bno_frame,
             gnss_provider,
@@ -556,7 +562,8 @@ impl PageManager {
 
         let diag_page = Box::new(DiagPage::new(DIAG_PAGE_ID,
                                                smart_sender.clone(),
-                                               self.get_event_receiver()));
+                                               self.get_event_receiver(),
+                                               self.adc_version_frame.clone()));
 
         let log_page = Box::new(TerminalPage::new_log(LOG_PAGE_ID, "Log",
                                                        smart_sender.clone(),

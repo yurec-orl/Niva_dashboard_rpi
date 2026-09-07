@@ -460,6 +460,7 @@ fn main() -> std::process::ExitCode {
     let adc_frame = adc.as_ref().map(|p| p.frame());
     let adc_temp_frame = adc.as_ref().map(|p| p.temp_frame());
     let osc_frame = adc.as_ref().map(|p| p.osc_frame());
+    let adc_version_frame = adc.as_ref().map(|p| p.version_frame());
 
     // Moved into PageManager below (unlike `adc`, which stays a process-lifetime local) --
     // PageManager pauses/resumes it to hand the GNSS frame off to a synthetic test writer on
@@ -528,7 +529,7 @@ fn main() -> std::process::ExitCode {
         }
     };
 
-    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag, osc_frame, gnss_frame_for_diag, bno_frame_for_diag, gnss, bno085, alert_manager, heading_fusion, master_warning_led);
+    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag, osc_frame, adc_version_frame, gnss_frame_for_diag, bno_frame_for_diag, gnss, bno085, alert_manager, heading_fusion, master_warning_led);
 
     mgr.setup().expect("Failed to setup page manager");
 

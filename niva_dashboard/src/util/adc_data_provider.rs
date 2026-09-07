@@ -45,6 +45,13 @@ const ADC_USB_HUB_LOCATION: &str = "1-1";
 /// disconnect/reconnect never triggers a physical power cycle.
 const HARD_RESET_STALE_THRESHOLD: Duration = Duration::from_secs(5);
 
+/// How often the background thread re-sends `$VER` while the STM32 hasn't answered with its
+/// firmware commit hash. One request per connection would suffice if replies were
+/// guaranteed; retrying covers a dropped first reply without meaningfully adding to serial
+/// traffic. Firmware predating the `$VER` command never replies at all — the diagnostics
+/// page just shows "н/д" in that case.
+const VERSION_REQUEST_INTERVAL: Duration = Duration::from_secs(10);
+
 /// Wire parameters for the oscilloscope burst-capture protocol (see OSCILLOSCOPE_DESIGN.md
 /// and stm32_adc_module's main.cpp OSC_* defines) — kept in sync with the firmware by hand,
 /// since the two sides don't share a header.
@@ -179,6 +186,36 @@ impl ADCFrame {
     /// doesn't get mistaken by AdcLinkStatusProvider for a dropped link.
     fn touch(&self) {
         *self.last_update.lock().unwrap() = Instant::now();
+    }
+}
+
+/// Cloneable, thread-safe holder for the STM32 firmware's commit hash, as returned in the
+/// `$VER,<hash>` reply to a `$VER\n` request (see stm32_adc_module). The background thread
+/// requests it once per serial connection and writes the answer here; the diagnostics page
+/// reads it. `None` until the first reply arrives — or indefinitely, against firmware that
+/// predates the command.
+#[derive(Clone)]
+pub struct AdcVersionFrame {
+    hash: Arc<Mutex<Option<String>>>,
+}
+
+impl AdcVersionFrame {
+    fn new() -> Self {
+        AdcVersionFrame { hash: Arc::new(Mutex::new(None)) }
+    }
+
+    /// The reported firmware commit hash, or `None` if the STM32 hasn't answered a `$VER`
+    /// request this session.
+    pub fn get(&self) -> Option<String> {
+        self.hash.lock().unwrap().clone()
+    }
+
+    fn set(&self, hash: String) {
+        *self.hash.lock().unwrap() = Some(hash);
+    }
+
+    fn is_known(&self) -> bool {
+        self.hash.lock().unwrap().is_some()
     }
 }
 
@@ -386,6 +423,7 @@ pub struct ADCDataProvider {
     frame: ADCFrame,
     temp_frame: AdcTempFrame,
     osc_frame: OscFrame,
+    version_frame: AdcVersionFrame,
     thread: Option<thread::JoinHandle<()>>,
 }
 
@@ -398,6 +436,7 @@ impl ADCDataProvider {
             frame: ADCFrame::new(),
             temp_frame: AdcTempFrame::new(),
             osc_frame: OscFrame::new(),
+            version_frame: AdcVersionFrame::new(),
             thread: None,
         }
     }
@@ -413,10 +452,11 @@ impl ADCDataProvider {
         let frame = self.frame.clone();
         let temp_frame = self.temp_frame.clone();
         let osc_frame = self.osc_frame.clone();
+        let version_frame = self.version_frame.clone();
 
         match std::thread::Builder::new()
             .name("adc-data-provider".into())
-            .spawn(move || Self::run_loop(&port, baud, &should_stop, &frame, &temp_frame, &osc_frame)) {
+            .spawn(move || Self::run_loop(&port, baud, &should_stop, &frame, &temp_frame, &osc_frame, &version_frame)) {
             Ok(handle) => self.thread = Some(handle),
             Err(e) => return Err(AdcDataProviderError::SpawnFailed(e)),
         }
@@ -427,17 +467,29 @@ impl ADCDataProvider {
     /// Background thread body: (re)opens the serial port whenever there is no live
     /// connection, then reads frames until the link drops, looping back to reconnecting.
     /// Runs until `should_stop` is set.
-    fn run_loop(port: &str, baud: u32, should_stop: &AtomicBool, frame: &ADCFrame, temp_frame: &AdcTempFrame, osc_frame: &OscFrame) {
+    fn run_loop(port: &str, baud: u32, should_stop: &AtomicBool, frame: &ADCFrame, temp_frame: &AdcTempFrame, osc_frame: &OscFrame, version_frame: &AdcVersionFrame) {
         let mut conn = AdcConnection::new();
         // A hub-wide power cycle is far more intrusive than a routine reconnect (it also
         // drops whatever else shares the hub), so it's attempted at most once per outage —
         // not retried on a timer. It only re-arms once real data proves the link is back.
         let mut reset_attempted = false;
+        // Last time a `$VER` request went out; None re-arms an immediate request (on start
+        // and after every reconnect). Stops once version_frame has an answer.
+        let mut version_last_request: Option<Instant> = None;
 
         while !should_stop.load(Ordering::Relaxed) {
             if !conn.ensure_connected(port, baud) {
                 Self::sleep_while_running(should_stop, RECONNECT_INTERVAL);
                 continue;
+            }
+
+            if !version_frame.is_known()
+                && version_last_request.map_or(true, |t| t.elapsed() >= VERSION_REQUEST_INTERVAL)
+            {
+                if let Some(reader) = conn.reader.as_mut() {
+                    let _ = reader.write_line("$VER\n");
+                }
+                version_last_request = Some(Instant::now());
             }
 
             // Oscilloscope capture requests take priority over normal telemetry reads: the
@@ -465,6 +517,15 @@ impl ADCDataProvider {
                         // nothing about telemetry-frame liveness, and HARD_RESET_STALE_THRESHOLD
                         // must still fire if `$…` frames stop while only `$T` keeps arriving.
                         Self::parse_temp_line(rest, temp_frame);
+                    } else if let Some(hash) = line.strip_prefix("$VER,") {
+                        // Reply to the `$VER` request above. Intercepted here before the
+                        // channel parse, which would otherwise pick the hash out as a
+                        // bogus single-channel frame.
+                        let hash = hash.trim();
+                        if !hash.is_empty() && !version_frame.is_known() {
+                            log::info!("STM32 ADC firmware version: {}", hash);
+                            version_frame.set(hash.to_string());
+                        }
                     } else {
                         // Strip leading '$' frame marker before parsing channel values
                         let values: Vec<u16> = line
@@ -481,6 +542,9 @@ impl ADCDataProvider {
                 None => {
                     log::warn!("ADC serial link lost, attempting to reconnect");
                     conn.drop_connection();
+                    // Re-arm so the next connection re-requests the firmware version if we
+                    // never got an answer on this one.
+                    version_last_request = None;
                 }
                 _ => {
                     // Empty line (timeout) — keep polling, but watch for a connected-yet-dead
@@ -628,6 +692,11 @@ impl ADCDataProvider {
     /// Returns a cloneable handle for requesting oscilloscope burst captures (see OscPage).
     pub fn osc_frame(&self) -> OscFrame {
         self.osc_frame.clone()
+    }
+
+    /// Returns a cloneable handle to the STM32 firmware commit hash (see DiagPage).
+    pub fn version_frame(&self) -> AdcVersionFrame {
+        self.version_frame.clone()
     }
 }
 

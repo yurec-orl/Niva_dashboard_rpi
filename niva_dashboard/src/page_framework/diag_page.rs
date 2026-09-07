@@ -6,6 +6,7 @@ use crate::graphics::ui_style::*;
 use crate::page_framework::events::{EventReceiver, SmartEventSender, UIEvent};
 use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition, MAIN_PAGE_ID, ADC_TERM_PAGE_ID, LOG_PAGE_ID, GNSS_TERM_PAGE_ID, OSC_PAGE_ID};
 use crate::hardware::sensor_manager::SensorManager;
+use crate::util::adc_data_provider::AdcVersionFrame;
 use crate::util::diagnostics::{self, ThrottleStatus};
 
 // Build identity, embedded at compile time by build.rs. Useful because this project
@@ -26,6 +27,10 @@ pub struct DiagPage {
     event_receiver: EventReceiver,
     smart_event_sender: SmartEventSender,
 
+    // STM32 ADC firmware commit hash ($VER reply). None if the ADC provider didn't start
+    // or the firmware predates the $VER command.
+    adc_version_frame: Option<AdcVersionFrame>,
+
     // Snapshots refreshed at most every DIAG_REFRESH_INTERVAL — see `refresh`.
     kernel_version: Option<String>,
     os_pretty_name: Option<String>,
@@ -37,11 +42,13 @@ pub struct DiagPage {
 }
 
 impl DiagPage {
-    pub fn new(id: u32, smart_event_sender: SmartEventSender, event_receiver: EventReceiver) -> Self {
+    pub fn new(id: u32, smart_event_sender: SmartEventSender, event_receiver: EventReceiver,
+               adc_version_frame: Option<AdcVersionFrame>) -> Self {
         let mut diag_page = DiagPage {
             base: PageBase::new(id, "Diag".to_string()),
             smart_event_sender,
             event_receiver,
+            adc_version_frame,
             kernel_version: None,
             os_pretty_name: None,
             disk_usage_mb: None,
@@ -134,9 +141,11 @@ impl Page for DiagPage {
         let mut y = TITLE_Y + title_height + TITLE_CONTENT_GAP;
 
         let disk = self.disk_usage_mb.map(|(total, avail)| format!("{} / {} МБ своб.", avail, total)).unwrap_or_else(Self::na);
-        let lines: [(String, bool); 12] = [
+        let adc_version = self.adc_version_frame.as_ref().and_then(AdcVersionFrame::get).unwrap_or_else(Self::na);
+        let lines: [(String, bool); 13] = [
             ("СБОРКА:".to_string(), true),
             (format!("  коммит {}  {}", GIT_HASH, BUILD_TIME), false),
+            (format!("  верс.АЦП  {}", adc_version), false),
             (String::new(), false),
             ("ПИТАНИЕ:".to_string(), true),
             (format!("  троттл:  {}", self.throttle_status.as_ref().map(ThrottleStatus::summary).unwrap_or_else(Self::na)), false),
