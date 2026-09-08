@@ -34,6 +34,11 @@ pub struct NeedleIndicator {
     shape: Box<dyn NeedleShape>,
     /// Color of the needle (R, G, B)
     needle_color_key: &'static str,
+    /// Value range the dial face actually depicts (its printed marks/labels), used to
+    /// place the needle. When `None`, the needle follows `SensorValue::as_normalized()`,
+    /// which spans the sensor's full constraint range — wrong whenever the dial shows a
+    /// narrower window than the sensor reports (e.g. a 10-16 V dial on a 0-20 V sensor).
+    scale: Option<(f32, f32)>,
     /// Base indicator functionality
     base: IndicatorBase,
 }
@@ -62,10 +67,19 @@ impl NeedleIndicator {
             needle_length,
             shape: Box::new(ArrowNeedleShape::new(needle_base_width, needle_tip_width)),
             needle_color_key,
+            scale: None,
             base: IndicatorBase {
                 decorators: Vec::new(),
             },
         }
+    }
+
+    /// Set the value range the dial face depicts, so the needle tracks the printed
+    /// scale rather than the sensor's full constraint range. Pass the same min/max
+    /// used to lay out this gauge's marks and labels.
+    pub fn with_scale(mut self, scale_min: f32, scale_max: f32) -> Self {
+        self.scale = Some((scale_min, scale_max));
+        self
     }
 
     /// Override the needle's rendered geometry (default: tapered blade from `new`).
@@ -194,8 +208,12 @@ impl Indicator for NeedleIndicator {
               style: &UIStyle, 
               context: &mut GraphicsContext) -> Result<(), String> {
         
-        // Get normalized value (0.0 to 1.0)
-        let normalized_value = value.as_normalized();
+        // Get normalized value (0.0 to 1.0). Prefer the dial's own scale when set so the
+        // needle matches the printed marks; fall back to the sensor's constraint range.
+        let normalized_value = match self.scale {
+            Some((lo, hi)) if hi != lo => ((value.as_f32() - lo) / (hi - lo)).clamp(0.0, 1.0),
+            _ => value.as_normalized(),
+        };
         
         // Calculate center and radius from bounds
         let center_x = bounds.x + bounds.width / 2.0;

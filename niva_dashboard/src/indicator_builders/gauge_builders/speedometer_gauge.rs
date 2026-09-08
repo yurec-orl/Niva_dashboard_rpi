@@ -51,7 +51,8 @@ pub fn build_speedometer_gauge(
         needle_base_width,
         needle_tip_width,
         GAUGE_NEEDLE_COLOR,
-    ).with_decorators(vec![
+    ).with_scale(0.0, 180.0) // Matches the 0-180 km/h marks/labels below
+    .with_decorators(vec![
         // Fine marks for precise readings (every 5 km/h)
         Box::new(NeedleGaugeMarksDecorator::new(
             37, // 37 marks for 0-180 km/h range (every 5 km/h)

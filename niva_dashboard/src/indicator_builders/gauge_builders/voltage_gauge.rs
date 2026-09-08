@@ -51,7 +51,8 @@ pub fn build_voltage_gauge(
         needle_base_width,
         needle_tip_width,
         GAUGE_NEEDLE_COLOR,
-    ).with_decorators(vec![
+    ).with_scale(10.0, 16.0) // Matches the 10-16 V marks/labels below
+    .with_decorators(vec![
         // Active arc (white) covering the valid range
         Box::new(ArcDecorator::new(
             radius,

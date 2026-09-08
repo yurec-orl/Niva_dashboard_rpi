@@ -51,7 +51,8 @@ pub fn build_oil_pressure_gauge(
         needle_base_width,
         needle_tip_width,
         GAUGE_NEEDLE_COLOR,
-    ).with_decorators(vec![
+    ).with_scale(0.0, 8.0) // Matches the 0-8 kgf/cm² marks/labels below
+    .with_decorators(vec![
         // Fine marks for oil pressure readings (0-8 kgf/cm²)
         Box::new(NeedleGaugeMarksDecorator::new(
             9, // 9 marks for oil pressure range - from 0 to 8

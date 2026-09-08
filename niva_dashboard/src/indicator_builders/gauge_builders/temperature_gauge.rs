@@ -51,7 +51,8 @@ pub fn build_temperature_gauge(
         needle_base_width,
         needle_tip_width,
         GAUGE_NEEDLE_COLOR,
-    ).with_decorators(vec![
+    ).with_scale(50.0, 130.0) // Matches the 50-130 °C marks/labels below
+    .with_decorators(vec![
         // Active arc (white) covering the valid range
         Box::new(ArcDecorator::new(
             radius,

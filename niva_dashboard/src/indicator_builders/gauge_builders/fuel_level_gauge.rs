@@ -51,7 +51,8 @@ pub fn build_fuel_level_gauge(
         needle_base_width,
         needle_tip_width,
         GAUGE_NEEDLE_COLOR,
-    ).with_decorators(vec![
+    ).with_scale(0.0, 100.0) // Matches the empty..full (0-100%) marks/labels below
+    .with_decorators(vec![
         // Active arc (white) covering the valid range
         Box::new(ArcDecorator::new(
             radius,
