@@ -303,6 +303,10 @@ HardwareSerial KLine(PB11, PB10);
 #define OSC_ADC_CHANNEL      ADC_CHANNEL_3   // PA3, same pin as telemetry's 12V channel
 #define OSC_SAMPLE_RATE_HZ   50000UL         // TIM3 TRGO rate driving the ADC
 #define OSC_BUF_LEN          4096            // samples per capture (~82 ms window)
+#define OSC_BUF_GUARD        16              // trailing sentinel slots — never transmitted,
+                                             // must stay 0. A nonzero one means the DMA wrote
+                                             // past OSC_BUF_LEN, i.e. the transfer size or
+                                             // length is wrong (issue #13). See osc_emit_dbg.
 #define OSC_CHUNK_SAMPLES    64              // samples per "$OSCD,<seq>,..." line
 #define OSC_DMA_TIMEOUT_MS   150UL           // bounds the capture; expected ~82 ms
 #define OSC_SEND_TIMEOUT_MS  2000UL          // bounds the buffer dump if the host stops reading
@@ -415,8 +419,9 @@ static uint8_t kline_tail = 0;
 // Oscilloscope capture buffer and incoming-command line buffer
 // ============================================================
 
-// File-scope static, not stack: ~8 KB would blow loop()'s stack frame.
-static uint16_t osc_buffer[OSC_BUF_LEN];
+// File-scope static, not stack: ~8 KB would blow loop()'s stack frame. The extra
+// OSC_BUF_GUARD slots past OSC_BUF_LEN are a DMA-overrun tripwire read back by osc_emit_dbg.
+static uint16_t osc_buffer[OSC_BUF_LEN + OSC_BUF_GUARD];
 
 // Lazily-constructed TIM3 handle, reused across captures. TIM3 only drives the ADC's
 // hardware trigger (TRGO on update) here — no NVIC interrupt is attached to it.
@@ -491,6 +496,40 @@ static void oscilloscope_send_buffer() {
     osc_write_all("$OSCEND\n");
 }
 
+// One-line register snapshot of the capture path, emitted as "$OSCDBG,<phase>,key=val,..."
+// for the Pi to log verbatim. Narrows issue #13 (a DC input renders as a jagged, half-zeroed
+// trace — every other captured sample is a hard 0) without needing SWD:
+//   - trgo_hz/psc/arr/tim_cr2: is TIM3 actually pacing the ADC at OSC_SAMPLE_RATE_HZ, with
+//     CR2 MMS bits [6:4] = 010 (TRGO on update)? A lost/wrong MMS leaves conversions unpaced.
+//   - dma_ccr/dma_cndtr: expect half-word both ends (PSIZE [9:8] = 01, MSIZE [11:10] = 01),
+//     MINC [7] = 1, and CNDTR = OSC_BUF_LEN when armed / 0 when done. MSIZE = 10 (word) would
+//     zero-extend each sample into a [value, 0] pair — exactly the observed pattern — and
+//     overrun the buffer (caught by guard_bad).
+//   - adc_cr1/adc_cr2/adc_sqr1: single channel (SQR1 L [23:20] = 0), scan off (CR1 [8] = 0),
+//     continuous off (CR2 [1] = 0), external trigger armed (CR2 EXTTRIG [20] = 1, EXTSEL
+//     [19:17] = 111 = TIM3 TRGO), DMA on (CR2 [8] = 1). A stray 2nd rank => 2 EOCs per trigger.
+//   - poll/dma_err/guard_bad: HAL_DMA_PollForTransfer result (0 = OK, else timeout/error),
+//     the DMA handle's ErrorCode, and the first trailing guard slot found nonzero (-1 = none).
+static void osc_emit_dbg(const char *phase, int poll_status, uint32_t dma_err) {
+    int guard_bad = -1;
+    for (uint16_t i = 0; i < OSC_BUF_GUARD; i++) {
+        if (osc_buffer[OSC_BUF_LEN + i] != 0) { guard_bad = i; break; }
+    }
+    const uint32_t tclk = osc_trigger_timer->getTimerClkFreq();
+    const uint32_t psc = TIM3->PSC, arr = TIM3->ARR;
+    char b[320];
+    snprintf(b, sizeof(b),
+        "$OSCDBG,%s,tclk=%lu,psc=%lu,arr=%lu,trgo_hz=%lu,tim_cr2=0x%04lX,"
+        "dma_ccr=0x%08lX,dma_cndtr=%lu,adc_cr1=0x%08lX,adc_cr2=0x%08lX,adc_sqr1=0x%08lX,"
+        "poll=%d,dma_err=0x%lX,guard_bad=%d\n",
+        phase, (unsigned long)tclk, (unsigned long)psc, (unsigned long)arr,
+        (unsigned long)(tclk / ((psc + 1UL) * (arr + 1UL))), (unsigned long)TIM3->CR2,
+        (unsigned long)DMA1_Channel1->CCR, (unsigned long)DMA1_Channel1->CNDTR,
+        (unsigned long)ADC1->CR1, (unsigned long)ADC1->CR2, (unsigned long)ADC1->SQR1,
+        poll_status, (unsigned long)dma_err, guard_bad);
+    osc_write_all(b);
+}
+
 // Blocking one-shot capture: pauses normal telemetry (implicitly — this runs synchronously
 // from the command dispatcher, called before loop()'s tick-flag check), captures OSC_BUF_LEN
 // samples on PA3 at OSC_SAMPLE_RATE_HZ via TIM3-triggered ADC1 DMA, then restores ADC1 to
@@ -505,6 +544,10 @@ static void run_oscilloscope_capture() {
     // telemetry tick has run analogRead() on it) — force it explicitly rather than relying
     // on that ordering.
     pinMode(PIN_VOLTAGE_ANA, INPUT_ANALOG);
+
+    // Clear the overrun tripwire so a stale nonzero from a prior overrunning capture isn't
+    // misread as this one overrunning (see osc_emit_dbg / OSC_BUF_GUARD).
+    memset(&osc_buffer[OSC_BUF_LEN], 0, OSC_BUF_GUARD * sizeof(osc_buffer[0]));
 
     // --- TIM3: free-running trigger source, TRGO on update, no NVIC interrupt ---
     if (osc_trigger_timer == nullptr) {
@@ -561,10 +604,12 @@ static void run_oscilloscope_capture() {
     // lands cleanly on the first trigger instead of racing timer startup.
     HAL_ADC_Start_DMA(&hadc_osc, (uint32_t *)osc_buffer, OSC_BUF_LEN);
     osc_trigger_timer->resume();
+    osc_emit_dbg("armed", -1, 0);
 
-    HAL_DMA_PollForTransfer(&hdma_osc, HAL_DMA_FULL_TRANSFER, OSC_DMA_TIMEOUT_MS);
+    HAL_StatusTypeDef poll = HAL_DMA_PollForTransfer(&hdma_osc, HAL_DMA_FULL_TRANSFER, OSC_DMA_TIMEOUT_MS);
 
     osc_trigger_timer->pause();
+    osc_emit_dbg("done", (int)poll, hdma_osc.ErrorCode);
     HAL_ADC_Stop_DMA(&hadc_osc);
     HAL_ADC_DeInit(&hadc_osc);
     HAL_DMA_DeInit(&hdma_osc);

@@ -65,6 +65,11 @@ pub const OSC_SAMPLE_RATE_HZ: f64 = 50_000.0;
 /// 150ms, plus time to ASCII-encode and transmit ~21KB back over the USB-CDC link. Generous
 /// relative to both so a hung/missing STM32 is reported promptly rather than hanging forever.
 const OSC_CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
+/// STM32 ADC1 reference voltage (VDDA, tied to the 3.3V rail) and full-scale 12-bit code —
+/// only for the convenience volts column in dump_osc_capture_csv; the raw codes stay the
+/// ground truth for diagnosing the capture path (see issue #13).
+const OSC_ADC_VREF: f32 = 3.3;
+const OSC_ADC_MAX_CODE: f32 = 4095.0;
 
 /// Physical channel index within the STM32 ADC frame. After stripping the leading '$'
 /// marker, the frame is a fixed sequence: A0-A3 (analog), TACHO/SPEED (raw inter-pulse
@@ -352,6 +357,46 @@ impl OscFrame {
     }
 }
 
+/// Writes a completed oscilloscope capture to a timestamped CSV under the dashboard's Logs
+/// directory (`osc_capture_<unix_secs>.csv`, one row per sample: index, elapsed µs, raw
+/// 12-bit code, ADC-pin volts), so a suspect trace can be plotted and inspected offline
+/// instead of being judged from the on-screen MIN/MAX/Δ alone (see issue #13 — a DC input
+/// rendering as a jagged trace). Best-effort: any I/O failure is logged and yields None,
+/// leaving the capture result itself untouched.
+pub fn dump_osc_capture_csv(samples: &[u16]) -> Option<String> {
+    use std::fmt::Write as _;
+
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/user".to_string());
+    let dir = format!("{home}/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/Logs");
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        log::error!("Failed to create {}: {}", dir, e);
+        return None;
+    }
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    let path = format!("{dir}/osc_capture_{timestamp}.csv");
+
+    let sample_period_us = 1_000_000.0 / OSC_SAMPLE_RATE_HZ;
+    let mut csv = String::with_capacity(samples.len() * 24);
+    csv.push_str("index,time_us,raw,volts\n");
+    for (i, &raw) in samples.iter().enumerate() {
+        let time_us = i as f64 * sample_period_us;
+        let volts = raw as f32 * OSC_ADC_VREF / OSC_ADC_MAX_CODE;
+        let _ = writeln!(csv, "{},{:.1},{},{:.4}", i, time_us, raw, volts);
+    }
+
+    match std::fs::write(&path, csv) {
+        Ok(()) => Some(path),
+        Err(e) => {
+            log::error!("Failed to write {}: {}", path, e);
+            None
+        }
+    }
+}
+
 /// Owns the ADC serial connection's lifecycle within the background thread's read loop:
 /// whether a reader currently exists, and whether the "port unavailable" warning has
 /// already been logged for the current outage (so retries don't spam the log every
@@ -499,7 +544,12 @@ impl ADCDataProvider {
                 osc_frame.set_state(OscCaptureState::Capturing);
                 let reader = conn.reader.as_mut().unwrap();
                 match Self::perform_osc_capture(reader, frame) {
-                    Ok(samples) => osc_frame.set_state(OscCaptureState::Done(samples)),
+                    Ok(samples) => {
+                        if let Some(path) = dump_osc_capture_csv(&samples) {
+                            log::info!("Oscilloscope capture dumped to {}", path);
+                        }
+                        osc_frame.set_state(OscCaptureState::Done(samples));
+                    }
                     Err(e) => {
                         log::warn!("Oscilloscope capture failed: {}", e);
                         osc_frame.set_state(OscCaptureState::Failed(e));
@@ -612,7 +662,11 @@ impl ADCDataProvider {
             frame.touch();
             match reader.read_line() {
                 Some(line) if !line.is_empty() => {
-                    if line == "$OSCEND" {
+                    if let Some(dbg) = line.strip_prefix("$OSCDBG,") {
+                        // Firmware capture-path register snapshot (see main.cpp osc_emit_dbg,
+                        // issue #13). Logged verbatim; not part of the sample stream.
+                        log::info!("osc capture path: {}", dbg);
+                    } else if line == "$OSCEND" {
                         got_end = true;
                         break;
                     } else if line == "$OSCACK" {
