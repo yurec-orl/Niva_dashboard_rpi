@@ -311,6 +311,14 @@ HardwareSerial KLine(PB11, PB10);
 #define OSC_DMA_TIMEOUT_MS   150UL           // bounds the capture; expected ~82 ms
 #define OSC_SEND_TIMEOUT_MS  2000UL          // bounds the buffer dump if the host stops reading
 
+// Diagnostic A/B for issue #13. When 1, the burst capture free-runs ADC1 in continuous
+// mode (software start, no TIM3 trigger at all) instead of pacing conversions from TIM3
+// TRGO. If the alternating real/near-zero sample pattern disappears in free-run, the fault
+// is in the TIM3-trigger -> conversion path; if it survives, it is in the ADC/DMA core.
+// The rate is then the ADC's own maximum (~176 kSPS at 12 MHz ADCCLK / 68 cycles), so the
+// time axis is meaningless — this build is for the dead-short structural check only.
+#define OSC_FREERUN_TEST     0
+
 // ------------------------------------------------------------
 // Speed sensor timing
 // ------------------------------------------------------------
@@ -590,16 +598,21 @@ static void run_oscilloscope_capture() {
     // misread as this one overrunning (see osc_emit_dbg / OSC_BUF_GUARD).
     memset(&osc_buffer[OSC_BUF_LEN], 0, OSC_BUF_GUARD * sizeof(osc_buffer[0]));
 
-    // --- TIM3: free-running trigger source, TRGO on update, no NVIC interrupt ---
+    // TIM3 handle is constructed unconditionally (even in the free-run test path, which
+    // never resumes it) so its APB clock is enabled — osc_emit_dbg reads TIM3->* and calls
+    // getTimerClkFreq() regardless of mode, and both fault on a clock-gated peripheral.
     if (osc_trigger_timer == nullptr) {
         osc_trigger_timer = new HardwareTimer(TIM3);
     }
+#if !OSC_FREERUN_TEST
+    // --- TIM3: free-running trigger source, TRGO on update, no NVIC interrupt ---
     osc_trigger_timer->pause();
     osc_trigger_timer->setOverflow(OSC_SAMPLE_RATE_HZ, HERTZ_FORMAT);
     TIM_MasterConfigTypeDef sMasterConfig = {};
     sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
     sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
     HAL_TIMEx_MasterConfigSynchronization(osc_trigger_timer->getHandle(), &sMasterConfig);
+#endif
 
     // --- DMA1 Channel1: ADC1's fixed (non-remappable) DMA channel on F103 ---
     // Unlike ADC1's clock (already enabled elsewhere via analogRead()), nothing else in
@@ -625,11 +638,16 @@ static void run_oscilloscope_capture() {
     hadc_osc.Instance = ADC1;
     hadc_osc.Init.DataAlign = ADC_DATAALIGN_RIGHT;
     hadc_osc.Init.ScanConvMode = DISABLE;
-    hadc_osc.Init.ContinuousConvMode = DISABLE; // one conversion per TRGO, not free-run
+#if OSC_FREERUN_TEST
+    hadc_osc.Init.ContinuousConvMode = ENABLE;             // free-run, no external trigger
+    hadc_osc.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+#else
+    hadc_osc.Init.ContinuousConvMode = DISABLE;            // one conversion per TRGO
+    hadc_osc.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T3_TRGO;
+#endif
     hadc_osc.Init.NbrOfConversion = 1;
     hadc_osc.Init.DiscontinuousConvMode = DISABLE;
     hadc_osc.Init.NbrOfDiscConversion = 0;
-    hadc_osc.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T3_TRGO;
     __HAL_LINKDMA(&hadc_osc, DMA_Handle, hdma_osc);
     HAL_ADC_DeInit(&hadc_osc);
     HAL_ADC_Init(&hadc_osc);
@@ -644,12 +662,16 @@ static void run_oscilloscope_capture() {
     // Arm DMA+ADC first (idle, waiting for TRGO), then start the timer so the first sample
     // lands cleanly on the first trigger instead of racing timer startup.
     HAL_ADC_Start_DMA(&hadc_osc, (uint32_t *)osc_buffer, OSC_BUF_LEN);
+#if !OSC_FREERUN_TEST
     osc_trigger_timer->resume();
+#endif
     osc_emit_dbg("armed", -1, 0);
 
     HAL_StatusTypeDef poll = HAL_DMA_PollForTransfer(&hdma_osc, HAL_DMA_FULL_TRANSFER, OSC_DMA_TIMEOUT_MS);
 
+#if !OSC_FREERUN_TEST
     osc_trigger_timer->pause();
+#endif
     osc_emit_dbg("done", (int)poll, hdma_osc.ErrorCode);
     HAL_ADC_Stop_DMA(&hadc_osc);
     HAL_ADC_DeInit(&hadc_osc);
