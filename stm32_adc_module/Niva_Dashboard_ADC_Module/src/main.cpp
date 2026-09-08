@@ -505,9 +505,18 @@ static void oscilloscope_send_buffer() {
 //     MINC [7] = 1, and CNDTR = OSC_BUF_LEN when armed / 0 when done. MSIZE = 10 (word) would
 //     zero-extend each sample into a [value, 0] pair — exactly the observed pattern — and
 //     overrun the buffer (caught by guard_bad).
-//   - adc_cr1/adc_cr2/adc_sqr1: single channel (SQR1 L [23:20] = 0), scan off (CR1 [8] = 0),
-//     continuous off (CR2 [1] = 0), external trigger armed (CR2 EXTTRIG [20] = 1, EXTSEL
-//     [19:17] = 111 = TIM3 TRGO), DMA on (CR2 [8] = 1). A stray 2nd rank => 2 EOCs per trigger.
+//   - adc_cr1/adc_cr2/adc_sqr1/adc_smpr2: single channel (SQR1 L [23:20] = 0), scan off
+//     (CR1 [8] = 0), continuous off (CR2 [1] = 0), external trigger armed (CR2 EXTTRIG
+//     [20] = 1, EXTSEL [19:17] = 100 = TIM3 TRGO), DMA on (CR2 [8] = 1). SMPR2 [11:9] = SMP3
+//     for PA3 — must be 100 (55.5 cyc); 000 (1.5 cyc) => the sample-and-hold never acquires.
+//   - tim_cr1: DIR [4] = 0 (up), CMS [6:5] = 00 (edge-aligned). CMS != 00 (center-aligned)
+//     fires the update event at BOTH ends of the count => two TRGO pulses per period => a
+//     second ADC conversion right behind the first with ~no acquisition time (reads ~0) —
+//     which is the observed [real, 0, real, 0] pattern.
+//   - rcc_cr/rcc_cfgr: HSE started (CR HSERDY [17] = 1) and the PLL source is HSE, or did the
+//     clock fall back to HSI? (CFGR SWS [3:2]: 00 HSI / 01 HSE / 10 PLL; PLLSRC [16], PLLXTPRE
+//     [17], PLLMUL [21:18], ADCPRE [15:14].) tclk = 48 MHz instead of 72 points at HSI
+//     fallback, which also puts a wrong divisor on ADCCLK.
 //   - poll/dma_err/guard_bad: HAL_DMA_PollForTransfer result (0 = OK, else timeout/error),
 //     the DMA handle's ErrorCode, and the first trailing guard slot found nonzero (-1 = none).
 static void osc_emit_dbg(const char *phase, int poll_status, uint32_t dma_err) {
@@ -517,15 +526,19 @@ static void osc_emit_dbg(const char *phase, int poll_status, uint32_t dma_err) {
     }
     const uint32_t tclk = osc_trigger_timer->getTimerClkFreq();
     const uint32_t psc = TIM3->PSC, arr = TIM3->ARR;
-    char b[320];
+    char b[420];
     snprintf(b, sizeof(b),
-        "$OSCDBG,%s,tclk=%lu,psc=%lu,arr=%lu,trgo_hz=%lu,tim_cr2=0x%04lX,"
+        "$OSCDBG,%s,tclk=%lu,psc=%lu,arr=%lu,trgo_hz=%lu,tim_cr1=0x%04lX,tim_cr2=0x%04lX,"
         "dma_ccr=0x%08lX,dma_cndtr=%lu,adc_cr1=0x%08lX,adc_cr2=0x%08lX,adc_sqr1=0x%08lX,"
+        "adc_smpr2=0x%08lX,rcc_cr=0x%08lX,rcc_cfgr=0x%08lX,core_hz=%lu,"
         "poll=%d,dma_err=0x%lX,guard_bad=%d\n",
         phase, (unsigned long)tclk, (unsigned long)psc, (unsigned long)arr,
-        (unsigned long)(tclk / ((psc + 1UL) * (arr + 1UL))), (unsigned long)TIM3->CR2,
+        (unsigned long)(tclk / ((psc + 1UL) * (arr + 1UL))),
+        (unsigned long)TIM3->CR1, (unsigned long)TIM3->CR2,
         (unsigned long)DMA1_Channel1->CCR, (unsigned long)DMA1_Channel1->CNDTR,
         (unsigned long)ADC1->CR1, (unsigned long)ADC1->CR2, (unsigned long)ADC1->SQR1,
+        (unsigned long)ADC1->SMPR2, (unsigned long)RCC->CR, (unsigned long)RCC->CFGR,
+        (unsigned long)SystemCoreClock,
         poll_status, (unsigned long)dma_err, guard_bad);
     osc_write_all(b);
 }
