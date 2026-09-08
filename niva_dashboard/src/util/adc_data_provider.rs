@@ -60,7 +60,7 @@ const OSC_CHUNK_SAMPLES: usize = 64;
 const OSC_EXPECTED_CHUNKS: usize = OSC_BUF_LEN / OSC_CHUNK_SAMPLES;
 /// Sample rate of the burst capture (50 kSPS, see OSCILLOSCOPE_DESIGN.md) — used by callers
 /// to convert the buffer's sample index into elapsed time.
-pub const OSC_SAMPLE_RATE_HZ: f64 = 50_000.0;
+pub const OSC_SAMPLE_RATE_HZ: f64 = 10_000.0;
 /// Bounds the whole request/response round trip: firmware's own DMA capture is bounded at
 /// 150ms, plus time to ASCII-encode and transmit ~21KB back over the USB-CDC link. Generous
 /// relative to both so a hung/missing STM32 is reported promptly rather than hanging forever.

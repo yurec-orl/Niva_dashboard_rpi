@@ -301,7 +301,7 @@ HardwareSerial KLine(PB11, PB10);
 // Normal 50 Hz telemetry is blocked for the ~82 ms capture duration (synchronous/blocking
 // by design — this is a manual, occasional diagnostic action, not a continuous stream).
 #define OSC_ADC_CHANNEL      ADC_CHANNEL_3   // PA3, same pin as telemetry's 12V channel
-#define OSC_SAMPLE_RATE_HZ   50000UL         // TIM3 TRGO rate driving the ADC
+#define OSC_SAMPLE_RATE_HZ   10000UL         // TIM3 TRGO rate driving the ADC
 #define OSC_BUF_LEN          4096            // samples per capture (~82 ms window)
 #define OSC_BUF_GUARD        16              // trailing sentinel slots — never transmitted,
                                              // must stay 0. A nonzero one means the DMA wrote
