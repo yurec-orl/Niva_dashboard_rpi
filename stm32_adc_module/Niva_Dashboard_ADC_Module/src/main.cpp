@@ -526,11 +526,14 @@ static void osc_emit_dbg(const char *phase, int poll_status, uint32_t dma_err) {
     }
     const uint32_t tclk = osc_trigger_timer->getTimerClkFreq();
     const uint32_t psc = TIM3->PSC, arr = TIM3->ARR;
-    char b[420];
+    static const uint8_t adcpre_div[4] = { 2, 4, 6, 8 };
+    const uint32_t pclk2 = HAL_RCC_GetPCLK2Freq();
+    const uint32_t adcclk = pclk2 / adcpre_div[(RCC->CFGR >> 14) & 0x3];
+    char b[460];
     snprintf(b, sizeof(b),
         "$OSCDBG,%s,tclk=%lu,psc=%lu,arr=%lu,trgo_hz=%lu,tim_cr1=0x%04lX,tim_cr2=0x%04lX,"
         "dma_ccr=0x%08lX,dma_cndtr=%lu,adc_cr1=0x%08lX,adc_cr2=0x%08lX,adc_sqr1=0x%08lX,"
-        "adc_smpr2=0x%08lX,rcc_cr=0x%08lX,rcc_cfgr=0x%08lX,core_hz=%lu,"
+        "adc_smpr2=0x%08lX,rcc_cr=0x%08lX,rcc_cfgr=0x%08lX,core_hz=%lu,pclk2=%lu,adcclk=%lu,"
         "poll=%d,dma_err=0x%lX,guard_bad=%d\n",
         phase, (unsigned long)tclk, (unsigned long)psc, (unsigned long)arr,
         (unsigned long)(tclk / ((psc + 1UL) * (arr + 1UL))),
@@ -538,9 +541,26 @@ static void osc_emit_dbg(const char *phase, int poll_status, uint32_t dma_err) {
         (unsigned long)DMA1_Channel1->CCR, (unsigned long)DMA1_Channel1->CNDTR,
         (unsigned long)ADC1->CR1, (unsigned long)ADC1->CR2, (unsigned long)ADC1->SQR1,
         (unsigned long)ADC1->SMPR2, (unsigned long)RCC->CR, (unsigned long)RCC->CFGR,
-        (unsigned long)SystemCoreClock,
+        (unsigned long)SystemCoreClock, (unsigned long)pclk2, (unsigned long)adcclk,
         poll_status, (unsigned long)dma_err, guard_bad);
     osc_write_all(b);
+}
+
+// The stm32duino clock config for this board falls back to an HSI-PLL SYSCLK (48 MHz, no
+// HSE) and leaves ADCPRE at /2 — which at PCLK2 = 48 MHz clocks ADC1 at 24 MHz, 71% over
+// the F103's 14 MHz limit. An out-of-spec ADCCLK is the leading root cause of issue #13
+// (burst capture returns alternating real/near-zero samples). Force the smallest divisor
+// that keeps ADCCLK <= 14 MHz for whatever PCLK2 we actually booted at (48 or a fixed 72).
+// This shifts every raw ADC reading, so the analog-channel trims in sensor_config.json
+// (Hw12v etc.) must be re-checked after this lands.
+static void configure_adc_clock() {
+    const uint32_t pclk2 = HAL_RCC_GetPCLK2Freq();
+    uint32_t cfg;
+    if      (pclk2 / 2 <= 14000000UL) cfg = RCC_ADCPCLK2_DIV2;
+    else if (pclk2 / 4 <= 14000000UL) cfg = RCC_ADCPCLK2_DIV4;
+    else if (pclk2 / 6 <= 14000000UL) cfg = RCC_ADCPCLK2_DIV6;
+    else                              cfg = RCC_ADCPCLK2_DIV8;
+    __HAL_RCC_ADC_CONFIG(cfg);
 }
 
 // Blocking one-shot capture: pauses normal telemetry (implicitly — this runs synchronously
@@ -672,6 +692,10 @@ void setup() {
 
     // ADC: 12-bit resolution (default on STM32, explicit for clarity)
     analogReadResolution(12);
+
+    // Bring ADCCLK back within the F103's 14 MHz spec — the booted clock tree leaves it at
+    // PCLK2/2 (24 MHz at the HSI-fallback 48 MHz PCLK2). See configure_adc_clock / issue #13.
+    configure_adc_clock();
 
     // Pulse inputs — no pull (external divider + Zener provides defined levels)
     pinMode(PIN_TACHO, INPUT);
