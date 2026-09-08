@@ -529,20 +529,28 @@ static void osc_emit_dbg(const char *phase, int poll_status, uint32_t dma_err) {
     static const uint8_t adcpre_div[4] = { 2, 4, 6, 8 };
     const uint32_t pclk2 = HAL_RCC_GetPCLK2Freq();
     const uint32_t adcclk = pclk2 / adcpre_div[(RCC->CFGR >> 14) & 0x3];
-    char b[460];
-    snprintf(b, sizeof(b),
+    char b[720];
+    int n = snprintf(b, sizeof(b),
         "$OSCDBG,%s,tclk=%lu,psc=%lu,arr=%lu,trgo_hz=%lu,tim_cr1=0x%04lX,tim_cr2=0x%04lX,"
         "dma_ccr=0x%08lX,dma_cndtr=%lu,adc_cr1=0x%08lX,adc_cr2=0x%08lX,adc_sqr1=0x%08lX,"
-        "adc_smpr2=0x%08lX,rcc_cr=0x%08lX,rcc_cfgr=0x%08lX,core_hz=%lu,pclk2=%lu,adcclk=%lu,"
-        "poll=%d,dma_err=0x%lX,guard_bad=%d\n",
+        "adc_sqr3=0x%08lX,adc_smpr2=0x%08lX,rcc_cr=0x%08lX,rcc_cfgr=0x%08lX,core_hz=%lu,"
+        "pclk2=%lu,adcclk=%lu,poll=%d,dma_err=0x%lX,guard_bad=%d",
         phase, (unsigned long)tclk, (unsigned long)psc, (unsigned long)arr,
         (unsigned long)(tclk / ((psc + 1UL) * (arr + 1UL))),
         (unsigned long)TIM3->CR1, (unsigned long)TIM3->CR2,
         (unsigned long)DMA1_Channel1->CCR, (unsigned long)DMA1_Channel1->CNDTR,
         (unsigned long)ADC1->CR1, (unsigned long)ADC1->CR2, (unsigned long)ADC1->SQR1,
-        (unsigned long)ADC1->SMPR2, (unsigned long)RCC->CR, (unsigned long)RCC->CFGR,
-        (unsigned long)SystemCoreClock, (unsigned long)pclk2, (unsigned long)adcclk,
+        (unsigned long)ADC1->SQR3, (unsigned long)ADC1->SMPR2, (unsigned long)RCC->CR,
+        (unsigned long)RCC->CFGR, (unsigned long)SystemCoreClock,
+        (unsigned long)pclk2, (unsigned long)adcclk,
         poll_status, (unsigned long)dma_err, guard_bad);
+    // First 32 captured samples, dot-separated — shows the alternation's phase and onset
+    // directly (is it [real,0,...] from index 0, and is sample 0 itself special?).
+    n += snprintf(b + n, sizeof(b) - n, ",head=");
+    for (int i = 0; i < 32 && n > 0 && n < (int)sizeof(b) - 8; i++) {
+        n += snprintf(b + n, sizeof(b) - n, "%u.", (unsigned)osc_buffer[i]);
+    }
+    snprintf(b + n, sizeof(b) - n, "\n");
     osc_write_all(b);
 }
 
