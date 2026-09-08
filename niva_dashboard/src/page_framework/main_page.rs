@@ -13,10 +13,17 @@ use crate::indicator_builders::{
 };
 use crate::page_framework::events::UIEvent;
 
+// One indicator bound to the single hardware input that feeds it and the screen
+// area it draws in. Pairing them in one struct removes the positional coupling
+// that previously let a reorder in any one list mismatch the others.
+struct IndicatorEntry {
+    input: HWInput,
+    indicator: Box<dyn Indicator>,
+    bounds: IndicatorBounds,
+}
+
 struct IndicatorSet {
-    indicators: Vec<Box<dyn Indicator>>,
-    inputs: Vec<HWInput>, // Corresponding hardware inputs for each indicator
-    indicator_bounds: Vec<IndicatorBounds>,
+    entries: Vec<IndicatorEntry>,
 }
 
 pub struct MainPage {
@@ -48,28 +55,7 @@ impl MainPage {
     }
 
     fn setup_test_indicators(ui_style: &UIStyle) -> IndicatorSet {
-        let mut indicators: Vec<Box<dyn Indicator>> = Vec::new();
-        // Order must match indicator construction below: 12 digital indicators first,
-        // then the 4 analog indicators with per-sensor precision.
-        let inputs: Vec<HWInput> = vec![
-            HWInput::HwBrakeFluidLvlLow,
-            HWInput::HwCharge,
-            HWInput::HwCheckEngine,
-            HWInput::HwDiffLock,
-            HWInput::HwExtLights,
-            HWInput::HwFuelLvlLow,
-            HWInput::HwHighBeam,
-            HWInput::HwOilPressLow,
-            HWInput::HwParkBrake,
-            HWInput::HwSpeed,
-            HWInput::HwTacho,
-            HWInput::HwTurnSignal,
-            HWInput::Hw12v,
-            HWInput::HwFuelLvl,
-            HWInput::HwOilPress,
-            HWInput::HwEngineCoolantTemp,
-        ];
-        let mut indicator_bounds: Vec<IndicatorBounds> = Vec::new();
+        let mut entries: Vec<IndicatorEntry> = Vec::new();
 
         // Screen layout: assuming 800x480 resolution
         // Grid: 4 columns x 4 rows for 16 sensors
@@ -107,65 +93,58 @@ impl MainPage {
         let indicator_warning_color = ui_style.get_color(TEXT_WARNING_COLOR, (1.0, 1.0, 0.0));
         let indicator_error_color = ui_style.get_color(TEXT_ERROR_COLOR, (1.0, 0.0, 0.0));
 
-        // Digital sensors (12 total)
-        for _ in 0..12 {
-            indicators.push(Box::new(
-                TextIndicator::new()
-                    .with_font(indicator_font.clone(), indicator_font_size, 1.0)
-                    .with_colors(indicator_color, indicator_warning_color, indicator_error_color),
-            ));
-            indicator_bounds.push(create_bounds_and_advance(&mut col, &mut row));
+        // Digital sensors - plain text readout, no precision setting
+        let digital_inputs = [
+            HWInput::HwBrakeFluidLvlLow,
+            HWInput::HwCharge,
+            HWInput::HwCheckEngine,
+            HWInput::HwDiffLock,
+            HWInput::HwExtLights,
+            HWInput::HwFuelLvlLow,
+            HWInput::HwHighBeam,
+            HWInput::HwOilPressLow,
+            HWInput::HwParkBrake,
+            HWInput::HwSpeed,
+            HWInput::HwTacho,
+            HWInput::HwTurnSignal,
+        ];
+        for input in digital_inputs {
+            entries.push(IndicatorEntry {
+                input,
+                indicator: Box::new(
+                    TextIndicator::new()
+                        .with_font(indicator_font.clone(), indicator_font_size, 1.0)
+                        .with_colors(indicator_color, indicator_warning_color, indicator_error_color),
+                ),
+                bounds: create_bounds_and_advance(&mut col, &mut row),
+            });
         }
 
-        // Analog sensors (4 total) - with different precision settings
-        // 12V (2 decimal place)
-        indicators.push(Box::new(
-            TextIndicator::new()
-                .with_precision(2)
-                .with_font(indicator_font.clone(), indicator_font_size, 1.0)
-                .with_colors(indicator_color, indicator_warning_color, indicator_error_color),
-        ));
-        indicator_bounds.push(create_bounds_and_advance(&mut col, &mut row));
+        // Analog sensors - per-sensor decimal precision
+        let analog_inputs = [
+            (HWInput::Hw12v, 2),
+            (HWInput::HwFuelLvl, 2),
+            (HWInput::HwOilPress, 2),
+            (HWInput::HwEngineCoolantTemp, 1),
+        ];
+        for (input, precision) in analog_inputs {
+            entries.push(IndicatorEntry {
+                input,
+                indicator: Box::new(
+                    TextIndicator::new()
+                        .with_precision(precision)
+                        .with_font(indicator_font.clone(), indicator_font_size, 1.0)
+                        .with_colors(indicator_color, indicator_warning_color, indicator_error_color),
+                ),
+                bounds: create_bounds_and_advance(&mut col, &mut row),
+            });
+        }
 
-        // Fuel Level (2 decimal place)
-        indicators.push(Box::new(
-            TextIndicator::new()
-                .with_precision(2)
-                .with_font(indicator_font.clone(), indicator_font_size, 1.0)
-                .with_colors(indicator_color, indicator_warning_color, indicator_error_color),
-        ));
-        indicator_bounds.push(create_bounds_and_advance(&mut col, &mut row));
-
-        // Oil Pressure (2 decimal places)
-        indicators.push(Box::new(
-            TextIndicator::new()
-                .with_precision(2)
-                .with_font(indicator_font.clone(), indicator_font_size, 1.0)
-                .with_colors(indicator_color, indicator_warning_color, indicator_error_color),
-        ));
-        indicator_bounds.push(create_bounds_and_advance(&mut col, &mut row));
-
-        // Temperature (1 decimal place)
-        indicators.push(Box::new(
-            TextIndicator::new()
-                .with_precision(1)
-                .with_font(indicator_font.clone(), indicator_font_size, 1.0)
-                .with_colors(indicator_color, indicator_warning_color, indicator_error_color),
-        ));
-        indicator_bounds.push(create_bounds_and_advance(&mut col, &mut row));
-        IndicatorSet { indicators, inputs, indicator_bounds }
+        IndicatorSet { entries }
     }
 
     fn setup_gauge_indicators(context: &GraphicsContext, ui_style: &UIStyle) -> IndicatorSet {
-        let mut indicators: Vec<Box<dyn Indicator>> = Vec::new();
-        let inputs: Vec<HWInput> = vec![
-            HWInput::HwSpeed,
-            HWInput::HwFuelLvl,
-            HWInput::HwOilPress,
-            HWInput::HwEngineCoolantTemp,
-            HWInput::Hw12v,
-        ];
-        let mut indicator_bounds: Vec<IndicatorBounds> = Vec::new();
+        let mut entries: Vec<IndicatorEntry> = Vec::new();
 
         // Main indicator set layout:
         // 1. Large central speedometer (gauge)
@@ -185,53 +164,40 @@ impl MainPage {
         let center_y = top_margin + center_gauge_radius;
         
         let (speedometer, speedometer_bounds) = build_speedometer_gauge(center_x, center_y, center_gauge_radius, ui_style);
-        indicators.push(speedometer);
-        indicator_bounds.push(speedometer_bounds);
+        entries.push(IndicatorEntry { input: HWInput::HwSpeed, indicator: speedometer, bounds: speedometer_bounds });
 
         // Left side gauges - smaller gauges
         let side_gauge_radius = 90.0;
         let left_x = button_margin + side_gauge_radius;
-        
+
         // Fuel level gauge (left top)
         let fuel_y = top_margin + side_gauge_radius;
         let (fuel_gauge, fuel_bounds) = build_fuel_level_gauge(left_x, fuel_y, side_gauge_radius, ui_style);
-        indicators.push(fuel_gauge);
-        indicator_bounds.push(fuel_bounds);
-        
+        entries.push(IndicatorEntry { input: HWInput::HwFuelLvl, indicator: fuel_gauge, bounds: fuel_bounds });
+
         // Oil pressure gauge (left bottom)
         let oil_y = fuel_y + side_gauge_radius * 2.0 + 20.0;
         let (oil_gauge, oil_bounds) = build_oil_pressure_gauge(left_x, oil_y, side_gauge_radius, ui_style);
-        indicators.push(oil_gauge);
-        indicator_bounds.push(oil_bounds);
+        entries.push(IndicatorEntry { input: HWInput::HwOilPress, indicator: oil_gauge, bounds: oil_bounds });
 
         // Right side gauges - smaller gauges
         let right_x = screen_width - button_margin - side_gauge_radius;
-        
+
         // Temperature gauge (right top)
         let temp_y = top_margin + side_gauge_radius;
         let (temp_gauge, temp_bounds) = build_temperature_gauge(right_x, temp_y, side_gauge_radius, ui_style);
-        indicators.push(temp_gauge);
-        indicator_bounds.push(temp_bounds);
-        
+        entries.push(IndicatorEntry { input: HWInput::HwEngineCoolantTemp, indicator: temp_gauge, bounds: temp_bounds });
+
         // Battery voltage gauge (right bottom)
         let battery_y = temp_y + side_gauge_radius * 2.0 + 20.0;
         let (voltage_gauge, voltage_bounds) = build_voltage_gauge(right_x, battery_y, side_gauge_radius, ui_style);
-        indicators.push(voltage_gauge);
-        indicator_bounds.push(voltage_bounds);
+        entries.push(IndicatorEntry { input: HWInput::Hw12v, indicator: voltage_gauge, bounds: voltage_bounds });
 
-        IndicatorSet { indicators, inputs, indicator_bounds }
+        IndicatorSet { entries }
     }
 
     fn setup_bar_indicators(context: &GraphicsContext, ui_style: &UIStyle) -> IndicatorSet {
-        let mut indicators: Vec<Box<dyn Indicator>> = Vec::new();
-        let inputs: Vec<HWInput> = vec![
-            HWInput::HwOilPress,
-            HWInput::HwFuelLvl,
-            HWInput::HwEngineCoolantTemp,
-            HWInput::Hw12v,
-            HWInput::HwSpeed,
-        ];
-        let mut indicator_bounds: Vec<IndicatorBounds> = Vec::new();
+        let mut entries: Vec<IndicatorEntry> = Vec::new();
 
         // Layout parameters
         let screen_width = context.width as f32;
@@ -252,9 +218,8 @@ impl MainPage {
             bar_height,
             ui_style
         );
-        indicators.push(oil_pressure_bar);
-        indicator_bounds.push(oil_pressure_bounds);
-        
+        entries.push(IndicatorEntry { input: HWInput::HwOilPress, indicator: oil_pressure_bar, bounds: oil_pressure_bounds });
+
         // Fuel level indicator
         let (fuel_level_bar, fuel_level_bounds) = build_fuel_level_bar(
             button_margin + bar_width * 2.0 + 50.0,
@@ -263,8 +228,7 @@ impl MainPage {
             bar_height,
             ui_style
         );
-        indicators.push(fuel_level_bar);
-        indicator_bounds.push(fuel_level_bounds);
+        entries.push(IndicatorEntry { input: HWInput::HwFuelLvl, indicator: fuel_level_bar, bounds: fuel_level_bounds });
 
         // Temperature indicator
         let (temperature_bar, temperature_bounds) = build_temperature_bar(
@@ -274,8 +238,7 @@ impl MainPage {
             bar_height,
             ui_style
         );
-        indicators.push(temperature_bar);
-        indicator_bounds.push(temperature_bounds);
+        entries.push(IndicatorEntry { input: HWInput::HwEngineCoolantTemp, indicator: temperature_bar, bounds: temperature_bounds });
 
         // Voltage indicator (rightmost)
         let (voltage_bar, voltage_bounds) = build_voltage_bar(
@@ -285,8 +248,7 @@ impl MainPage {
             bar_height,
             ui_style
         );
-        indicators.push(voltage_bar);
-        indicator_bounds.push(voltage_bounds);
+        entries.push(IndicatorEntry { input: HWInput::Hw12v, indicator: voltage_bar, bounds: voltage_bounds });
 
         // Speed digital display (centered)
         let (speed_digital, speed_bounds) = build_speed_digital(
@@ -296,10 +258,9 @@ impl MainPage {
             80.0,
             ui_style
         );
-        indicators.push(speed_digital);
-        indicator_bounds.push(speed_bounds);
+        entries.push(IndicatorEntry { input: HWInput::HwSpeed, indicator: speed_digital, bounds: speed_bounds });
 
-        IndicatorSet { indicators, inputs, indicator_bounds }
+        IndicatorSet { entries }
     }
 
     // Primary button set, shown on entering the page and after returning from the
@@ -404,17 +365,10 @@ impl Page for MainPage {
         // Read sensor values and create SensorValue objects
         let sensor_values = sensor_manager.get_sensor_values();
 
-        // Render each indicator with its corresponding sensor value
-        let indicators = self.indicator_sets[self.current_indicator_set].indicators.iter();
-        let current_inputs = &self.indicator_sets[self.current_indicator_set].inputs;
-        let indicator_bounds = &self.indicator_sets[self.current_indicator_set].indicator_bounds;
-        
-        for (i, indicator) in indicators.enumerate() {
-            if let Some(sensor_value) = sensor_values.get(&current_inputs[i]) {
-                //print!("Rendering indicator {} for sensor {:?} with value {:?}\r\n", indicator.indicator_type(), sensor_value.metadata.sensor_id, sensor_value.value);
-                if let Some(bounds) = indicator_bounds.get(i) {
-                    indicator.render(sensor_value, bounds.clone(), ui_style, context)?;
-                }
+        // Render each indicator with the sensor value from its paired hardware input
+        for entry in &self.indicator_sets[self.current_indicator_set].entries {
+            if let Some(sensor_value) = sensor_values.get(&entry.input) {
+                entry.indicator.render(sensor_value, entry.bounds.clone(), ui_style, context)?;
             }
         }
 
