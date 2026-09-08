@@ -319,6 +319,15 @@ HardwareSerial KLine(PB11, PB10);
 // time axis is meaningless — this build is for the dead-short structural check only.
 #define OSC_FREERUN_TEST     0
 
+// Diagnostic probe for issue #13. When 1, the capture samples the internal VREFINT channel
+// (~1.2 V bandgap, no external pin, no divider) instead of PA3, at 239.5-cycle sampling.
+// If a VREFINT capture is ALSO jagged (~+-30 codes, many exact zeros), the noise is in the
+// ADC core / VREF+ / DMA / calibration. If VREFINT is flat (+-a couple of codes), the noise
+// enters through the PA3 pin — external coupling, the 51k/10k divider impedance, or the test
+// wiring. Pair with OSC_FREERUN_TEST=1: at 239.5+12.5 cycles the conversion is ~21 us, which
+// overruns a 20 us (50 kHz) TIM3 period.
+#define OSC_PROBE_VREFINT    0
+
 // ------------------------------------------------------------
 // Speed sensor timing
 // ------------------------------------------------------------
@@ -597,6 +606,9 @@ static void run_oscilloscope_capture() {
     // Clear the overrun tripwire so a stale nonzero from a prior overrunning capture isn't
     // misread as this one overrunning (see osc_emit_dbg / OSC_BUF_GUARD).
     memset(&osc_buffer[OSC_BUF_LEN], 0, OSC_BUF_GUARD * sizeof(osc_buffer[0]));
+    // And the first slots the "armed" $OSCDBG head previews, so that snapshot reads as a
+    // clean "DMA hasn't written yet" baseline instead of the previous capture's leftovers.
+    memset(osc_buffer, 0, 64 * sizeof(osc_buffer[0]));
 
     // TIM3 handle is constructed unconditionally (even in the free-run test path, which
     // never resumes it) so its APB clock is enabled — osc_emit_dbg reads TIM3->* and calls
@@ -653,10 +665,15 @@ static void run_oscilloscope_capture() {
     HAL_ADC_Init(&hadc_osc);
 
     ADC_ChannelConfTypeDef sConfig = {};
-    sConfig.Channel = OSC_ADC_CHANNEL;
     sConfig.Rank = ADC_REGULAR_RANK_1;
-    sConfig.SamplingTime = ADC_SAMPLETIME_55CYCLES_5; // ~5.7us conv time, ample margin at 20us/sample
-    HAL_ADC_ConfigChannel(&hadc_osc, &sConfig);
+#if OSC_PROBE_VREFINT
+    sConfig.Channel = ADC_CHANNEL_VREFINT;               // internal ~1.2V, no pin/divider
+    sConfig.SamplingTime = ADC_SAMPLETIME_239CYCLES_5;   // VREFINT needs >=17.1us sampling
+#else
+    sConfig.Channel = OSC_ADC_CHANNEL;
+    sConfig.SamplingTime = ADC_SAMPLETIME_55CYCLES_5;    // ~5.7us conv time at 12 MHz ADCCLK
+#endif
+    HAL_ADC_ConfigChannel(&hadc_osc, &sConfig); // sets ADC_CR2_TSVREFE for the VREFINT channel
     HAL_ADCEx_Calibration_Start(&hadc_osc);
 
     // Arm DMA+ADC first (idle, waiting for TRGO), then start the timer so the first sample
