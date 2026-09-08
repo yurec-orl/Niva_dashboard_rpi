@@ -709,8 +709,6 @@ impl Drop for ADCDataProvider {
     }
 }
 
-/// STM32 ADC channels are 12-bit.
-const SELF_TEST_ADC_MAX_RAW: u16 = 4095;
 /// Self-test sweep timing: rise fast, fall slower — long enough that debouncers (which need
 /// several consistent samples) reliably latch both an active and an inactive state, short
 /// enough not to delay real data past what's still a startup animation, not a wait.
@@ -737,6 +735,27 @@ const SELF_TEST_TEMP_ROMS: [&str; 2] = ["2854df6b000000d9", "28cb586a00000059"];
 /// sensor_config.json so the ТЕМП page and any temperature watchdog get exercised.
 const SELF_TEST_TEMP_MIN_C: f32 = 10.0;
 const SELF_TEST_TEMP_PEAK_C: f32 = 70.0;
+
+/// PA0/PA1/PA2 resistive-sender self-test sweep. Each channel is swept end to end across its
+/// datasheet resistance curve and run back through the real divider inverse
+/// (hardware::sensors::calibrated_sender_raw_from_ohm), so ДАВЛ МАСЛА / УРОВ ТОПЛ / ТЕМП
+/// trace their true calibrated ranges instead of pegging or tripping the headroom fault on a
+/// shared 0–4095 ramp. The endpoint resistances and r_series mirror sensor_config.json's
+/// `calibrated_analog` entries (same "keep synthetic and real in step" coupling as
+/// SELF_TEST_TEMP_ROMS -- a curve edit there must be mirrored here).
+const SELF_TEST_OIL_R_SERIES_OHM: f32 = 130.8;
+const SELF_TEST_OIL_OHM_SPAN: (f32, f32) = (7.5, 305.0);
+const SELF_TEST_FUEL_R_SERIES_OHM: f32 = 124.4;
+const SELF_TEST_FUEL_OHM_SPAN: (f32, f32) = (20.0, 250.0);
+const SELF_TEST_COOLANT_R_SERIES_OHM: f32 = 110.4;
+const SELF_TEST_COOLANT_OHM_SPAN: (f32, f32) = (58.0, 1615.0);
+/// Fixed mid-band system voltage held on Hw12v for the whole sweep. The calibrated senders
+/// infer resistance from raw ÷ live 12 V, so a steady supply keeps their synthetic sweep an
+/// exact walk of the curves rather than one smeared by the Hw12v moving-average; БОРТ СЕТЬ
+/// therefore sits still at ~13.5 V during the 2 s self-test. SELF_TEST_V12_TRIM mirrors
+/// sensor_config.json's Hw12v `trim`.
+const SELF_TEST_SUPPLY_V: f32 = 13.5;
+const SELF_TEST_V12_TRIM: f32 = 1.036;
 
 /// Populates an ADCFrame with synthetic values instead of reading the STM32 over serial —
 /// mirrors ADCDataProvider's shape (owns an ADCFrame, updates it from a background thread) so
@@ -828,10 +847,17 @@ impl TestADCDataProvider {
     /// directly, never the self-test one.
     fn generate_channels(elapsed: Duration) -> Vec<u16> {
         let level = Self::envelope(elapsed);
-        let analog_raw = (level * SELF_TEST_ADC_MAX_RAW as f32) as u16;
         // Digital channels latch active only past the envelope's midpoint, so debouncers see
         // a clean active period followed by a clean inactive one rather than chattering.
         let digital_raw: u16 = if level > 0.5 { 1 } else { 0 };
+        // Resistive senders: sweep each datasheet curve end to end in the Ω domain, then
+        // invert the PA0/PA1/PA2 divider at the fixed self-test supply so the calibrated
+        // chains reproduce their sensor_config.json curves rather than clamping/faulting on a
+        // shared ramp (SENSOR_CALIBRATION_DESIGN.md).
+        let sweep_ohm = |(lo, hi): (f32, f32)| lo + (hi - lo) * level;
+        let sender_raw = |span, r_series| crate::hardware::sensors::calibrated_sender_raw_from_ohm(
+            sweep_ohm(span), r_series, SELF_TEST_SUPPLY_V,
+        );
         // HwSpeed reports an inter-pulse period, not a count (see
         // SPEED_TACHO_PULSE_PERIOD_DESIGN.md) — encoded directly from the envelope's target
         // speed via SpeedSensor's own inverse conversion (speed_period_raw_from_kmh), so this
@@ -846,10 +872,10 @@ impl TestADCDataProvider {
         let tacho_raw = crate::hardware::sensors::tacho_period_raw_from_rpm(level * SELF_TEST_TACHO_PEAK_RPM);
 
         let mut channels = vec![0u16; 16];
-        channels[AdcChannel::OilPressure.index()] = analog_raw;  // HwOilPress
-        channels[AdcChannel::FuelLevel.index()] = analog_raw;  // HwFuelLvl
-        channels[AdcChannel::EngineTemp.index()] = analog_raw;  // HwEngineCoolantTemp
-        channels[AdcChannel::Voltage12V.index()] = analog_raw;  // Hw12v
+        channels[AdcChannel::OilPressure.index()] = sender_raw(SELF_TEST_OIL_OHM_SPAN, SELF_TEST_OIL_R_SERIES_OHM);  // HwOilPress
+        channels[AdcChannel::FuelLevel.index()] = sender_raw(SELF_TEST_FUEL_OHM_SPAN, SELF_TEST_FUEL_R_SERIES_OHM);  // HwFuelLvl
+        channels[AdcChannel::EngineTemp.index()] = sender_raw(SELF_TEST_COOLANT_OHM_SPAN, SELF_TEST_COOLANT_R_SERIES_OHM);  // HwEngineCoolantTemp
+        channels[AdcChannel::Voltage12V.index()] = crate::hardware::sensors::v12_raw_from_volts(SELF_TEST_SUPPLY_V, SELF_TEST_V12_TRIM);  // Hw12v
         channels[AdcChannel::Tacho.index()] = tacho_raw;   // HwTacho (raw inter-pulse period)
         channels[AdcChannel::Speed.index()] = speed_raw;   // HwSpeed (raw inter-pulse period)
         channels[AdcChannel::OilPressureLow.index()] = digital_raw; // HwOilPressLow
@@ -1047,5 +1073,52 @@ mod tests {
         }
 
         assert!(checked_a_midrange_sample, "sweep never passed through a mid-range rpm to validate against");
+    }
+
+    /// The calibrated oil / fuel / coolant channels must sweep their configured resistance
+    /// span end to end (SENSOR_CALIBRATION_DESIGN.md) at SELF_TEST_SUPPLY_V without ever
+    /// tripping CalibratedVariableResistanceAnalogSensor's headroom / short-circuit fault.
+    /// Each sensor is rebuilt here with a synthetic linear 0..100 curve over the exact Ω span
+    /// generate_channels uses, so recovering ~0 at the sweep floor and ~100 at the peak
+    /// proves the raw really walks [ohm_lo, ohm_hi] rather than pegging or faulting.
+    #[test]
+    fn self_test_calibrated_channels_sweep_their_full_resistance_span() {
+        use crate::hardware::sensors::CalibratedVariableResistanceAnalogSensor;
+        use crate::hardware::sensor_value::ValueConstraints;
+        use std::sync::Arc;
+        use std::sync::atomic::AtomicU32;
+
+        let cases: [(usize, (f32, f32), f32); 3] = [
+            (AdcChannel::OilPressure.index(), SELF_TEST_OIL_OHM_SPAN, SELF_TEST_OIL_R_SERIES_OHM),
+            (AdcChannel::FuelLevel.index(), SELF_TEST_FUEL_OHM_SPAN, SELF_TEST_FUEL_R_SERIES_OHM),
+            (AdcChannel::EngineTemp.index(), SELF_TEST_COOLANT_OHM_SPAN, SELF_TEST_COOLANT_R_SERIES_OHM),
+        ];
+
+        for (idx, (ohm_lo, ohm_hi), r_series) in cases {
+            let v_supply = Arc::new(AtomicU32::new(SELF_TEST_SUPPLY_V.to_bits()));
+            let mut sensor = CalibratedVariableResistanceAnalogSensor::new(
+                "x".to_string(), "x".to_string(), "u".to_string(), r_series,
+                vec![(ohm_lo, 0.0), (ohm_hi, 100.0)], 0.0,
+                ValueConstraints::analog(0.0, 100.0), v_supply,
+            );
+
+            let mut elapsed = Duration::ZERO;
+            let (mut lo_seen, mut hi_seen) = (f32::MAX, f32::MIN);
+            while elapsed < SELF_TEST_DURATION {
+                let raw = TestADCDataProvider::generate_channels(elapsed)[idx];
+                match sensor.read(raw) {
+                    Ok(sv) => {
+                        let v = sv.as_f32();
+                        lo_seen = lo_seen.min(v);
+                        hi_seen = hi_seen.max(v);
+                    }
+                    Err(e) => panic!("channel {idx} faulted at elapsed={elapsed:?}: {e}"),
+                }
+                elapsed += SELF_TEST_TICK;
+            }
+
+            assert!(lo_seen < 1.0, "channel {idx} sweep floor only reached {lo_seen:.2}, expected ~0");
+            assert!(hi_seen > 99.0, "channel {idx} sweep peak only reached {hi_seen:.2}, expected ~100");
+        }
     }
 }

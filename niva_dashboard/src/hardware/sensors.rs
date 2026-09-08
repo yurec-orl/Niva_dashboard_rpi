@@ -223,6 +223,18 @@ impl AnalogSensor for VoltageDividerSensor {
     }
 }
 
+/// Inverse of `VoltageDividerSensor::read`'s raw→volts mapping, exposed for
+/// `TestADCDataProvider`'s self-test sweep so its synthetic `Hw12v` raw is built from the
+/// exact same divider/ADC constants (and `trim`) the real conversion uses -- see
+/// `speed_period_raw_from_kmh` for the same "don't maintain a second copy of the formula"
+/// rationale. Clamped to the 12-bit ADC range.
+pub fn v12_raw_from_volts(volts: f32, trim: f32) -> u16 {
+    let volts_per_code = V12_ADC_VREF / V12_ADC_MAX_CODE
+        * (V12_DIVIDER_R1_OHM + V12_DIVIDER_R2_OHM) / V12_DIVIDER_R2_OHM
+        * trim;
+    (volts / volts_per_code).round().clamp(0.0, V12_ADC_MAX_CODE) as u16
+}
+
 /// Voltage-divider and ADC constants for the PA0/PA1/PA2 resistive-sender inputs (oil
 /// pressure, fuel level, coolant temp): R1 = 39 kΩ / R2 = 10 kΩ divider, 12-bit ADC
 /// referenced to 3.3 V (stm32_adc_module/WIRING.md; SENSOR_CALIBRATION_DESIGN.md). Separate
@@ -353,6 +365,22 @@ impl AnalogSensor for CalibratedVariableResistanceAnalogSensor {
         );
         Ok(&self.value)
     }
+}
+
+/// Ω→raw inverse of the raw→Ω step in `CalibratedVariableResistanceAnalogSensor::read`,
+/// exposed for `TestADCDataProvider`'s self-test sweep so its synthetic oil/fuel/coolant raw
+/// counts come from the same PA0/PA1/PA2 divider math the real conversion inverts rather than
+/// a separately maintained copy (same rationale as `speed_period_raw_from_kmh`). `v_supply`
+/// is the supply voltage the synthetic frame presents on `Hw12v` at the same instant.
+/// Clamped to the 12-bit ADC range.
+pub fn calibrated_sender_raw_from_ohm(r_sender: f32, r_series_ohm: f32, v_supply: f32) -> u16 {
+    let frac = r_sender / (r_series_ohm + r_sender);
+    let v_sensor_wire = v_supply * frac;
+    let v_adc_pin = v_sensor_wire * SENDER_DIVIDER_R2_OHM
+        / (SENDER_DIVIDER_R1_OHM + SENDER_DIVIDER_R2_OHM);
+    (v_adc_pin / SENDER_ADC_VREF * SENDER_ADC_MAX_CODE)
+        .round()
+        .clamp(0.0, SENDER_ADC_MAX_CODE) as u16
 }
 
 /// Wraps the `Hw12v` chain's sensor and republishes each successful reading into a shared
@@ -1056,16 +1084,11 @@ mod tests {
         assert_eq!(sensor.read(4095).unwrap().as_f32(), 20.0);
     }
 
-    /// Test-local inverse of the raw→Ω conversion (Ω→raw), for driving
-    /// CalibratedVariableResistanceAnalogSensor from a known resistance. Deliberately not
-    /// shared production code -- see SENSOR_CALIBRATION_DESIGN.md's resolved open question
-    /// on a self-test helper.
+    /// Ω→raw, for driving CalibratedVariableResistanceAnalogSensor from a known resistance.
+    /// Thin alias over the production `calibrated_sender_raw_from_ohm` (also used by the
+    /// self-test sweep) so these tests exercise the same inverse.
     fn raw_for_resistance(r_sender: f32, r_series: f32, v_supply: f32) -> u16 {
-        let frac = r_sender / (r_series + r_sender);
-        let v_sensor_wire = v_supply * frac;
-        let v_adc_pin = v_sensor_wire * SENDER_DIVIDER_R2_OHM
-            / (SENDER_DIVIDER_R1_OHM + SENDER_DIVIDER_R2_OHM);
-        (v_adc_pin / SENDER_ADC_VREF * SENDER_ADC_MAX_CODE).round().clamp(0.0, 4095.0) as u16
+        super::calibrated_sender_raw_from_ohm(r_sender, r_series, v_supply)
     }
 
     /// ТМ106 coolant curve (datasheet-band midpoints), abbreviated to the points these

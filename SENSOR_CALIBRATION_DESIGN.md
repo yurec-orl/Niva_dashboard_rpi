@@ -639,15 +639,22 @@ value-offset overlay, the field UI (`value_offset` is carried as a `0.0`
 constructor argument so that iteration only adds a loader), and the distinct
 "sender disconnected" indicator (see Failure modes).
 
-**Resolved: no shared Ω→raw helper is needed.** `TestADCDataProvider`'s
-self-test drives every analog channel (oil, fuel, coolant, 12 V) off one shared
-triangular envelope in `generate_channels` — it's a visual sweep to animate the
-gauges, not a value-accuracy check — so it never needs to synthesize a
-per-value raw count for a calibrated sensor. Across the sweep the calibrated
-chains simply clamp at their curve ends or hit the fault branch (which
-`SensorManager` tolerates per chain), like any other chain. The Ω→raw inverse
-that the tests in `hardware/sensors.rs` use to drive a sensor from a known
-resistance is a few lines, kept test-local rather than promoted to shared code.
+**Self-test sweep (revised).** `TestADCDataProvider::generate_channels` now
+synthesizes each calibrated channel's raw count instead of sharing one 0–4095
+ramp: it sweeps that sender's datasheet curve end to end in the Ω domain and
+inverts the PA0/PA1/PA2 divider at a fixed mid-band supply, so the ДАВЛ МАСЛА /
+УРОВ ТОПЛ / ТЕМП gauges trace their real calibrated ranges during the startup
+animation rather than pegging at a curve end or tripping the headroom fault.
+`Hw12v` is held at `SELF_TEST_SUPPLY_V` (≈13.5 V) for the sweep so the raw→Ω
+inference stays exact — a moving supply would smear it through the `Hw12v`
+moving-average. The Ω→raw inverse (`calibrated_sender_raw_from_ohm`) and the
+`Hw12v` volts→raw inverse (`v12_raw_from_volts`) are `pub` in
+`hardware/sensors.rs`, exposed for the self-test the same way
+`speed_period_raw_from_kmh` already is; the sweep's per-sender curve endpoints
+and `r_series` mirror `sensor_config.json` (a curve edit there must be mirrored
+in the `SELF_TEST_*_OHM_SPAN` constants). The `hardware/sensors.rs` tests reuse
+the same `calibrated_sender_raw_from_ohm` to drive a sensor from a known
+resistance.
 
 ---
 *Created: September 6, 2026*
@@ -660,7 +667,10 @@ single global value offset per sensor (a `reported`/`true_value` pair applied
 to the whole curve); multi-point overlay deferred pending real-sensor testing.*
 *Revised: September 8, 2026 — default curves implemented
 (`CalibratedVariableResistanceAnalogSensor`, `calibrated_analog` config kind);
-`EngineTemperatureSensor` removed; last open question (Ω→raw self-test helper)
-resolved as "not needed". See Implementation status.*
+`EngineTemperatureSensor` removed. See Implementation status.*
 *Revised: September 8, 2026 — added a low-side (short/floating-input) fault to
 `read()` and a Failure modes table; see Runtime conversion.*
+*Revised: September 8, 2026 — self-test sweep now synthesizes per-sender raw
+counts from the datasheet curves via `pub` Ω→raw / volts→raw inverses in
+`hardware/sensors.rs` (supersedes the earlier "no shared helper needed"
+resolution); see Implementation status.*
