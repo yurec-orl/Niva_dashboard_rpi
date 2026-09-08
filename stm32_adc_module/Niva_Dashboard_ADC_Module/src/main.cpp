@@ -603,6 +603,22 @@ static void poll_incoming_commands() {
     }
 }
 
+// Pin ADC1's clock to <= 14 MHz (the STM32F103 maximum) regardless of how the core brought
+// up the system clock tree. If the 8 MHz HSE crystal fails to start, the stm32duino clock
+// config falls back to an HSI-PLL SYSCLK of 48 MHz with PCLK2 = 48 MHz but leaves ADCPRE at
+// /2 — clocking the ADC at 24 MHz, ~71% over spec, which degrades conversion accuracy. This
+// picks the smallest divisor keeping ADCCLK within spec for whatever PCLK2 actually booted
+// (12 MHz at PCLK2 = 48, also 12 MHz at a healthy 72).
+static void configure_adc_clock() {
+    const uint32_t pclk2 = HAL_RCC_GetPCLK2Freq();
+    uint32_t cfg;
+    if      (pclk2 / 2 <= 14000000UL) cfg = RCC_ADCPCLK2_DIV2;
+    else if (pclk2 / 4 <= 14000000UL) cfg = RCC_ADCPCLK2_DIV4;
+    else if (pclk2 / 6 <= 14000000UL) cfg = RCC_ADCPCLK2_DIV6;
+    else                              cfg = RCC_ADCPCLK2_DIV8;
+    __HAL_RCC_ADC_CONFIG(cfg);
+}
+
 // ============================================================
 // setup()
 // ============================================================
@@ -614,6 +630,10 @@ void setup() {
 
     // ADC: 12-bit resolution (default on STM32, explicit for clarity)
     analogReadResolution(12);
+
+    // Keep ADCCLK within the F103's 14 MHz limit even on the HSI-fallback clock tree, which
+    // otherwise clocks the ADC at 24 MHz (see configure_adc_clock).
+    configure_adc_clock();
 
     // Pulse inputs — no pull (external divider + Zener provides defined levels)
     pinMode(PIN_TACHO, INPUT);
