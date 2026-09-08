@@ -22,12 +22,17 @@ the whole sensor layer data-driven — some chains genuinely can't be, see Scope
 `ValueConstraints`/scale/name/units. These become fully data-driven.
 
 **Out of scope, stays hardcoded:**
-- **Custom conversion math**: `SpeedSensor`, `TachoSensor`, `EngineTemperatureSensor`,
-  `GnssAltitudeSensor`, `UpsCurrentSensor`, `UpsChargeSensor` implement `AnalogSensor::read()`
-  with real logic (inter-pulse-period conversion, calibration curves), not a linear scale.
-  JSON isn't going to carry that math without an embedded expression language, which isn't
-  worth building for six sensors. Their *processor* params (moving-average window etc.)
-  are still worth pulling into config — see Stretch goal below.
+- **Custom conversion math**: `SpeedSensor`, `TachoSensor`, `GnssAltitudeSensor`,
+  `UpsCurrentSensor`, `UpsChargeSensor` implement `AnalogSensor::read()` with real logic
+  (inter-pulse-period conversion, register decoding), not a linear scale. JSON isn't going
+  to carry that math without an embedded expression language, which isn't worth building for
+  five sensors. Their *processor* params (moving-average window etc.) are still worth pulling
+  into config — see Stretch goal below.
+  - Exception: the resistive senders (coolant temp, oil pressure, fuel level) are now the
+    fully data-driven `calibrated_analog` kind — a piecewise-linear `(ohm, value)` table is
+    just data, no expression language needed. `EngineTemperatureSensor` (the old placeholder)
+    is deleted. See `hardware::sensors::CalibratedVariableResistanceAnalogSensor` and
+    SENSOR_CALIBRATION_DESIGN.md.
 - **Non-ADC providers**: `GnssChannelProvider`, `UPSDataProvider`, `Bno085ChannelProvider`,
   and the three `*LinkStatusProvider`s are constructed from live `GnssFrame`/`UpsRawFrame`/
   `Bno085Frame`/`Option<ADCFrame>` handles that only exist once their background thread has

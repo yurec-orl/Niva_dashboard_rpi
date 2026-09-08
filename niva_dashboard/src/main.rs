@@ -17,7 +17,7 @@ use crate::hardware::sensor_manager::{SensorManager, SensorDigitalInputChain, Se
 use crate::hardware::hw_providers::*;
 use crate::hardware::digital_signal_processing::DigitalSignalDebouncer;
 use crate::hardware::analog_signal_processing::AnalogSignalProcessorMovingAverage;
-use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor, SpeedSensor, TachoSensor, EngineTemperatureSensor, GnssAltitudeSensor};
+use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor, SpeedSensor, TachoSensor, GnssAltitudeSensor};
 use crate::hardware::sensor_value::ValueConstraints;
 use crate::hardware::heading_fusion_sensor;
 use crate::util::adc_data_provider::{ADCDataProvider, ADCFrame, AdcTempFrame, TestADCDataProvider, SELF_TEST_DURATION};
@@ -265,13 +265,9 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame, temp_frame: A
         .map_err(|e| format!("sensor_config.json: {}", e))?;
 
     // ---- Chains with real conversion math, out of scope for config (see design doc) ----
-
-    let temperature_chain = SensorAnalogInputChain::new(
-        Box::new(ADCChannelProvider::new(HWInput::HwEngineCoolantTemp, frame.clone())),
-        vec![Box::new(AnalogSignalProcessorMovingAverage::new(10*60))],      // Average over 10 seconds
-        Box::new(EngineTemperatureSensor::new()),
-    );
-    mgr.add_analog_sensor_chain(temperature_chain);
+    // Coolant temp / oil pressure / fuel level are data-driven `calibrated_analog` chains
+    // (datasheet resistance curves + live 12V supply) -- see hardware::sensor_config and
+    // SENSOR_CALIBRATION_DESIGN.md. Only the pulse-period sensors stay hand-built here.
 
     let speed_chain = SensorAnalogInputChain::new(
         Box::new(ADCChannelProvider::new(HWInput::HwSpeed, frame.clone())),  // inter-pulse period, raw timer ticks

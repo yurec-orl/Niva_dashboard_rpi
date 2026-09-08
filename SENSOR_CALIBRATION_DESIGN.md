@@ -287,7 +287,7 @@ is the actual behavior to design for, not a pessimistic upper bound.**
 
 ## Runtime conversion: raw → Ω → value
 
-This is what `GenericCalibratedAnalogSensor::read()` actually does on every
+This is what `CalibratedVariableResistanceAnalogSensor::read()` actually does on every
 tick — the reverse of the Conversion pipeline, using the *live* supply
 voltage rather than an assumed one:
 
@@ -337,6 +337,33 @@ territory.
   every other transient read failure already produces (a routine GNSS
   no-fix, an ADC link drop), not a new failure mode for callers to handle.
 
+- **Low-side fault: `read()` also returns `Err` for an implausibly small
+  `R_sender`.** If the PA0/PA1/PA2 divider's *input* wire (the tap back to the
+  instrument cluster) is disconnected, R2 (10 kΩ) pulls the ADC pin to ~0 V.
+  That decodes to a near-short sender resistance — and because low resistance
+  means high temperature / pressure / level for all three senders, it would
+  otherwise read a confident full-scale value. `read()` treats `R_sender`
+  below the curve's lowest tabulated point × `SENDER_SHORT_FAULT_CURVE_FRACTION`
+  (0.4), floored at `SENDER_SHORT_FAULT_MIN_OHM` (2 Ω), as this fault. The
+  fraction keeps a margin under the lowest real datasheet point (coolant 51 Ω,
+  fuel 17 Ω); only oil pressure's off-scale 0–15 Ω "8 kgf/cm²" corner is
+  clipped, which is past the gauge's useful range anyway.
+
+### Failure modes
+
+| # | What's disconnected | ADC pin sits at | Decoded `R_sender` | Result |
+|---|---|---|---|---|
+| 1 | Sender itself (open sender / broken sender wire), gauge coil still fed | ≈ +12 V (via `R_series` coil, ~110–130 Ω, against the weak 49 kΩ tap divider) | huge | **Clamp to the high-Ω curve end → reads minimum**, matching a stock cross-coil gauge with an open sender. Not a fault. |
+| 2 | Gauge +12 V feed | ≈ 0 V (node pulled down through `R_sender`) | ~0 | Fault. Caught by the high-side headroom check when losing that feed also drags `Hw12v` down (`headroom` goes negative); otherwise it looks like mode 3 and the low-side fault catches it. |
+| 3 | The divider's input wire (tap to the cluster) | ≈ 0 V (R2 pulls the ADC pin down; nothing pulls it up) | ~0 | **Low-side fault → `Err`**, so the value drops to "no data" instead of pegging full-scale. |
+
+Modes 2 and 3 recover automatically on reconnection (next tick converts
+normally), same as every other transient read failure. Mode 1's deliberate
+"reads minimum" behavior means it isn't visible as a fault — surfacing a
+distinct "sender disconnected" indicator (driven by the `Err` of modes 2/3
+plus a *sustained* high-Ω clamp for mode 1) is a follow-up, not part of this
+iteration.
+
 **Rejected: stabilizing the OEM supply in hardware.** Would remove the
 software problem entirely, but puts a new component in series with the
 actual stock gauges' power feed — a regression against this project's
@@ -350,14 +377,21 @@ software relationship derived above.
 
 ## Sensor-side representation
 
-New `AnalogSensor` impl, `GenericCalibratedAnalogSensor` (alongside
+New `AnalogSensor` impl, `CalibratedVariableResistanceAnalogSensor` (alongside
 `GenericAnalogSensor`'s linear scale), holding:
 - `curve: Vec<(f32, f32)>` — `(ohm, value)`, sorted ascending by `ohm`.
 - `r_series_ohm: f32` — the measured constant from Conversion pipeline above.
 - a handle to the live supply voltage (Cross-sensor dependency, below).
+- `value_offset: f32` — a scalar added to the interpolated curve output, from
+  the field calibration file (Calibration overlay file below). Defaults to
+  `0.0` when no calibration has been captured.
 
-`read()` performs the raw→Ω conversion (Runtime conversion above), then
-finds the bracketing pair in `curve` and linearly interpolates `value`.
+`read()` performs the raw→Ω conversion (Runtime conversion above), finds the
+bracketing pair in `curve`, linearly interpolates `value`, then adds
+`value_offset` before the `ValueConstraints` min/max clamp. Adding the offset
+at read time is equivalent to shifting every curve point's `value` by the same
+delta, but keeps the stored `curve` a pristine copy of the datasheet so "reset
+to default" is just dropping the offset.
 
 ### Cross-sensor dependency: getting the live 12V reading into read()
 
@@ -379,7 +413,7 @@ the borrow checker allows).
   because `Box<dyn AnalogSensor + Send>` already requires the sensor to be
   `Send`.
 - Created once during chain setup (`main.rs`/`sensor_config.rs`); cloned into
-  the writer and into each `GenericCalibratedAnalogSensor::new(..., v_supply:
+  the writer and into each `CalibratedVariableResistanceAnalogSensor::new(..., v_supply:
   Arc<AtomicU32>, r_series_ohm: f32, curve: Vec<(f32, f32)>, ...)`.
 - **Writer:** a thin decorator wrapping the `Hw12v` chain's sensor (same
   pattern as the existing `decorator.rs`), publishing into the `Arc` as a
@@ -449,58 +483,184 @@ mistake" precedent).
 
 ## Calibration overlay file (for the field UI)
 
+**First iteration: a single global offset per sensor, not a multi-point
+overlay.** A multi-point overlay that overrides only some datasheet nodes
+leaves the rest pulling readings toward datasheet values, and puts slope
+discontinuities wherever a corrected segment meets an uncorrected one — a
+jagged curve, worst exactly in the coolant alert region (105–115 °C) that
+can't be safely field-calibrated in the first place. Sender manufacturing
+tolerance, aging, and a slightly-off `r_series_ohm` mostly behave like a
+gain+offset on the nominal characteristic rather than per-point noise, so one
+anchor measured at an easy operating point captures the dominant term. Whether
+that's enough is a question for real-sensor testing, not up-front design.
+
 The field calibration UI should **not** write directly into `sensor_config.json`
 — that file is meant to be hand-authored/reviewed (it's the datasheet-derived
 default, checked into the repo), and having a UI rewrite it risks losing
 comments/formatting or corrupting unrelated entries. Instead:
 
-- A separate `sensor_calibration.json`, keyed by sensor `id`, holding only
-  calibration-point overrides:
+- A separate `sensor_calibration.json`, keyed by sensor `id`, holding one
+  record per calibrated sensor — the value pair from the capture moment:
   ```jsonc
-  { "HwCoolantTemp": [ { "ohm": 168.0, "value": 30.0 } ] }
+  { "HwCoolantTemp": { "reported": 74.0, "true_value": 90.0 } }
   ```
-- Loaded after `sensor_config.json`; for each matching sensor `id`, its points
-  are merged into the base curve — replacing any existing point at the same
-  `ohm` (within a small tolerance) and inserting new ones, then re-sorting.
+  `reported` is what the sensor's curve output at that instant (the
+  pre-calibration value the operator saw and adjusted); `true_value` is what
+  they set it to. The applied correction is
+  `value_offset = true_value − reported`, added to every subsequent reading.
+- Stored as the value pair, not the bare offset, so the record is
+  self-explanatory and re-derivable; stored in the **value domain, not raw ADC
+  counts**, for the same reason the curve itself dropped `(raw, value, v_ref)`
+  triples — a raw count is meaningless without the supply voltage that
+  produced it, whereas `reported` is already voltage-normalized by the time
+  `read()` computed it.
+- One record per sensor. A second capture overwrites the first; corrections do
+  not accumulate.
+- Loaded after `sensor_config.json`; for each matching sensor `id`, sets that
+  sensor's `value_offset`.
 - Not checked into the repo (per-vehicle, per-harness data — `.gitignore`d
   like other machine-specific runtime state), but survives rebuilds/restarts
   since it's a plain file next to `sensor_config.json`.
-- Gives a trivial "reset to datasheet default" — delete the file.
+- "Reset to datasheet default" — delete the file (or the sensor's key).
+
+If real-sensor testing shows a single offset is insufficient — e.g. an error
+that grows toward one end of the range, which an offset can't model — the next
+step is a two-point capture (offset + scale) or the full multi-point overlay.
+The per-sensor record generalizes from one pair to a list without a format
+break.
 
 ## Field calibration UI sketch
 
 Lives on the diagnostics page (`diag_page.rs`), which already shows live
-sensor values — natural place to add a "capture calibration point" action
-rather than a new page:
+sensor values — natural place to add a "calibrate" action rather than a new
+page:
 
 1. Operator selects a calibrated sensor (coolant temp / oil pressure / fuel
    level) and sees its current live reading.
-2. Operator enters the known true physical value for the current moment
-   (typed via the existing button-driven input, no keyboard needed — same
-   affordance style as other diag-page interactions).
-3. Confirm computes `current_ohm` from the current raw reading using the
-   *same* raw→Ω conversion `GenericCalibratedAnalogSensor::read()` uses
-   internally (the sensor's `r_series_ohm` plus the live `Hw12v` voltage at
-   that instant) — no separate voltage bookkeeping needed, since the result
-   is already voltage-normalized by construction. Writes/updates
-   `(current_ohm, entered_value)` into `sensor_calibration.json` and applies
-   it to the running sensor's curve immediately (no restart needed) —
-   mirrors the existing hot-reload pattern
+2. Operator adjusts that displayed value up/down (via the existing
+   button-driven input, no keyboard needed) until it matches the known true
+   value for the current moment — see Anchor-point procedure per sensor for
+   what that moment is per sensor.
+3. Confirm records `{ reported: <value shown before adjustment>, true_value:
+   <adjusted value> }` under that sensor's `id` in `sensor_calibration.json`,
+   and sets the running sensor's `value_offset = true_value − reported`
+   immediately — no restart, mirroring the existing hot-reload path
    (`util::shutdown::watch_for_config_update`) already used for
    `sensor_config.json` edits.
 
-## Open questions
+No `current_ohm` bookkeeping and no `Hw12v` snapshot are needed for the
+first-iteration offset — the correction is applied in the value domain, after
+raw→Ω→curve has already normalized for supply voltage. (A future multi-point
+overlay working in the Ω domain would need that bookkeeping back; the first
+iteration deliberately doesn't.)
 
-- Exact anchor-point procedure per sensor (what's the practical "known true
-  value" moment for oil pressure and fuel level, which don't have as easy a
-  reference as ambient-temp-at-cold-start) — needs deciding once the car is
-  available to test against, not before.
-- Whether the Ω→raw forward direction (Conversion pipeline above) needs a
-  shared helper of its own for `TestADCDataProvider`'s self-test simulation
-  (to synthesize a plausible raw value for a simulated physical value), or
-  whether that's simple enough to leave inline per call site.
+## Anchor-point procedure per sensor
+
+This section is about where a *known true value* comes from for each sensor —
+the moment the operator can trust a reference reading and press Confirm.
+
+**First iteration needs just one such moment per sensor** (Calibration overlay
+file: a single global offset). Pick the easiest to hold steady:
+- **Oil pressure** — the warm-idle point with the manometer teed in (lowest
+  rpm to hold, and nearest the low-pressure alert that matters).
+- **Fuel level** — the Full graduation (least slosh- and tilt-sensitive of the
+  three points, most repeatable).
+- **Coolant temperature** — the normal-operating 85–95 °C point, read against
+  the ECU's own coolant value.
+
+The multi-point tables below stay relevant only if real-sensor testing shows a
+single offset isn't enough and the design moves to a two-point or full
+multi-point overlay.
+
+### Oil pressure — ММ393А
+
+Reference tool: a mechanical **manometer** in place of (or teed into) the
+stock sender's port. Two operating points:
+
+| Point | Expected true pressure | How to hold it |
+|---|---|---|
+| Idle, warm | > 0.5 bar (≈ 0.5 kgf/cm²) | idle after warm-up |
+| 3000 rpm, warm | 2.5–4.0 bar | hold a steady 3000 rpm |
+
+- bar and kgf/cm² differ by ~2% (1 bar = 1.0197 kgf/cm²), well inside this
+  sensor's datasheet tolerance — read the manometer in whatever unit it is
+  marked and enter that value directly.
+- The manometer and the electrical sender usually can't share one port. Either
+  tee them so the sender stays live while the manometer reads (preferred —
+  Confirm needs the sender's raw ADC value at the same instant), or, if teeing
+  is impossible, characterise pressure-vs-rpm with the manometer first, then
+  reconnect the sender and re-hit the same rpm points, using rpm as the proxy
+  for the just-measured pressure.
+- The pressure ranges above are acceptance bands, not the calibration input —
+  enter the actual manometer reading at the instant of capture.
+
+### Fuel level — 21213-3827010-01
+
+No bench tool or drain-and-measure procedure is available. **The stock cluster
+gauge is the reference**: with the car parked on level ground and the reading
+settled (~1 min, for sender damping and fuel slosh), capture a point whenever
+the OEM needle sits on a marked graduation.
+
+- Capturing just the Empty and Full graduations is enough; the datasheet
+  midpoint carries the rest.
+- Expected accuracy is low — OEM cross-coil gauge tolerance plus tank-shape
+  non-linearity — so this is a coarse correction of the datasheet curve, not a
+  precise calibration.
+
+### Engine coolant temperature — ТМ106
+
+Reference: the **ECU's own coolant-temperature reading** (its tighter-tolerance
+sender, section 2 above), read over the diagnostic port. Points of interest:
+
+| Point | True temp | How to reach it |
+|---|---|---|
+| Cold soak | ambient | before first start of the day, coolant sits at outside-air temperature — enter a measured ambient |
+| Normal operating | 85–95 °C | warmed up, thermostat open, fan cycling |
+| Overheat / critical | 110–120 °C | opportunistic only — hard idle on a hot day, or a sustained climb; do not force it |
+
+- The critical point matters most for the alert thresholds
+  (`warning_high` / `critical_high` in the JSON) but is the hardest to reach
+  safely. Take it if the car gets there on its own during testing; otherwise
+  leave the datasheet curve covering that end.
+- The cold-soak point is free and precise (ambient is easy to measure) and
+  anchors the low end, which the ТМ106 is known to be worst at.
+
+## Implementation status
+
+Done (first iteration): the datasheet default curves, the runtime raw→Ω→value
+conversion, the live-12 V cross-sensor dependency, and both-ended fault
+detection (high-side headroom + low-side short) —
+`CalibratedVariableResistanceAnalogSensor` and `SupplyVoltagePublisher` in
+`hardware/sensors.rs`, a `calibrated_analog` sensor kind in
+`hardware/sensor_config.rs`, and coolant/oil/fuel entries in
+`sensor_config.json` (the hand-built `EngineTemperatureSensor` and its
+placeholder conversion are removed). Deferred: `sensor_calibration.json`, the
+value-offset overlay, the field UI (`value_offset` is carried as a `0.0`
+constructor argument so that iteration only adds a loader), and the distinct
+"sender disconnected" indicator (see Failure modes).
+
+**Resolved: no shared Ω→raw helper is needed.** `TestADCDataProvider`'s
+self-test drives every analog channel (oil, fuel, coolant, 12 V) off one shared
+triangular envelope in `generate_channels` — it's a visual sweep to animate the
+gauges, not a value-accuracy check — so it never needs to synthesize a
+per-value raw count for a calibrated sensor. Across the sweep the calibrated
+chains simply clamp at their curve ends or hit the fault branch (which
+`SensorManager` tolerates per chain), like any other chain. The Ω→raw inverse
+that the tests in `hardware/sensors.rs` use to drive a sensor from a known
+resistance is a few lines, kept test-local rather than promoted to shared code.
 
 ---
 *Created: September 6, 2026*
 *Revised: September 7, 2026 — curve representation changed from raw-ADC-based
 `(raw, value, v_ref)` points to Ω-based `(ohm, value)` points; see Decisions.*
+*Revised: September 8, 2026 — resolved the anchor-point procedure open question;
+see Anchor-point procedure per sensor.*
+*Revised: September 8, 2026 — first-iteration field calibration reduced to a
+single global value offset per sensor (a `reported`/`true_value` pair applied
+to the whole curve); multi-point overlay deferred pending real-sensor testing.*
+*Revised: September 8, 2026 — default curves implemented
+(`CalibratedVariableResistanceAnalogSensor`, `calibrated_analog` config kind);
+`EngineTemperatureSensor` removed; last open question (Ω→raw self-test helper)
+resolved as "not needed". See Implementation status.*
+*Revised: September 8, 2026 — added a low-side (short/floating-input) fault to
+`read()` and a Failure modes table; see Runtime conversion.*

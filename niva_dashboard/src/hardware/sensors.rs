@@ -3,6 +3,8 @@ use rppal::gpio::Level;
 
 use crate::hardware::hw_providers::GNSS_ALTITUDE_OFFSET_M;
 use crate::hardware::sensor_value::{SensorValue, ValueConstraints, ValueMetadata};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 #[cfg(test)]
 use std::time::Duration;
 
@@ -221,71 +223,169 @@ impl AnalogSensor for VoltageDividerSensor {
     }
 }
 
-pub struct EngineTemperatureSensor {
+/// Voltage-divider and ADC constants for the PA0/PA1/PA2 resistive-sender inputs (oil
+/// pressure, fuel level, coolant temp): R1 = 39 kΩ / R2 = 10 kΩ divider, 12-bit ADC
+/// referenced to 3.3 V (stm32_adc_module/WIRING.md; SENSOR_CALIBRATION_DESIGN.md). Separate
+/// from the V12_* set above -- that divider (51k/10k) is PA3, this one is PA0-PA2.
+const SENDER_DIVIDER_R1_OHM: f32 = 39_000.0;
+const SENDER_DIVIDER_R2_OHM: f32 = 10_000.0;
+const SENDER_ADC_VREF: f32 = 3.3;
+const SENDER_ADC_MAX_CODE: f32 = 4095.0;
+/// Minimum `V_supply - V_sensor_wire` headroom before a reading is treated as a fault
+/// instead of converted. A disconnected sender or ADC noise pushes `V_sensor_wire` to or
+/// past `V_supply`, which would blow the inferred resistance up to a huge or negative
+/// value; a few mV of margin makes noise right at the boundary fault cleanly rather than
+/// oscillate (SENSOR_CALIBRATION_DESIGN.md, "Fault handling").
+const SENDER_FAULT_MARGIN_V: f32 = 0.005;
+
+/// Low-side counterpart to `SENDER_FAULT_MARGIN_V`. If the PA0/PA1/PA2 divider's *input*
+/// wire (to the instrument cluster) is disconnected, R2 pulls the ADC pin to ~0 V, which
+/// decodes to a near-short sender resistance -- otherwise indistinguishable from a
+/// legitimate full-scale reading, since low resistance means high temp / pressure / level
+/// for all three senders. A computed `R_sender` below the curve's lowest tabulated point
+/// times this fraction (floored at `SENDER_SHORT_FAULT_MIN_OHM`) is treated as that fault
+/// and returns `Err`. The high-Ω end stays a plain clamp, so an open *sender* still reads
+/// minimum like the stock gauge (SENSOR_CALIBRATION_DESIGN.md, "Failure modes").
+const SENDER_SHORT_FAULT_CURVE_FRACTION: f32 = 0.4;
+const SENDER_SHORT_FAULT_MIN_OHM: f32 = 2.0;
+
+/// Supply voltage assumed for the resistive-sender conversion until `Hw12v` produces its
+/// first real reading -- a representative mid-charge idle voltage, never 0 (which would make
+/// the conversion denominator degenerate). See SENSOR_CALIBRATION_DESIGN.md,
+/// "Startup/failure safety".
+pub const NOMINAL_SUPPLY_V: f32 = 12.2;
+
+/// Piecewise-linear lookup of `value` from a `(ohm, value)` curve sorted ascending by
+/// `ohm`. Outside the tabulated range it clamps to the nearest endpoint value rather than
+/// extrapolating. `curve` must hold at least two points (the config loader enforces this).
+fn interpolate_curve(curve: &[(f32, f32)], ohm: f32) -> f32 {
+    if ohm <= curve[0].0 {
+        return curve[0].1;
+    }
+    let last = curve[curve.len() - 1];
+    if ohm >= last.0 {
+        return last.1;
+    }
+    let hi = curve.iter().position(|&(o, _)| o >= ohm).unwrap();
+    let (o0, v0) = curve[hi - 1];
+    let (o1, v1) = curve[hi];
+    v0 + (v1 - v0) * (ohm - o0) / (o1 - o0)
+}
+
+/// Converts a raw ADC count from a PA0/PA1/PA2 resistive sender to a physical value through
+/// a datasheet resistance curve, using the *live* 12 V supply reading rather than an assumed
+/// nominal. The sender forms a plain two-resistor divider with the OEM gauge coil, so the
+/// tapped node voltage (and hence the raw count) scales directly with supply voltage -- see
+/// SENSOR_CALIBRATION_DESIGN.md for the full derivation.
+///
+/// `read()` returns `Err` when the divider headroom collapses (disconnected sender / ADC
+/// noise). `SensorManager::read_all_sensors` already drops one chain's `Err` for that tick
+/// without disturbing the others.
+pub struct CalibratedVariableResistanceAnalogSensor {
     value: SensorValue,
     constraints: ValueConstraints,
     metadata: ValueMetadata,
+    /// `(ohm, value)` datasheet points, sorted ascending by `ohm`.
+    curve: Vec<(f32, f32)>,
+    /// Variable-coil winding resistance of the OEM gauge this sender shares its divider with
+    /// (measured per gauge; SENSOR_CALIBRATION_DESIGN.md).
+    r_series_ohm: f32,
+    /// Field-calibration offset added to the interpolated curve output. Stays 0.0 until the
+    /// calibration overlay/UI lands (SENSOR_CALIBRATION_DESIGN.md, "Calibration overlay file").
+    value_offset: f32,
+    /// Live `Hw12v` reading as `f32` bits, published by `SupplyVoltagePublisher`.
+    v_supply: Arc<AtomicU32>,
 }
 
-impl EngineTemperatureSensor {
-    pub fn new() -> Self {
-        EngineTemperatureSensor {
+impl CalibratedVariableResistanceAnalogSensor {
+    pub fn new(id: String, name: String, units: String, r_series_ohm: f32,
+               curve: Vec<(f32, f32)>, value_offset: f32,
+               constraints: ValueConstraints, v_supply: Arc<AtomicU32>) -> Self {
+        CalibratedVariableResistanceAnalogSensor {
             value: SensorValue::empty(),
-            constraints: ValueConstraints::analog_with_thresholds(
-                0.0, 120.0,
-                None, None,
-                Some(100.0), Some(110.0),
-            ),
-            metadata: ValueMetadata {
-                unit: "°C".to_string(),
-                label: "ТЕМП".to_string(),
-                sensor_id: "engine_temp".to_string(),
-            },
+            constraints,
+            metadata: ValueMetadata::new(units, name, id),
+            curve,
+            r_series_ohm,
+            value_offset,
+            v_supply,
         }
     }
 }
 
-impl Sensor for EngineTemperatureSensor {
-    fn id(&self) -> &String {
-        &self.value.metadata.sensor_id
-    }
-
-    fn name(&self) -> &String {
-        &self.value.metadata.label
-    }
-
-    fn value(&self) -> Result<&SensorValue, String> {
-        Ok(&self.value)
-    }
-
-    fn constraints(&self) -> &ValueConstraints {
-        &self.constraints
-    }
-
-    fn metadata(&self) -> &ValueMetadata {
-        &self.metadata
-    }
-
-    fn min_value(&self) -> f32 {
-        self.constraints.min_value
-    }
-
-    fn max_value(&self) -> f32 {
-        self.constraints.max_value
-    }
+impl Sensor for CalibratedVariableResistanceAnalogSensor {
+    fn id(&self) -> &String { &self.metadata.sensor_id }
+    fn name(&self) -> &String { &self.metadata.label }
+    fn value(&self) -> Result<&SensorValue, String> { Ok(&self.value) }
+    fn constraints(&self) -> &ValueConstraints { &self.constraints }
+    fn metadata(&self) -> &ValueMetadata { &self.metadata }
+    fn min_value(&self) -> f32 { self.constraints.min_value }
+    fn max_value(&self) -> f32 { self.constraints.max_value }
 }
 
-impl AnalogSensor for EngineTemperatureSensor {
+impl AnalogSensor for CalibratedVariableResistanceAnalogSensor {
     fn read(&mut self, input: u16) -> Result<&SensorValue, String> {
-        // Convert raw input (e.g. ADC value) to temperature
-        // Placeholder conversion logic
-        let temperature = (input as f32) * 0.1; // Placeholder conversion
+        let v_supply = f32::from_bits(self.v_supply.load(Ordering::Relaxed));
+        let v_adc_pin = input as f32 / SENDER_ADC_MAX_CODE * SENDER_ADC_VREF;
+        let v_sensor_wire = v_adc_pin
+            * (SENDER_DIVIDER_R1_OHM + SENDER_DIVIDER_R2_OHM) / SENDER_DIVIDER_R2_OHM;
+        let headroom = v_supply - v_sensor_wire;
+        if headroom <= SENDER_FAULT_MARGIN_V {
+            return Err(format!(
+                "{}: sensor-wire {:.3} V at/above supply {:.3} V (disconnected sender or ADC noise)",
+                self.metadata.sensor_id, v_sensor_wire, v_supply
+            ));
+        }
+        let r_sender = self.r_series_ohm * v_sensor_wire / headroom;
+        let short_fault_ohm = (self.curve[0].0 * SENDER_SHORT_FAULT_CURVE_FRACTION)
+            .max(SENDER_SHORT_FAULT_MIN_OHM);
+        if r_sender < short_fault_ohm {
+            return Err(format!(
+                "{}: sensor-wire {:.3} V implausibly low (r≈{:.1} Ω < {:.1} Ω) -- divider input wire disconnected?",
+                self.metadata.sensor_id, v_sensor_wire, r_sender, short_fault_ohm
+            ));
+        }
+        let value = interpolate_curve(&self.curve, r_sender) + self.value_offset;
         self.value = SensorValue::analog_with_constraints_and_metadata(
-            temperature.clamp(self.constraints.min_value, self.constraints.max_value),
+            value.clamp(self.min_value(), self.max_value()),
             self.constraints.clone(),
             self.metadata.clone(),
         );
         Ok(&self.value)
+    }
+}
+
+/// Wraps the `Hw12v` chain's sensor and republishes each successful reading into a shared
+/// cell, so `CalibratedVariableResistanceAnalogSensor` chains can read the live supply
+/// voltage their raw→Ω conversion needs (SENSOR_CALIBRATION_DESIGN.md, "Cross-sensor
+/// dependency"). Publishing only on a successful read leaves the last-known-good voltage in
+/// place across an ADC link drop. Everything except `read` delegates to the inner sensor.
+pub struct SupplyVoltagePublisher {
+    inner: Box<dyn AnalogSensor + Send>,
+    cell: Arc<AtomicU32>,
+}
+
+impl SupplyVoltagePublisher {
+    pub fn new(inner: Box<dyn AnalogSensor + Send>, cell: Arc<AtomicU32>) -> Self {
+        SupplyVoltagePublisher { inner, cell }
+    }
+}
+
+impl Sensor for SupplyVoltagePublisher {
+    fn id(&self) -> &String { self.inner.id() }
+    fn name(&self) -> &String { self.inner.name() }
+    fn value(&self) -> Result<&SensorValue, String> { self.inner.value() }
+    fn constraints(&self) -> &ValueConstraints { self.inner.constraints() }
+    fn metadata(&self) -> &ValueMetadata { self.inner.metadata() }
+    fn min_value(&self) -> f32 { self.inner.min_value() }
+    fn max_value(&self) -> f32 { self.inner.max_value() }
+}
+
+impl AnalogSensor for SupplyVoltagePublisher {
+    fn read(&mut self, input: u16) -> Result<&SensorValue, String> {
+        let volts = self.inner.read(input)?.as_f32();
+        self.cell.store(volts.to_bits(), Ordering::Relaxed);
+        self.inner.value()
     }
 }
 
@@ -956,36 +1056,132 @@ mod tests {
         assert_eq!(sensor.read(4095).unwrap().as_f32(), 20.0);
     }
 
-    #[test]
-    fn test_engine_temperature_sensor_creation() {
-        let sensor = EngineTemperatureSensor::new();
-        
-        assert_eq!(sensor.constraints.min_value, 0.0);
-        assert_eq!(sensor.constraints.max_value, 120.0);
-        assert_eq!(sensor.metadata.unit, "°C");
-        assert_eq!(sensor.metadata.label, "ТЕМП");
-        assert_eq!(sensor.metadata.sensor_id, "engine_temp");
+    /// Test-local inverse of the raw→Ω conversion (Ω→raw), for driving
+    /// CalibratedVariableResistanceAnalogSensor from a known resistance. Deliberately not
+    /// shared production code -- see SENSOR_CALIBRATION_DESIGN.md's resolved open question
+    /// on a self-test helper.
+    fn raw_for_resistance(r_sender: f32, r_series: f32, v_supply: f32) -> u16 {
+        let frac = r_sender / (r_series + r_sender);
+        let v_sensor_wire = v_supply * frac;
+        let v_adc_pin = v_sensor_wire * SENDER_DIVIDER_R2_OHM
+            / (SENDER_DIVIDER_R1_OHM + SENDER_DIVIDER_R2_OHM);
+        (v_adc_pin / SENDER_ADC_VREF * SENDER_ADC_MAX_CODE).round().clamp(0.0, 4095.0) as u16
+    }
+
+    /// ТМ106 coolant curve (datasheet-band midpoints), abbreviated to the points these
+    /// tests exercise.
+    fn coolant_curve() -> Vec<(f32, f32)> {
+        vec![(58.0, 130.0), (98.0, 110.0), (175.5, 90.0), (335.0, 70.0), (1615.0, 30.0)]
     }
 
     #[test]
-    fn test_engine_temperature_sensor_reading() {
-        let mut sensor = EngineTemperatureSensor::new();
+    fn test_calibrated_vr_sensor_interpolates_at_a_curve_point() {
+        let v_supply = Arc::new(AtomicU32::new(13.5f32.to_bits()));
+        let raw = raw_for_resistance(175.5, 110.4, 13.5); // -> 90 °C
+        let mut sensor = CalibratedVariableResistanceAnalogSensor::new(
+            "HwEngineCoolantTemp".to_string(), "ТЕМП".to_string(), "°C".to_string(),
+            110.4, coolant_curve(), 0.0,
+            ValueConstraints::analog(0.0, 120.0), v_supply,
+        );
+        let t = sensor.read(raw).unwrap().as_f32();
+        assert!((t - 90.0).abs() < 0.5, "expected ~90 °C, got {t}");
+    }
 
-        // Test normal temperature reading
-        sensor.read(500).unwrap(); // 500 * 0.1 = 50.0°C
-        if let ValueData::Analog(temp) = &Sensor::value(&sensor).unwrap().value {
-            assert!((temp - 50.0).abs() < 0.001);
-        } else {
-            panic!("Expected analog temperature value");
-        }
+    #[test]
+    fn test_calibrated_vr_sensor_tracks_live_supply_voltage() {
+        // The same raw count implies a different sender resistance -- hence a different
+        // reading -- at a different supply voltage. That's the whole reason read() consults
+        // the live Hw12v cell instead of a nominal constant.
+        let cell = Arc::new(AtomicU32::new(12.2f32.to_bits()));
+        let raw = raw_for_resistance(175.5, 110.4, 12.2);
+        let mut sensor = CalibratedVariableResistanceAnalogSensor::new(
+            "c".to_string(), "c".to_string(), "°C".to_string(),
+            110.4, coolant_curve(), 0.0,
+            ValueConstraints::analog(0.0, 120.0), cell.clone(),
+        );
+        let at_12v = sensor.read(raw).unwrap().as_f32();
+        cell.store(14.5f32.to_bits(), Ordering::Relaxed);
+        let at_14v5 = sensor.read(raw).unwrap().as_f32();
+        assert!((at_12v - at_14v5).abs() > 1.0,
+                "supply change should move the reading, {at_12v} vs {at_14v5}");
+    }
 
-        // Test high temperature reading with clamping
-        sensor.read(1500).unwrap(); // 1500 * 0.1 = 150.0°C, should clamp to 120.0°C
-        if let ValueData::Analog(temp) = &Sensor::value(&sensor).unwrap().value {
-            assert_eq!(*temp, 120.0);
-        } else {
-            panic!("Expected analog temperature value");
-        }
+    #[test]
+    fn test_calibrated_vr_sensor_faults_when_wire_reaches_supply() {
+        let v_supply = Arc::new(AtomicU32::new(12.2f32.to_bits()));
+        let mut sensor = CalibratedVariableResistanceAnalogSensor::new(
+            "c".to_string(), "c".to_string(), "°C".to_string(),
+            110.4, coolant_curve(), 0.0,
+            ValueConstraints::analog(0.0, 120.0), v_supply,
+        );
+        // Full-scale raw -> V_sensor_wire ~16 V, well above the 12.2 V supply.
+        assert!(sensor.read(4095).is_err());
+    }
+
+    #[test]
+    fn test_calibrated_vr_sensor_clamps_past_curve_ends() {
+        let v_supply = Arc::new(AtomicU32::new(13.5f32.to_bits()));
+        let mut sensor = CalibratedVariableResistanceAnalogSensor::new(
+            "c".to_string(), "c".to_string(), "°C".to_string(),
+            110.4, coolant_curve(), 0.0,
+            ValueConstraints::analog(0.0, 200.0), v_supply, // wide clamp so the curve ends show
+        );
+        // 35 Ω is below the curve's lowest point (58 Ω) but above the low-side short-fault
+        // floor (58 * 0.4 = 23.2 Ω), so it clamps rather than faulting.
+        let hot = sensor.read(raw_for_resistance(35.0, 110.4, 13.5)).unwrap().as_f32();
+        assert!((hot - 130.0).abs() < 0.001, "below curve start clamps to 130 °C, got {hot}");
+        let cold = sensor.read(raw_for_resistance(5000.0, 110.4, 13.5)).unwrap().as_f32();
+        assert!((cold - 30.0).abs() < 0.001, "above curve end clamps to 30 °C, got {cold}");
+    }
+
+    #[test]
+    fn test_calibrated_vr_sensor_faults_on_implausibly_low_resistance() {
+        // Mode 3: the PA0/PA1/PA2 divider's input wire floats -> R2 pulls the ADC pin to
+        // ~0 V -> decodes to a near-short sender resistance. Must fault, not read full-scale.
+        let v_supply = Arc::new(AtomicU32::new(13.5f32.to_bits()));
+        let mut sensor = CalibratedVariableResistanceAnalogSensor::new(
+            "c".to_string(), "c".to_string(), "°C".to_string(),
+            110.4, coolant_curve(), 0.0,
+            ValueConstraints::analog(0.0, 120.0), v_supply,
+        );
+        assert!(sensor.read(0).is_err(), "raw 0 (floating divider input) should fault");
+        assert!(sensor.read(raw_for_resistance(2.0, 110.4, 13.5)).is_err());
+        // A genuine near-full-scale reading (low but plausible R) still converts.
+        assert!(sensor.read(raw_for_resistance(60.0, 110.4, 13.5)).is_ok());
+    }
+
+    #[test]
+    fn test_calibrated_vr_sensor_applies_value_offset() {
+        let v_supply = Arc::new(AtomicU32::new(13.5f32.to_bits()));
+        let raw = raw_for_resistance(175.5, 110.4, 13.5);
+        let mut base = CalibratedVariableResistanceAnalogSensor::new(
+            "c".to_string(), "c".to_string(), "°C".to_string(),
+            110.4, coolant_curve(), 0.0,
+            ValueConstraints::analog(0.0, 200.0), v_supply.clone(),
+        );
+        let mut offset = CalibratedVariableResistanceAnalogSensor::new(
+            "c".to_string(), "c".to_string(), "°C".to_string(),
+            110.4, coolant_curve(), 5.0,
+            ValueConstraints::analog(0.0, 200.0), v_supply,
+        );
+        let b = base.read(raw).unwrap().as_f32();
+        let o = offset.read(raw).unwrap().as_f32();
+        assert!((o - b - 5.0).abs() < 0.01, "offset should shift by +5, {b} vs {o}");
+    }
+
+    #[test]
+    fn test_supply_voltage_publisher_writes_cell_on_successful_read() {
+        let cell = Arc::new(AtomicU32::new(0));
+        let inner = Box::new(VoltageDividerSensor::new(
+            "Hw12v".to_string(), "БОРТ СЕТЬ".to_string(), "В".to_string(),
+            ValueConstraints::analog(0.0, 20.0), 1.0,
+        ));
+        let mut publisher = SupplyVoltagePublisher::new(inner, cell.clone());
+        // ~12.6 V worth of codes (see test_voltage_divider_sensor_converts_code_to_volts).
+        let volts = publisher.read(2563).unwrap().as_f32();
+        let published = f32::from_bits(cell.load(Ordering::Relaxed));
+        assert!((published - volts).abs() < 0.001, "cell should hold the reading");
+        assert!((published - 12.6).abs() < 0.1, "got {published}");
     }
 
     #[test]
@@ -1131,14 +1327,19 @@ mod tests {
         let value_result = Sensor::value(&sensor);
         assert!(value_result.is_ok());
 
-        // Test EngineTemperatureSensor implements AnalogSensor trait
-        let mut temp_sensor = EngineTemperatureSensor::new();
+        // Test CalibratedVariableResistanceAnalogSensor implements AnalogSensor trait
+        let mut temp_sensor = CalibratedVariableResistanceAnalogSensor::new(
+            "c".to_string(), "c".to_string(), "°C".to_string(),
+            110.4, coolant_curve(), 0.0,
+            ValueConstraints::analog(0.0, 120.0),
+            Arc::new(AtomicU32::new(13.5f32.to_bits())),
+        );
         assert_eq!(temp_sensor.min_value(), 0.0);
         assert_eq!(temp_sensor.max_value(), 120.0);
-        
-        let temp_result = temp_sensor.read(800);
+
+        let temp_result = temp_sensor.read(raw_for_resistance(175.5, 110.4, 13.5));
         assert!(temp_result.is_ok());
-        
+
         let temp_value_result = Sensor::value(&temp_sensor);
         assert!(temp_value_result.is_ok());
     }

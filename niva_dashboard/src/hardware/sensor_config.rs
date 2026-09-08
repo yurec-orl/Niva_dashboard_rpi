@@ -4,9 +4,13 @@
 // scale factor, or warning threshold is now an edit to sensor_config.json, picked up on the
 // next restart (see util::shutdown::watch_for_updates) instead of a rebuild.
 //
-// Out of scope (see design doc's Scope section): sensors with real conversion math
-// (SpeedSensor, TachoSensor, EngineTemperatureSensor, ...) and non-ADC providers
-// (GNSS/UPS/BNO085/link-health) stay hand-built in main.rs.
+// The resistive senders (coolant temp, oil pressure, fuel level) are the `calibrated_analog`
+// kind here -- a datasheet resistance curve plus the live 12V supply reading, see
+// CalibratedVariableResistanceAnalogSensor and SENSOR_CALIBRATION_DESIGN.md.
+//
+// Out of scope (see design doc's Scope section): the pulse-period sensors (SpeedSensor,
+// TachoSensor) and non-ADC providers (GNSS/UPS/BNO085/link-health) stay hand-built in
+// main.rs.
 
 use crate::hardware::analog_signal_processing::{
     AnalogSignalProcessor, AnalogSignalProcessorDampener, AnalogSignalProcessorMovingAverage,
@@ -15,12 +19,17 @@ use crate::hardware::digital_signal_processing::{DigitalSignalDebouncer, Digital
 use crate::hardware::hw_providers::{ADCChannelProvider, HWInput, OneWireTempChannelProvider};
 use crate::hardware::sensor_manager::{SensorAnalogInputChain, SensorDigitalInputChain, SensorManager};
 use crate::hardware::sensor_value::ValueConstraints;
-use crate::hardware::sensors::{GenericAnalogSensor, GenericDigitalSensor, OneWireTempSensor, VoltageDividerSensor};
+use crate::hardware::sensors::{
+    CalibratedVariableResistanceAnalogSensor, GenericAnalogSensor, GenericDigitalSensor,
+    OneWireTempSensor, SupplyVoltagePublisher, VoltageDividerSensor, NOMINAL_SUPPLY_V,
+};
 use crate::util::adc_data_provider::{ADCFrame, AdcTempFrame};
 
 use rppal::gpio::Level;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicU32;
+use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Deserialize)]
@@ -111,6 +120,28 @@ enum SensorConfig {
         trim: f32,
         constraints: ConstraintsConfig,
     },
+    /// Resistive sender (oil pressure / fuel level / coolant temp) converted through a
+    /// datasheet resistance curve and the live 12 V supply reading -- see
+    /// CalibratedVariableResistanceAnalogSensor and SENSOR_CALIBRATION_DESIGN.md. Paired
+    /// with `provider: "adc"`. `curve` is `(ohm, value)` points (>= 2, sorted by `ohm` on
+    /// load); `value_offset` (optional, default 0.0) is reserved for the field-calibration
+    /// overlay that doesn't exist yet.
+    CalibratedAnalog {
+        id: String,
+        name: String,
+        units: String,
+        r_series_ohm: f32,
+        curve: Vec<CurvePointConfig>,
+        #[serde(default)]
+        value_offset: f32,
+        constraints: ConstraintsConfig,
+    },
+}
+
+#[derive(Deserialize)]
+struct CurvePointConfig {
+    ohm: f32,
+    value: f32,
 }
 
 fn default_trim() -> f32 {
@@ -206,8 +237,14 @@ pub fn load_chains(
     let entries: Vec<ChainConfig> = serde_json::from_str(&contents)
         .map_err(|e| format!("sensor config: failed to parse {path:?}: {e}"))?;
 
+    // One shared cell per load, carrying the live `Hw12v` reading (f32 bits) that every
+    // `calibrated_analog` sensor's raw→Ω conversion needs. Seeded with a nominal until the
+    // `Hw12v` chain's `SupplyVoltagePublisher` writes a real reading. See
+    // SENSOR_CALIBRATION_DESIGN.md, "Cross-sensor dependency".
+    let v_supply = Arc::new(AtomicU32::new(NOMINAL_SUPPLY_V.to_bits()));
+
     for entry in entries.iter().filter(|e| e.group == group) {
-        build_chain(entry, frame.clone(), temp_frame.as_ref(), mgr)?;
+        build_chain(entry, frame.clone(), temp_frame.as_ref(), &v_supply, mgr)?;
     }
     Ok(())
 }
@@ -216,13 +253,14 @@ fn build_chain(
     entry: &ChainConfig,
     frame: ADCFrame,
     temp_frame: Option<&AdcTempFrame>,
+    v_supply: &Arc<AtomicU32>,
     mgr: &mut SensorManager,
 ) -> Result<(), String> {
     let input = HWInput::from_config_name(&entry.hw_input)
         .ok_or_else(|| format!("sensor config: unknown hw_input '{}'", entry.hw_input))?;
 
     match entry.provider.as_str() {
-        "adc" => build_adc_chain(entry, input, frame, mgr),
+        "adc" => build_adc_chain(entry, input, frame, v_supply, mgr),
         "adc_temp" => build_adc_temp_chain(entry, input, temp_frame, mgr),
         other => Err(format!(
             "sensor config: hw_input '{}' has unsupported provider '{}' (expected \"adc\" or \"adc_temp\")",
@@ -235,6 +273,7 @@ fn build_adc_chain(
     entry: &ChainConfig,
     input: HWInput,
     frame: ADCFrame,
+    v_supply: &Arc<AtomicU32>,
     mgr: &mut SensorManager,
 ) -> Result<(), String> {
     match &entry.sensor {
@@ -284,12 +323,51 @@ fn build_adc_chain(
             }
             let processors: Vec<Box<dyn AnalogSignalProcessor + Send>> =
                 entry.analog_processors.iter().map(AnalogProcessorConfig::build).collect();
+            // This kind is the system supply voltage, so its chain's sensor is wrapped to
+            // publish each reading into the shared cell the calibrated senders consume.
             let chain = SensorAnalogInputChain::new(
                 Box::new(ADCChannelProvider::new(input, frame)),
                 processors,
-                Box::new(VoltageDividerSensor::new(
-                    id.clone(), name.clone(), units.clone(),
-                    constraints.build(&entry.hw_input)?, *trim,
+                Box::new(SupplyVoltagePublisher::new(
+                    Box::new(VoltageDividerSensor::new(
+                        id.clone(), name.clone(), units.clone(),
+                        constraints.build(&entry.hw_input)?, *trim,
+                    )),
+                    v_supply.clone(),
+                )),
+            );
+            mgr.add_analog_sensor_chain(chain);
+        }
+        SensorConfig::CalibratedAnalog { id, name, units, r_series_ohm, curve, value_offset, constraints } => {
+            if !entry.digital_processors.is_empty() {
+                return Err(format!(
+                    "sensor config: hw_input '{}' is an analog sensor but lists digital_processors",
+                    entry.hw_input
+                ));
+            }
+            if curve.len() < 2 {
+                return Err(format!(
+                    "sensor config: hw_input '{}' calibrated_analog curve needs at least 2 points, has {}",
+                    entry.hw_input, curve.len()
+                ));
+            }
+            let mut points: Vec<(f32, f32)> = curve.iter().map(|p| (p.ohm, p.value)).collect();
+            if points.iter().any(|(o, v)| !o.is_finite() || !v.is_finite()) {
+                return Err(format!(
+                    "sensor config: hw_input '{}' calibrated_analog curve has a non-finite ohm/value",
+                    entry.hw_input
+                ));
+            }
+            points.sort_by(|a, b| a.0.partial_cmp(&b.0).expect("curve ohm values are finite"));
+            let processors: Vec<Box<dyn AnalogSignalProcessor + Send>> =
+                entry.analog_processors.iter().map(AnalogProcessorConfig::build).collect();
+            let chain = SensorAnalogInputChain::new(
+                Box::new(ADCChannelProvider::new(input, frame)),
+                processors,
+                Box::new(CalibratedVariableResistanceAnalogSensor::new(
+                    id.clone(), name.clone(), units.clone(), *r_series_ohm,
+                    points, *value_offset, constraints.build(&entry.hw_input)?,
+                    v_supply.clone(),
                 )),
             );
             mgr.add_analog_sensor_chain(chain);
@@ -446,6 +524,52 @@ mod tests {
         let volts = value.as_f32();
         assert!((0.0..=20.0).contains(&volts), "reading should be within the divider's clamped range, got {volts}");
 
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn calibrated_analog_kind_loads_and_round_trips_constraints() {
+        let json = r#"[
+            {"group":"sensor","hw_input":"Hw12v","provider":"adc",
+             "analog_processors":[{"type":"moving_average","window":1}],
+             "sensor":{"kind":"voltage_divider_analog","id":"Hw12v","name":"БОРТ СЕТЬ","units":"В",
+               "constraints":{"min":0.0,"max":20.0}}},
+            {"group":"sensor","hw_input":"HwOilPress","provider":"adc",
+             "analog_processors":[{"type":"moving_average","window":1}],
+             "sensor":{"kind":"calibrated_analog","id":"HwOilPress","name":"ДАВЛ МАСЛА","units":"кгс/см²",
+               "r_series_ohm":130.8,
+               "curve":[{"ohm":305.0,"value":0.0},{"ohm":7.5,"value":8.0},{"ohm":118.0,"value":4.0}],
+               "constraints":{"min":0.0,"max":8.0,"critical_low":0.5,"warning_low":1.0}}}
+        ]"#;
+        let path = write_temp_config(json);
+        let provider = TestADCDataProvider::start();
+        let frame = provider.frame();
+        std::thread::sleep(Duration::from_millis(50));
+        let mut mgr = SensorManager::new();
+        load_chains(&path, "sensor", frame, None, &mut mgr).expect("should load (curve accepted out of order)");
+        mgr.read_all_sensors().ok();
+        // The self-test frame can drive this chain into its fault branch on some ticks
+        // (V_sensor_wire >= supply), so a value may legitimately be absent; when present it
+        // must be within the constrained range and carry the configured thresholds.
+        if let Some(v) = mgr.get_sensor_value(&HWInput::HwOilPress) {
+            assert!((0.0..=8.0).contains(&v.as_f32()), "got {}", v.as_f32());
+            assert_eq!(v.constraints.critical_low, Some(0.5));
+            assert_eq!(v.constraints.warning_low, Some(1.0));
+        }
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn calibrated_analog_curve_with_one_point_is_a_load_error() {
+        let json = r#"[{"group":"sensor","hw_input":"HwOilPress","provider":"adc",
+            "sensor":{"kind":"calibrated_analog","id":"x","name":"x","units":"b",
+              "r_series_ohm":130.8,"curve":[{"ohm":100.0,"value":1.0}],
+              "constraints":{"min":0.0,"max":8.0}}}]"#;
+        let path = write_temp_config(json);
+        let frame = TestADCDataProvider::start().frame();
+        let mut mgr = SensorManager::new();
+        let err = load_chains(&path, "sensor", frame, None, &mut mgr).unwrap_err();
+        assert!(err.contains("at least 2 points"), "got: {err}");
         std::fs::remove_file(&path).ok();
     }
 

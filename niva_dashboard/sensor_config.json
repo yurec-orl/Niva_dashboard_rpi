@@ -176,11 +176,16 @@
       { "type": "moving_average", "window": 3600 }
     ],
     "sensor": {
-      "kind": "generic_analog",
+      "kind": "calibrated_analog",
       "id": "HwFuelLvl",
       "name": "УРОВ ТОПЛ",
       "units": "%",
-      "scale": 0.1,
+      "r_series_ohm": 124.4,
+      "curve": [
+        { "ohm": 20.0,  "value": 100.0 },
+        { "ohm": 66.0,  "value": 50.0 },
+        { "ohm": 250.0, "value": 0.0 }
+      ],
       "constraints": {
         "min": 0.0, "max": 100.0,
         "critical_low": 10.0, "warning_low": 20.0
@@ -195,14 +200,52 @@
       { "type": "moving_average", "window": 60 }
     ],
     "sensor": {
-      "kind": "generic_analog",
+      "kind": "calibrated_analog",
       "id": "HwOilPress",
       "name": "ДАВЛ МАСЛА",
       "units": "кгс/см²",
-      "scale": 0.01,
+      "r_series_ohm": 130.8,
+      "curve": [
+        { "ohm": 7.5,   "value": 8.0 },
+        { "ohm": 67.5,  "value": 6.0 },
+        { "ohm": 118.0, "value": 4.0 },
+        { "ohm": 305.0, "value": 0.0 }
+      ],
       "constraints": {
         "min": 0.0, "max": 8.0,
         "critical_low": 0.5, "warning_low": 1.0, "warning_high": 7.0, "critical_high": 8.0
+      }
+    }
+  },
+  {
+    "group": "sensor",
+    "hw_input": "HwEngineCoolantTemp",
+    "provider": "adc",
+    "analog_processors": [
+      { "type": "moving_average", "window": 600 }
+    ],
+    "sensor": {
+      "kind": "calibrated_analog",
+      "id": "HwEngineCoolantTemp",
+      "name": "ТЕМП",
+      "units": "°C",
+      "r_series_ohm": 110.4,
+      "curve": [
+        { "ohm": 58.0,   "value": 130.0 },
+        { "ohm": 75.0,   "value": 120.0 },
+        { "ohm": 98.0,   "value": 110.0 },
+        { "ohm": 130.0,  "value": 100.0 },
+        { "ohm": 175.5,  "value": 90.0 },
+        { "ohm": 241.0,  "value": 80.0 },
+        { "ohm": 335.0,  "value": 70.0 },
+        { "ohm": 482.5,  "value": 60.0 },
+        { "ohm": 702.5,  "value": 50.0 },
+        { "ohm": 1050.0, "value": 40.0 },
+        { "ohm": 1615.0, "value": 30.0 }
+      ],
+      "constraints": {
+        "min": 0.0, "max": 120.0,
+        "warning_high": 100.0, "critical_high": 110.0
       }
     }
   },
