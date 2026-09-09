@@ -743,18 +743,26 @@ const SELF_TEST_TEMP_PEAK_C: f32 = 70.0;
 /// shared 0–4095 ramp. The endpoint resistances and r_series mirror sensor_config.json's
 /// `calibrated_analog` entries (same "keep synthetic and real in step" coupling as
 /// SELF_TEST_TEMP_ROMS -- a curve edit there must be mirrored here).
+///
+/// Spans are ordered (Ω at zero reading, Ω at full-scale reading). All three curves are
+/// falling — resistance drops as the measured quantity rises (sensor_config.json: 305 Ω→0
+/// kgf vs 7.5 Ω→8 kgf, 250 Ω→0 % vs 20 Ω→100 %, 1615 Ω→30 °C vs 58 Ω→130 °C) — so the
+/// high-Ω end is listed first, letting the 0→1 envelope drive the *displayed* value 0→full.
 const SELF_TEST_OIL_R_SERIES_OHM: f32 = 130.8;
-const SELF_TEST_OIL_OHM_SPAN: (f32, f32) = (7.5, 305.0);
+const SELF_TEST_OIL_OHM_SPAN: (f32, f32) = (305.0, 7.5);
 const SELF_TEST_FUEL_R_SERIES_OHM: f32 = 124.4;
-const SELF_TEST_FUEL_OHM_SPAN: (f32, f32) = (20.0, 250.0);
+const SELF_TEST_FUEL_OHM_SPAN: (f32, f32) = (250.0, 20.0);
 const SELF_TEST_COOLANT_R_SERIES_OHM: f32 = 110.4;
-const SELF_TEST_COOLANT_OHM_SPAN: (f32, f32) = (58.0, 1615.0);
-/// Fixed mid-band system voltage held on Hw12v for the whole sweep. The calibrated senders
-/// infer resistance from raw ÷ live 12 V, so a steady supply keeps their synthetic sweep an
-/// exact walk of the curves rather than one smeared by the Hw12v moving-average; БОРТ СЕТЬ
-/// therefore sits still at ~13.5 V during the 2 s self-test. SELF_TEST_V12_TRIM mirrors
-/// sensor_config.json's Hw12v `trim`.
-const SELF_TEST_SUPPLY_V: f32 = 13.5;
+const SELF_TEST_COOLANT_OHM_SPAN: (f32, f32) = (702.5, 58.0);
+/// System-voltage band Hw12v sweeps on the envelope (0→1→0), spanning the 10–16 V voltage
+/// gauge face so БОРТ СЕТЬ visibly travels end to end. `supply_v()` returns the
+/// instantaneous value; it is fed both to the Hw12v raw encoder and to every calibrated
+/// sender's raw encoder below. Because the self-test chains run with their moving averages
+/// bypassed (setup_self_test_sensors passes bypass_analog_filters), the sender chains
+/// decode against this exact same supply each tick, so the swept rail doesn't distort
+/// ДАВЛ МАСЛА / УРОВ ТОПЛ / ТЕМП. SELF_TEST_V12_TRIM mirrors sensor_config.json's Hw12v `trim`.
+const SELF_TEST_SUPPLY_MIN_V: f32 = 10.0;
+const SELF_TEST_SUPPLY_MAX_V: f32 = 16.0;
 const SELF_TEST_V12_TRIM: f32 = 1.036;
 
 /// Populates an ADCFrame with synthetic values instead of reading the STM32 over serial —
@@ -774,20 +782,44 @@ pub struct TestADCDataProvider {
 impl TestADCDataProvider {
     /// Starts generating synthetic frames immediately. The returned handle must be kept
     /// alive for the sweep to keep animating — dropping it stops the background thread.
+    /// Test-only convenience; production uses deferred() + begin_sweep() to control when
+    /// the sweep clock starts relative to the first rendered frame.
+    #[cfg(test)]
     pub fn start() -> Self {
-        let should_stop = Arc::new(AtomicBool::new(false));
-        let frame = ADCFrame::new();
-        let temp_frame = AdcTempFrame::new();
-        let thread_should_stop = Arc::clone(&should_stop);
-        let thread_frame = frame.clone();
-        let thread_temp_frame = temp_frame.clone();
+        let mut provider = Self::deferred();
+        provider.begin_sweep();
+        provider
+    }
 
-        let thread = thread::Builder::new()
+    /// Builds the provider and its synthetic frames without starting the sweep, so the
+    /// sensor chains can take frame()/temp_frame() handles now while the sweep clock only
+    /// starts at begin_sweep(). Startup wires the chains early but doesn't render for
+    /// another ~1 s (page/indicator/GL/freetype setup); starting the clock here instead
+    /// would burn the rise and part of the fall before the first frame is drawn, so the
+    /// needles would only ever be seen travelling back down toward zero.
+    pub fn deferred() -> Self {
+        TestADCDataProvider {
+            should_stop: Arc::new(AtomicBool::new(false)),
+            frame: ADCFrame::new(),
+            temp_frame: AdcTempFrame::new(),
+            thread: None,
+        }
+    }
+
+    /// Spawns the synthetic writer thread and starts the sweep clock. Call once, just
+    /// before the render loop begins. No-op if the sweep is already running.
+    pub fn begin_sweep(&mut self) {
+        if self.thread.is_some() {
+            return;
+        }
+        let thread_should_stop = Arc::clone(&self.should_stop);
+        let thread_frame = self.frame.clone();
+        let thread_temp_frame = self.temp_frame.clone();
+
+        self.thread = thread::Builder::new()
             .name("test-adc-data-provider".into())
             .spawn(move || Self::run_loop(&thread_should_stop, &thread_frame, &thread_temp_frame))
             .ok();
-
-        TestADCDataProvider { should_stop, frame, temp_frame, thread }
     }
 
     /// Returns a cloneable handle to the shared frame, same as ADCDataProvider::frame().
@@ -841,22 +873,34 @@ impl TestADCDataProvider {
         }
     }
 
+    /// Instantaneous synthetic supply voltage: sweeps SELF_TEST_SUPPLY_MIN_V..MAX_V on the
+    /// envelope. Drives both the Hw12v channel and (as the live supply) every calibrated
+    /// sender's raw encoding, so all four stay mutually consistent tick to tick.
+    fn supply_v(elapsed: Duration) -> f32 {
+        SELF_TEST_SUPPLY_MIN_V
+            + Self::envelope(elapsed) * (SELF_TEST_SUPPLY_MAX_V - SELF_TEST_SUPPLY_MIN_V)
+    }
+
     /// Builds one synthetic STM32 frame (channels 0-15, matching the real layout used by
     /// main.rs's add_adc_sensor_chains: A0-A3, TACHO, SPEED, D0-D9). Button channels
     /// (16-23) are omitted — the button sensor manager always reads the real ADCFrame
     /// directly, never the self-test one.
     fn generate_channels(elapsed: Duration) -> Vec<u16> {
         let level = Self::envelope(elapsed);
+        let supply_v = Self::supply_v(elapsed);
         // Digital channels latch active only past the envelope's midpoint, so debouncers see
         // a clean active period followed by a clean inactive one rather than chattering.
         let digital_raw: u16 = if level > 0.5 { 1 } else { 0 };
         // Resistive senders: sweep each datasheet curve end to end in the Ω domain, then
-        // invert the PA0/PA1/PA2 divider at the fixed self-test supply so the calibrated
-        // chains reproduce their sensor_config.json curves rather than clamping/faulting on a
-        // shared ramp (SENSOR_CALIBRATION_DESIGN.md).
-        let sweep_ohm = |(lo, hi): (f32, f32)| lo + (hi - lo) * level;
+        // invert the PA0/PA1/PA2 divider at the instantaneous self-test supply so the
+        // calibrated chains reproduce their sensor_config.json curves rather than
+        // clamping/faulting on a shared ramp (SENSOR_CALIBRATION_DESIGN.md). Spans run
+        // (Ω at zero, Ω at full) so the envelope's 0→1→0 drives the displayed reading
+        // 0→full→0, not full→0→full.
+        let sweep_ohm = |(ohm_at_zero, ohm_at_full): (f32, f32)|
+            ohm_at_zero + (ohm_at_full - ohm_at_zero) * level;
         let sender_raw = |span, r_series| crate::hardware::sensors::calibrated_sender_raw_from_ohm(
-            sweep_ohm(span), r_series, SELF_TEST_SUPPLY_V,
+            sweep_ohm(span), r_series, supply_v,
         );
         // HwSpeed reports an inter-pulse period, not a count (see
         // SPEED_TACHO_PULSE_PERIOD_DESIGN.md) — encoded directly from the envelope's target
@@ -875,7 +919,7 @@ impl TestADCDataProvider {
         channels[AdcChannel::OilPressure.index()] = sender_raw(SELF_TEST_OIL_OHM_SPAN, SELF_TEST_OIL_R_SERIES_OHM);  // HwOilPress
         channels[AdcChannel::FuelLevel.index()] = sender_raw(SELF_TEST_FUEL_OHM_SPAN, SELF_TEST_FUEL_R_SERIES_OHM);  // HwFuelLvl
         channels[AdcChannel::EngineTemp.index()] = sender_raw(SELF_TEST_COOLANT_OHM_SPAN, SELF_TEST_COOLANT_R_SERIES_OHM);  // HwEngineCoolantTemp
-        channels[AdcChannel::Voltage12V.index()] = crate::hardware::sensors::v12_raw_from_volts(SELF_TEST_SUPPLY_V, SELF_TEST_V12_TRIM);  // Hw12v
+        channels[AdcChannel::Voltage12V.index()] = crate::hardware::sensors::v12_raw_from_volts(supply_v, SELF_TEST_V12_TRIM);  // Hw12v
         channels[AdcChannel::Tacho.index()] = tacho_raw;   // HwTacho (raw inter-pulse period)
         channels[AdcChannel::Speed.index()] = speed_raw;   // HwSpeed (raw inter-pulse period)
         channels[AdcChannel::OilPressureLow.index()] = digital_raw; // HwOilPressLow
@@ -1076,17 +1120,19 @@ mod tests {
     }
 
     /// The calibrated oil / fuel / coolant channels must sweep their configured resistance
-    /// span end to end (SENSOR_CALIBRATION_DESIGN.md) at SELF_TEST_SUPPLY_V without ever
-    /// tripping CalibratedVariableResistanceAnalogSensor's headroom / short-circuit fault.
-    /// Each sensor is rebuilt here with a synthetic linear 0..100 curve over the exact Ω span
-    /// generate_channels uses, so recovering ~0 at the sweep floor and ~100 at the peak
-    /// proves the raw really walks [ohm_lo, ohm_hi] rather than pegging or faulting.
+    /// span end to end (SENSOR_CALIBRATION_DESIGN.md) without ever tripping
+    /// CalibratedVariableResistanceAnalogSensor's headroom / short-circuit fault, and in the
+    /// right direction: reading ~0 at the envelope's ends and ~100 at its peak. The shared
+    /// supply cell is stepped to supply_v(elapsed) each tick, exactly as the live Hw12v
+    /// chain's SupplyVoltagePublisher would, so the swept rail stays consistent with the raw.
+    /// Each sensor is rebuilt here with a synthetic curve that maps the span's zero-reading Ω
+    /// to 0 and its full-reading Ω to 100 (ascending in Ω, as interpolate_curve requires).
     #[test]
     fn self_test_calibrated_channels_sweep_their_full_resistance_span() {
         use crate::hardware::sensors::CalibratedVariableResistanceAnalogSensor;
         use crate::hardware::sensor_value::ValueConstraints;
         use std::sync::Arc;
-        use std::sync::atomic::AtomicU32;
+        use std::sync::atomic::AtomicU32; // Ordering comes from `use super::*`
 
         let cases: [(usize, (f32, f32), f32); 3] = [
             (AdcChannel::OilPressure.index(), SELF_TEST_OIL_OHM_SPAN, SELF_TEST_OIL_R_SERIES_OHM),
@@ -1094,21 +1140,28 @@ mod tests {
             (AdcChannel::EngineTemp.index(), SELF_TEST_COOLANT_OHM_SPAN, SELF_TEST_COOLANT_R_SERIES_OHM),
         ];
 
-        for (idx, (ohm_lo, ohm_hi), r_series) in cases {
-            let v_supply = Arc::new(AtomicU32::new(SELF_TEST_SUPPLY_V.to_bits()));
+        for (idx, (ohm_at_zero, ohm_at_full), r_series) in cases {
+            let v_supply = Arc::new(AtomicU32::new(TestADCDataProvider::supply_v(Duration::ZERO).to_bits()));
+            // Ascending-in-Ω curve (interpolate_curve requires it): the full-scale end is the
+            // low-Ω end for all three senders, so it carries value 100 and the zero end 0.
             let mut sensor = CalibratedVariableResistanceAnalogSensor::new(
                 "x".to_string(), "x".to_string(), "u".to_string(), r_series,
-                vec![(ohm_lo, 0.0), (ohm_hi, 100.0)], 0.0,
-                ValueConstraints::analog(0.0, 100.0), v_supply,
+                vec![(ohm_at_full, 100.0), (ohm_at_zero, 0.0)], 0.0,
+                ValueConstraints::analog(0.0, 100.0), v_supply.clone(),
             );
 
             let mut elapsed = Duration::ZERO;
             let (mut lo_seen, mut hi_seen) = (f32::MAX, f32::MIN);
+            let mut first_seen = None;
+            let mut last_seen = 0.0;
             while elapsed < SELF_TEST_DURATION {
+                v_supply.store(TestADCDataProvider::supply_v(elapsed).to_bits(), Ordering::Relaxed);
                 let raw = TestADCDataProvider::generate_channels(elapsed)[idx];
                 match sensor.read(raw) {
                     Ok(sv) => {
                         let v = sv.as_f32();
+                        first_seen.get_or_insert(v);
+                        last_seen = v;
                         lo_seen = lo_seen.min(v);
                         hi_seen = hi_seen.max(v);
                     }
@@ -1119,6 +1172,12 @@ mod tests {
 
             assert!(lo_seen < 1.0, "channel {idx} sweep floor only reached {lo_seen:.2}, expected ~0");
             assert!(hi_seen > 99.0, "channel {idx} sweep peak only reached {hi_seen:.2}, expected ~100");
+            // Direction: the envelope starts and ends near 0, so the reading must too — a
+            // sweep that began near full scale would mean the Ω span is ordered backwards.
+            // (The final tick lands a hair above 0 since it's not exactly at the envelope's
+            // end, hence the looser bound there.)
+            assert!(first_seen.unwrap() < 1.0, "channel {idx} started at {:.2}, expected ~0", first_seen.unwrap());
+            assert!(last_seen < 5.0, "channel {idx} ended at {last_seen:.2}, expected ~0");
         }
     }
 }

@@ -244,7 +244,7 @@
         { "ohm": 1615.0, "value": 30.0 }
       ],
       "constraints": {
-        "min": 0.0, "max": 120.0,
+        "min": 0.0, "max": 130.0,
         "warning_high": 100.0, "critical_high": 110.0
       }
     }

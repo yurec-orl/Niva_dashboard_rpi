@@ -232,6 +232,21 @@ pub fn load_chains(
     temp_frame: Option<AdcTempFrame>,
     mgr: &mut SensorManager,
 ) -> Result<(), String> {
+    load_chains_with_options(path, group, frame, temp_frame, mgr, false)
+}
+
+/// Like [`load_chains`], but `bypass_analog_filters` drops every analog chain's configured
+/// `analog_processors` (moving averages / dampeners). The startup self-test sweep uses this:
+/// those filters reject driving noise over seconds-to-minutes and only smear its ~2 s bench
+/// sweep (see `TestADCDataProvider`). Digital `debounce` stages are unaffected.
+pub fn load_chains_with_options(
+    path: &Path,
+    group: &str,
+    frame: ADCFrame,
+    temp_frame: Option<AdcTempFrame>,
+    mgr: &mut SensorManager,
+    bypass_analog_filters: bool,
+) -> Result<(), String> {
     let contents = std::fs::read_to_string(path)
         .map_err(|e| format!("sensor config: failed to read {path:?}: {e}"))?;
     let entries: Vec<ChainConfig> = serde_json::from_str(&contents)
@@ -244,7 +259,7 @@ pub fn load_chains(
     let v_supply = Arc::new(AtomicU32::new(NOMINAL_SUPPLY_V.to_bits()));
 
     for entry in entries.iter().filter(|e| e.group == group) {
-        build_chain(entry, frame.clone(), temp_frame.as_ref(), &v_supply, mgr)?;
+        build_chain(entry, frame.clone(), temp_frame.as_ref(), &v_supply, mgr, bypass_analog_filters)?;
     }
     Ok(())
 }
@@ -255,12 +270,13 @@ fn build_chain(
     temp_frame: Option<&AdcTempFrame>,
     v_supply: &Arc<AtomicU32>,
     mgr: &mut SensorManager,
+    bypass_analog_filters: bool,
 ) -> Result<(), String> {
     let input = HWInput::from_config_name(&entry.hw_input)
         .ok_or_else(|| format!("sensor config: unknown hw_input '{}'", entry.hw_input))?;
 
     match entry.provider.as_str() {
-        "adc" => build_adc_chain(entry, input, frame, v_supply, mgr),
+        "adc" => build_adc_chain(entry, input, frame, v_supply, mgr, bypass_analog_filters),
         "adc_temp" => build_adc_temp_chain(entry, input, temp_frame, mgr),
         other => Err(format!(
             "sensor config: hw_input '{}' has unsupported provider '{}' (expected \"adc\" or \"adc_temp\")",
@@ -275,7 +291,16 @@ fn build_adc_chain(
     frame: ADCFrame,
     v_supply: &Arc<AtomicU32>,
     mgr: &mut SensorManager,
+    bypass_analog_filters: bool,
 ) -> Result<(), String> {
+    // Configured analog stages, or none when the caller asked for them bypassed (self-test).
+    let analog_processors = || -> Vec<Box<dyn AnalogSignalProcessor + Send>> {
+        if bypass_analog_filters {
+            Vec::new()
+        } else {
+            entry.analog_processors.iter().map(AnalogProcessorConfig::build).collect()
+        }
+    };
     match &entry.sensor {
         SensorConfig::GenericDigital { id, name, active_level, constraints } => {
             if !entry.analog_processors.is_empty() {
@@ -305,11 +330,9 @@ fn build_adc_chain(
                     entry.hw_input
                 ));
             }
-            let processors: Vec<Box<dyn AnalogSignalProcessor + Send>> =
-                entry.analog_processors.iter().map(AnalogProcessorConfig::build).collect();
             let chain = SensorAnalogInputChain::new(
                 Box::new(ADCChannelProvider::new(input, frame)),
-                processors,
+                analog_processors(),
                 Box::new(GenericAnalogSensor::new(id.clone(), name.clone(), units.clone(), constraints.build(&entry.hw_input)?, *scale)),
             );
             mgr.add_analog_sensor_chain(chain);
@@ -321,13 +344,11 @@ fn build_adc_chain(
                     entry.hw_input
                 ));
             }
-            let processors: Vec<Box<dyn AnalogSignalProcessor + Send>> =
-                entry.analog_processors.iter().map(AnalogProcessorConfig::build).collect();
             // This kind is the system supply voltage, so its chain's sensor is wrapped to
             // publish each reading into the shared cell the calibrated senders consume.
             let chain = SensorAnalogInputChain::new(
                 Box::new(ADCChannelProvider::new(input, frame)),
-                processors,
+                analog_processors(),
                 Box::new(SupplyVoltagePublisher::new(
                     Box::new(VoltageDividerSensor::new(
                         id.clone(), name.clone(), units.clone(),
@@ -359,11 +380,9 @@ fn build_adc_chain(
                 ));
             }
             points.sort_by(|a, b| a.0.partial_cmp(&b.0).expect("curve ohm values are finite"));
-            let processors: Vec<Box<dyn AnalogSignalProcessor + Send>> =
-                entry.analog_processors.iter().map(AnalogProcessorConfig::build).collect();
             let chain = SensorAnalogInputChain::new(
                 Box::new(ADCChannelProvider::new(input, frame)),
-                processors,
+                analog_processors(),
                 Box::new(CalibratedVariableResistanceAnalogSensor::new(
                     id.clone(), name.clone(), units.clone(), *r_series_ohm,
                     points, *value_offset, constraints.build(&entry.hw_input)?,

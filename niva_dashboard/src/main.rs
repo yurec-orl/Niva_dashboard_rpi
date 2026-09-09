@@ -16,7 +16,7 @@ use crate::page_framework::input::{InputSource, PhysicalButtonInput, KeyboardInp
 use crate::hardware::sensor_manager::{SensorManager, SensorDigitalInputChain, SensorAnalogInputChain};
 use crate::hardware::hw_providers::*;
 use crate::hardware::digital_signal_processing::DigitalSignalDebouncer;
-use crate::hardware::analog_signal_processing::AnalogSignalProcessorMovingAverage;
+use crate::hardware::analog_signal_processing::{AnalogSignalProcessor, AnalogSignalProcessorMovingAverage};
 use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor, SpeedSensor, TachoSensor, GnssAltitudeSensor};
 use crate::hardware::sensor_value::ValueConstraints;
 use crate::hardware::heading_fusion_sensor;
@@ -57,11 +57,17 @@ fn setup_context() -> GraphicsContext {
 // hand-written chain sets, this can't silently drift out of sync.
 //
 // Caller must keep the returned TestADCDataProvider alive for the sweep to animate —
-// dropping it stops the synthetic writer thread.
+// dropping it stops the synthetic writer thread. The sweep clock is not started here:
+// the caller must call begin_sweep() once the render loop is about to start, otherwise
+// the ~1 s of remaining startup (pages/indicators/GL) eats the rise-and-fall animation.
 fn setup_self_test_sensors() -> Result<(SensorManager, TestADCDataProvider), String> {
     let mut mgr = SensorManager::new();
-    let test_adc = TestADCDataProvider::start();
-    add_adc_sensor_chains(&mut mgr, test_adc.frame(), test_adc.temp_frame())?;
+    let test_adc = TestADCDataProvider::deferred();
+    // bypass_analog_filters: the production moving averages (coolant 600 ≈ 10 s, fuel 3600
+    // ≈ 60 s) are tuned for driving-noise rejection and only smear the 2 s bench sweep — at
+    // ~60 Hz reads they never fill, so they act as a cumulative mean that never tracks the
+    // envelope. Drop them here so every needle follows the sweep directly.
+    add_adc_sensor_chains(&mut mgr, test_adc.frame(), test_adc.temp_frame(), true)?;
 
     // Test sensor chain for the `СМОТРИ ЭКРАН` alert.
     let test_alert_link_chain = SensorDigitalInputChain::new(
@@ -238,7 +244,7 @@ fn setup_sensors(adc: Option<ADCFrame>, adc_temp: Option<AdcTempFrame>, ups: Opt
 
     // adc_temp comes from the same ADCDataProvider as `frame`, so it is Some whenever `frame`
     // is; fall back to a detached frame rather than unwrap so a future caller can't panic here.
-    add_adc_sensor_chains(&mut mgr, frame, adc_temp.unwrap_or_default())?;
+    add_adc_sensor_chains(&mut mgr, frame, adc_temp.unwrap_or_default(), false)?;
     log::info!("✓ Sensor manager initialized with ADC sensor chains");
 
     Ok((mgr, heading_fusion))
@@ -254,31 +260,41 @@ fn setup_sensors(adc: Option<ADCFrame>, adc_temp: Option<AdcTempFrame>, ups: Opt
 // Shared by setup_sensors (real, serial-fed ADCFrame) and setup_self_test_sensors
 // (TestADCDataProvider's synthetic ADCFrame) — self-test exercises this exact wiring
 // instead of a hand-duplicated copy, so the two can't silently drift apart.
-fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame, temp_frame: AdcTempFrame) -> Result<(), String> {
+//
+// `bypass_analog_filters` drops every analog chain's moving-average/dampener stage. Only
+// the self-test path passes true: those filters exist to reject driving noise over
+// seconds-to-minutes and would just smear its 2 s sweep.
+fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame, temp_frame: AdcTempFrame, bypass_analog_filters: bool) -> Result<(), String> {
     // Generic digital/analog chains (brake fluid, charge, diff lock, ext lights, fuel
     // level/low, high beam, instrument illumination, oil pressure/low, park brake, turn
     // signal, 12V) plus the one-wire DS18B20 temperature chains (provider "adc_temp", see
     // ONEWIRE_TEMP_SENSOR_RUST_DESIGN.md) are data-driven — see hardware::sensor_config and
     // DATA_DRIVEN_SENSOR_CONFIG_DESIGN.md. A bad config file is surfaced to the caller (and
     // ultimately shown on screen by main's fallback loop), not panicked on.
-    hardware::sensor_config::load_chains(&hardware::sensor_config::default_path(), "sensor", frame.clone(), Some(temp_frame), mgr)
-        .map_err(|e| format!("sensor_config.json: {}", e))?;
+    hardware::sensor_config::load_chains_with_options(
+        &hardware::sensor_config::default_path(), "sensor",
+        frame.clone(), Some(temp_frame), mgr, bypass_analog_filters,
+    ).map_err(|e| format!("sensor_config.json: {}", e))?;
 
     // ---- Chains with real conversion math, out of scope for config (see design doc) ----
     // Coolant temp / oil pressure / fuel level are data-driven `calibrated_analog` chains
     // (datasheet resistance curves + live 12V supply) -- see hardware::sensor_config and
     // SENSOR_CALIBRATION_DESIGN.md. Only the pulse-period sensors stay hand-built here.
 
+    let pulse_filters = || -> Vec<Box<dyn AnalogSignalProcessor + Send>> {
+        if bypass_analog_filters { vec![] } else { vec![Box::new(AnalogSignalProcessorMovingAverage::new(5))] }
+    };
+
     let speed_chain = SensorAnalogInputChain::new(
         Box::new(ADCChannelProvider::new(HWInput::HwSpeed, frame.clone())),  // inter-pulse period, raw timer ticks
-        vec![Box::new(AnalogSignalProcessorMovingAverage::new(5))],
+        pulse_filters(),
         Box::new(SpeedSensor::new()),
     );
     mgr.add_analog_sensor_chain(speed_chain);
 
     let tacho_chain = SensorAnalogInputChain::new(
         Box::new(ADCChannelProvider::new(HWInput::HwTacho, frame.clone())),  // inter-pulse period, raw timer ticks
-        vec![Box::new(AnalogSignalProcessorMovingAverage::new(5))],
+        pulse_filters(),
         Box::new(TachoSensor::new()),
     );
     mgr.add_analog_sensor_chain(tacho_chain);
@@ -503,7 +519,7 @@ fn main() -> std::process::ExitCode {
         let (sensors, heading_fusion) = setup_sensors(adc_frame, adc_temp_frame, ups_frame, gnss_frame, bno_frame)?;
         Ok((self_test_sensors, test_adc_provider, button_sensors, sensors, heading_fusion))
     })();
-    let (self_test_sensors, test_adc_provider, button_sensors, sensors, heading_fusion) = match sensor_setup {
+    let (self_test_sensors, mut test_adc_provider, button_sensors, sensors, heading_fusion) = match sensor_setup {
         Ok(v) => v,
         Err(e) => return config_error_fallback_loop(&mut context, &e),
     };
@@ -528,6 +544,11 @@ fn main() -> std::process::ExitCode {
     let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag, osc_frame, adc_version_frame, gnss_frame_for_diag, bno_frame_for_diag, gnss, bno085, alert_manager, heading_fusion, master_warning_led);
 
     mgr.setup().expect("Failed to setup page manager");
+
+    // Start the synthetic sweep now, with the render loop about to begin, so the whole
+    // 0 → max → 0 needle animation is on screen (setup above already wired the chains to
+    // its frames). The swap timer below shares this origin.
+    test_adc_provider.begin_sweep();
 
     // Setup timer to switch the self-test sensor manager to the functional set once the
     // self-test sweep finishes. test_adc_provider is moved in so its synthetic writer
