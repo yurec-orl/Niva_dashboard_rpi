@@ -7,6 +7,10 @@ Type=simple
 User=user
 Group=user
 WorkingDirectory=/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/niva_dashboard
+# Lets the non-root service call clock_settime() to sync the system clock from GNSS UTC
+# (see gnss_time_sync.rs) -- granted via the unit rather than `setcap` on the binary since
+# the binary gets replaced on every rebuild.
+AmbientCapabilities=CAP_SYS_TIME
 ExecStart=/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/niva_dashboard/niva-dashboard-run.sh
 # The run script owns exit-code interpretation (0 = deliberate quit, 42 = rebuild/SIGUSR1
 # relaunch, other = crash-retry up to 5x) and always exits 0 itself -- this is only a

@@ -27,6 +27,7 @@ use crate::util::bno085_protocol::{
     SH2_REPORT_GEOMAGNETIC_ROTATION_VECTOR, SH2_REPORT_ACCELEROMETER,
 };
 use crate::util::gnss_data_provider::{GnssDataProvider, GnssFrame};
+use crate::util::gnss_time_sync::GnssTimeSync;
 use crate::util::logging::init_logging;
 use crate::util::ups_monitor::UpsMonitor;
 use crate::util::ups_i2c_provider::{UpsI2CDataProvider, UpsRawFrame};
@@ -488,6 +489,11 @@ fn main() -> std::process::ExitCode {
         }
     };
     let gnss_frame = gnss.as_ref().map(|p| p.frame());
+
+    // Kept alive for the process lifetime -- background thread that steps CLOCK_REALTIME
+    // from GNSS UTC once locked. No-op until the receiver has an active fix; see
+    // gnss_time_sync.rs for why this is needed (no RTC, no NTP path once installed in a car).
+    let _gnss_time_sync = gnss_frame.as_ref().map(|f| GnssTimeSync::start(f.clone()));
 
     // Moved into PageManager below, same as `gnss` — see that comment.
     let bno085 = match setup_bno085_data_provider() {
