@@ -302,16 +302,19 @@ pub struct CalibratedVariableResistanceAnalogSensor {
     /// Variable-coil winding resistance of the OEM gauge this sender shares its divider with
     /// (measured per gauge; SENSOR_CALIBRATION_DESIGN.md).
     r_series_ohm: f32,
-    /// Field-calibration offset added to the interpolated curve output. Stays 0.0 until the
-    /// calibration overlay/UI lands (SENSOR_CALIBRATION_DESIGN.md, "Calibration overlay file").
-    value_offset: f32,
+    /// Field-calibration offset added to the interpolated curve output (bits of an `f32`),
+    /// from the sensor_calibration.json overlay -- see SENSOR_CALIBRATION_DESIGN.md,
+    /// "Calibration overlay file". A shared cell rather than a plain `f32`, same rationale as
+    /// `v_supply` below: the field calibration UI (`DiagPage`) holds a clone and writes a new
+    /// offset directly, taking effect on the next tick with no restart.
+    value_offset: Arc<AtomicU32>,
     /// Live `Hw12v` reading as `f32` bits, published by `SupplyVoltagePublisher`.
     v_supply: Arc<AtomicU32>,
 }
 
 impl CalibratedVariableResistanceAnalogSensor {
     pub fn new(id: String, name: String, units: String, r_series_ohm: f32,
-               curve: Vec<(f32, f32)>, value_offset: f32,
+               curve: Vec<(f32, f32)>, value_offset: Arc<AtomicU32>,
                constraints: ValueConstraints, v_supply: Arc<AtomicU32>) -> Self {
         CalibratedVariableResistanceAnalogSensor {
             value: SensorValue::empty(),
@@ -357,7 +360,8 @@ impl AnalogSensor for CalibratedVariableResistanceAnalogSensor {
                 self.metadata.sensor_id, v_sensor_wire, r_sender, short_fault_ohm
             ));
         }
-        let value = interpolate_curve(&self.curve, r_sender) + self.value_offset;
+        let value_offset = f32::from_bits(self.value_offset.load(Ordering::Relaxed));
+        let value = interpolate_curve(&self.curve, r_sender) + value_offset;
         self.value = SensorValue::analog_with_constraints_and_metadata(
             value.clamp(self.min_value(), self.max_value()),
             self.constraints.clone(),
@@ -1097,13 +1101,19 @@ mod tests {
         vec![(58.0, 130.0), (98.0, 110.0), (175.5, 90.0), (335.0, 70.0), (1615.0, 30.0)]
     }
 
+    /// `value_offset` is a live shared cell in production (see `DiagPage`'s field
+    /// calibration UI); tests that don't exercise a live update just need it seeded once.
+    fn offset_cell(v: f32) -> Arc<AtomicU32> {
+        Arc::new(AtomicU32::new(v.to_bits()))
+    }
+
     #[test]
     fn test_calibrated_vr_sensor_interpolates_at_a_curve_point() {
         let v_supply = Arc::new(AtomicU32::new(13.5f32.to_bits()));
         let raw = raw_for_resistance(175.5, 110.4, 13.5); // -> 90 °C
         let mut sensor = CalibratedVariableResistanceAnalogSensor::new(
             "HwEngineCoolantTemp".to_string(), "ТЕМП".to_string(), "°C".to_string(),
-            110.4, coolant_curve(), 0.0,
+            110.4, coolant_curve(), offset_cell(0.0),
             ValueConstraints::analog(0.0, 120.0), v_supply,
         );
         let t = sensor.read(raw).unwrap().as_f32();
@@ -1119,7 +1129,7 @@ mod tests {
         let raw = raw_for_resistance(175.5, 110.4, 12.2);
         let mut sensor = CalibratedVariableResistanceAnalogSensor::new(
             "c".to_string(), "c".to_string(), "°C".to_string(),
-            110.4, coolant_curve(), 0.0,
+            110.4, coolant_curve(), offset_cell(0.0),
             ValueConstraints::analog(0.0, 120.0), cell.clone(),
         );
         let at_12v = sensor.read(raw).unwrap().as_f32();
@@ -1134,7 +1144,7 @@ mod tests {
         let v_supply = Arc::new(AtomicU32::new(12.2f32.to_bits()));
         let mut sensor = CalibratedVariableResistanceAnalogSensor::new(
             "c".to_string(), "c".to_string(), "°C".to_string(),
-            110.4, coolant_curve(), 0.0,
+            110.4, coolant_curve(), offset_cell(0.0),
             ValueConstraints::analog(0.0, 120.0), v_supply,
         );
         // Full-scale raw -> V_sensor_wire ~16 V, well above the 12.2 V supply.
@@ -1146,7 +1156,7 @@ mod tests {
         let v_supply = Arc::new(AtomicU32::new(13.5f32.to_bits()));
         let mut sensor = CalibratedVariableResistanceAnalogSensor::new(
             "c".to_string(), "c".to_string(), "°C".to_string(),
-            110.4, coolant_curve(), 0.0,
+            110.4, coolant_curve(), offset_cell(0.0),
             ValueConstraints::analog(0.0, 200.0), v_supply, // wide clamp so the curve ends show
         );
         // 35 Ω is below the curve's lowest point (58 Ω) but above the low-side short-fault
@@ -1164,7 +1174,7 @@ mod tests {
         let v_supply = Arc::new(AtomicU32::new(13.5f32.to_bits()));
         let mut sensor = CalibratedVariableResistanceAnalogSensor::new(
             "c".to_string(), "c".to_string(), "°C".to_string(),
-            110.4, coolant_curve(), 0.0,
+            110.4, coolant_curve(), offset_cell(0.0),
             ValueConstraints::analog(0.0, 120.0), v_supply,
         );
         assert!(sensor.read(0).is_err(), "raw 0 (floating divider input) should fault");
@@ -1179,12 +1189,12 @@ mod tests {
         let raw = raw_for_resistance(175.5, 110.4, 13.5);
         let mut base = CalibratedVariableResistanceAnalogSensor::new(
             "c".to_string(), "c".to_string(), "°C".to_string(),
-            110.4, coolant_curve(), 0.0,
+            110.4, coolant_curve(), offset_cell(0.0),
             ValueConstraints::analog(0.0, 200.0), v_supply.clone(),
         );
         let mut offset = CalibratedVariableResistanceAnalogSensor::new(
             "c".to_string(), "c".to_string(), "°C".to_string(),
-            110.4, coolant_curve(), 5.0,
+            110.4, coolant_curve(), offset_cell(5.0),
             ValueConstraints::analog(0.0, 200.0), v_supply,
         );
         let b = base.read(raw).unwrap().as_f32();
@@ -1353,7 +1363,7 @@ mod tests {
         // Test CalibratedVariableResistanceAnalogSensor implements AnalogSensor trait
         let mut temp_sensor = CalibratedVariableResistanceAnalogSensor::new(
             "c".to_string(), "c".to_string(), "°C".to_string(),
-            110.4, coolant_curve(), 0.0,
+            110.4, coolant_curve(), offset_cell(0.0),
             ValueConstraints::analog(0.0, 120.0),
             Arc::new(AtomicU32::new(13.5f32.to_bits())),
         );

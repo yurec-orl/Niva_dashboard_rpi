@@ -19,6 +19,7 @@ use crate::hardware::digital_signal_processing::DigitalSignalDebouncer;
 use crate::hardware::analog_signal_processing::{AnalogSignalProcessor, AnalogSignalProcessorMovingAverage};
 use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor, SpeedSensor, TachoSensor, GnssAltitudeSensor};
 use crate::hardware::sensor_value::ValueConstraints;
+use crate::hardware::sensor_calibration::CalibrationRecord;
 use crate::hardware::heading_fusion_sensor;
 use crate::util::adc_data_provider::{ADCDataProvider, ADCFrame, AdcTempFrame, TestADCDataProvider, SELF_TEST_DURATION};
 use crate::util::bno085_data_provider::{Bno085DataProvider, Bno085Frame};
@@ -34,7 +35,10 @@ use crate::util::ups_i2c_provider::{UpsI2CDataProvider, UpsRawFrame};
 use crate::hardware::sensors::{UpsCurrentSensor, UpsChargeSensor};
 use crate::hardware::gpio_input::{GpioInput, GpioInputConfig, GpioOutput};
 use rppal::gpio::{Level, Bias};
+use std::collections::HashMap;
 use std::env;
+use std::sync::atomic::AtomicU32;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -68,7 +72,10 @@ fn setup_self_test_sensors() -> Result<(SensorManager, TestADCDataProvider), Str
     // ≈ 60 s) are tuned for driving-noise rejection and only smear the 2 s bench sweep — at
     // ~60 Hz reads they never fill, so they act as a cumulative mean that never tracks the
     // envelope. Drop them here so every needle follows the sweep directly.
-    add_adc_sensor_chains(&mut mgr, test_adc.frame(), test_adc.temp_frame(), true)?;
+    //
+    // No calibration overlay for the synthetic sweep (it's discarded once the real sensor
+    // set takes over) -- the returned offset handles are discarded too.
+    add_adc_sensor_chains(&mut mgr, test_adc.frame(), test_adc.temp_frame(), true, &HashMap::new())?;
 
     // Test sensor chain for the `СМОТРИ ЭКРАН` alert.
     let test_alert_link_chain = SensorDigitalInputChain::new(
@@ -84,7 +91,7 @@ fn setup_self_test_sensors() -> Result<(SensorManager, TestADCDataProvider), Str
     Ok((mgr, test_adc))
 }
 
-fn setup_sensors(adc: Option<ADCFrame>, adc_temp: Option<AdcTempFrame>, ups: Option<UpsRawFrame>, gnss: Option<GnssFrame>, bno: Option<Bno085Frame>) -> Result<(SensorManager, Option<heading_fusion_sensor::HeadingFusionSensor>), String> {
+fn setup_sensors(adc: Option<ADCFrame>, adc_temp: Option<AdcTempFrame>, ups: Option<UpsRawFrame>, gnss: Option<GnssFrame>, bno: Option<Bno085Frame>, calibration: &HashMap<String, CalibrationRecord>) -> Result<(SensorManager, Option<heading_fusion_sensor::HeadingFusionSensor>, HashMap<String, Arc<AtomicU32>>), String> {
     let mut mgr = SensorManager::new();
     // Cloned before the GNSS scalar-chain block below consumes `gnss` -- needed again for the
     // heading fusion chain further down.
@@ -240,15 +247,15 @@ fn setup_sensors(adc: Option<ADCFrame>, adc_temp: Option<AdcTempFrame>, ups: Opt
 
     let Some(frame) = adc else {
         log::info!("ADC unavailable — real sensor set will be empty");
-        return Ok((mgr, heading_fusion));
+        return Ok((mgr, heading_fusion, HashMap::new()));
     };
 
     // adc_temp comes from the same ADCDataProvider as `frame`, so it is Some whenever `frame`
     // is; fall back to a detached frame rather than unwrap so a future caller can't panic here.
-    add_adc_sensor_chains(&mut mgr, frame, adc_temp.unwrap_or_default(), false)?;
+    let calib_offsets = add_adc_sensor_chains(&mut mgr, frame, adc_temp.unwrap_or_default(), false, calibration)?;
     log::info!("✓ Sensor manager initialized with ADC sensor chains");
 
-    Ok((mgr, heading_fusion))
+    Ok((mgr, heading_fusion, calib_offsets))
 }
 
 // STM32 frame layout (after stripping '$'):
@@ -265,16 +272,22 @@ fn setup_sensors(adc: Option<ADCFrame>, adc_temp: Option<AdcTempFrame>, ups: Opt
 // `bypass_analog_filters` drops every analog chain's moving-average/dampener stage. Only
 // the self-test path passes true: those filters exist to reject driving noise over
 // seconds-to-minutes and would just smear its 2 s sweep.
-fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame, temp_frame: AdcTempFrame, bypass_analog_filters: bool) -> Result<(), String> {
+fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame, temp_frame: AdcTempFrame, bypass_analog_filters: bool, calibration: &HashMap<String, CalibrationRecord>) -> Result<HashMap<String, Arc<AtomicU32>>, String> {
     // Generic digital/analog chains (brake fluid, charge, diff lock, ext lights, fuel
     // level/low, high beam, instrument illumination, oil pressure/low, park brake, turn
     // signal, 12V) plus the one-wire DS18B20 temperature chains (provider "adc_temp", see
     // ONEWIRE_TEMP_SENSOR_RUST_DESIGN.md) are data-driven — see hardware::sensor_config and
     // DATA_DRIVEN_SENSOR_CONFIG_DESIGN.md. A bad config file is surfaced to the caller (and
     // ultimately shown on screen by main's fallback loop), not panicked on.
+    //
+    // `calib_offsets` holds each `calibrated_analog` sensor's live value_offset cell, by id
+    // -- see SENSOR_CALIBRATION_DESIGN.md's field calibration UI, wired up to `DiagPage` via
+    // PageManager.
+    let mut calib_offsets = HashMap::new();
     hardware::sensor_config::load_chains_with_options(
         &hardware::sensor_config::default_path(), "sensor",
         frame.clone(), Some(temp_frame), mgr, bypass_analog_filters,
+        calibration, &mut calib_offsets,
     ).map_err(|e| format!("sensor_config.json: {}", e))?;
 
     // ---- Chains with real conversion math, out of scope for config (see design doc) ----
@@ -300,7 +313,7 @@ fn add_adc_sensor_chains(mgr: &mut SensorManager, frame: ADCFrame, temp_frame: A
     );
     mgr.add_analog_sensor_chain(tacho_chain);
 
-    Ok(())
+    Ok(calib_offsets)
 }
 
 // Physical MFD buttons (B0..B7), read from the same STM32 ADC frame as the sensors
@@ -518,14 +531,19 @@ fn main() -> std::process::ExitCode {
     // All three of these load sensor_config.json. A malformed or unreadable file used to
     // panic here (recoverable only by reading the logs); instead, show the error on screen
     // and idle until watch_for_updates sees the file fixed (or the binary rebuilt) and
-    // triggers a restart.
+    // triggers a restart. sensor_calibration.json (the field calibration overlay, see
+    // SENSOR_CALIBRATION_DESIGN.md) shares that fallback -- a missing file is fine (no
+    // calibration captured yet), but malformed JSON in one that exists is treated the same
+    // as a bad sensor_config.json rather than silently ignored.
     let sensor_setup = (|| -> Result<_, String> {
+        let calibration = hardware::sensor_calibration::load(&hardware::sensor_calibration::default_path())
+            .map_err(|e| format!("sensor_calibration.json: {}", e))?;
         let (self_test_sensors, test_adc_provider) = setup_self_test_sensors()?;
         let button_sensors = setup_button_sensors(adc_frame.clone())?;
-        let (sensors, heading_fusion) = setup_sensors(adc_frame, adc_temp_frame, ups_frame, gnss_frame, bno_frame)?;
-        Ok((self_test_sensors, test_adc_provider, button_sensors, sensors, heading_fusion))
+        let (sensors, heading_fusion, calib_offsets) = setup_sensors(adc_frame, adc_temp_frame, ups_frame, gnss_frame, bno_frame, &calibration)?;
+        Ok((self_test_sensors, test_adc_provider, button_sensors, sensors, heading_fusion, calib_offsets))
     })();
-    let (self_test_sensors, mut test_adc_provider, button_sensors, sensors, heading_fusion) = match sensor_setup {
+    let (self_test_sensors, mut test_adc_provider, button_sensors, sensors, heading_fusion, calib_offsets) = match sensor_setup {
         Ok(v) => v,
         Err(e) => return config_error_fallback_loop(&mut context, &e),
     };
@@ -547,7 +565,7 @@ fn main() -> std::process::ExitCode {
         }
     };
 
-    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag, osc_frame, adc_version_frame, gnss_frame_for_diag, bno_frame_for_diag, gnss, bno085, alert_manager, heading_fusion, master_warning_led);
+    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag, osc_frame, adc_version_frame, gnss_frame_for_diag, bno_frame_for_diag, gnss, bno085, alert_manager, heading_fusion, master_warning_led, calib_offsets, hardware::sensor_calibration::default_path());
 
     mgr.setup().expect("Failed to setup page manager");
 

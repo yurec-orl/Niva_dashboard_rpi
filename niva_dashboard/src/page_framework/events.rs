@@ -31,6 +31,14 @@ pub enum UIEvent {
     ShowOSCInfo,
     ShowLog,
 
+    // Field calibration UI (DiagPage) -- see SENSOR_CALIBRATION_DESIGN.md
+    CalibEnter,             // ДИАГ's "КАЛИБР" button: enter the sensor-select screen
+    CalibSelect(String),    // Pick a calibrated sensor by id, enter its adjust screen
+    CalibIncrease,          // Nudge the adjust screen's target value up one step
+    CalibDecrease,          // Nudge the adjust screen's target value down one step
+    CalibConfirm,           // Commit the adjust screen's target as the new calibration point
+    CalibBack,              // One level back: adjust -> select -> off
+
     // Nav page events
     NavPnpMode,
     NavInfoMode,
@@ -220,6 +228,12 @@ impl SmartEventSender {
             UIEvent::ShowECUInfo |
             UIEvent::ShowOSCInfo |
             UIEvent::ShowLog |
+            UIEvent::CalibEnter |
+            UIEvent::CalibSelect(_) |
+            UIEvent::CalibIncrease |
+            UIEvent::CalibDecrease |
+            UIEvent::CalibConfirm |
+            UIEvent::CalibBack |
             UIEvent::NavPnpMode |
             UIEvent::NavInfoMode |
             UIEvent::NavMapMode |
@@ -313,6 +327,12 @@ mod tests {
             UIEvent::NavHeadingSetMode,
             UIEvent::NavHeadingSetExit,
             UIEvent::HorzCalibrate,
+            UIEvent::CalibEnter,
+            UIEvent::CalibSelect("HwEngineCoolantTemp".to_string()),
+            UIEvent::CalibIncrease,
+            UIEvent::CalibDecrease,
+            UIEvent::CalibConfirm,
+            UIEvent::CalibBack,
         ]
     }
 

@@ -634,10 +634,34 @@ detection (high-side headroom + low-side short) —
 `hardware/sensors.rs`, a `calibrated_analog` sensor kind in
 `hardware/sensor_config.rs`, and coolant/oil/fuel entries in
 `sensor_config.json` (the hand-built `EngineTemperatureSensor` and its
-placeholder conversion are removed). Deferred: `sensor_calibration.json`, the
-value-offset overlay, the field UI (`value_offset` is carried as a `0.0`
-constructor argument so that iteration only adds a loader), and the distinct
-"sender disconnected" indicator (see Failure modes).
+placeholder conversion are removed).
+
+Also done (closes the "deferred" items above): `sensor_calibration.json`
+loading/saving (`hardware/sensor_calibration.rs`); the value-offset overlay,
+applied in `hardware/sensor_config.rs::build_adc_chain` when building each
+`calibrated_analog` sensor (a calibration record's offset overrides the
+config file's own `value_offset`); and the field UI, a calibration sub-mode
+on `DiagPage` ("КАЛИБР" button → pick sensor → adjust screen). `value_offset`
+is now carried as a live `Arc<AtomicU32>` cell rather than a plain `f32` on
+`CalibratedVariableResistanceAnalogSensor` (mirroring `v_supply`'s existing
+shared-cell pattern) — `sensor_config.rs::load_chains_with_options` hands
+each calibrated sensor's cell back to the caller (`main.rs` → `PageManager`
+→ `DiagPage`) in a `HashMap<String, Arc<AtomicU32>>` registry, so a
+confirmed capture takes effect on the sensor's very next `read()` with no
+restart, and is separately persisted to `sensor_calibration.json` so it
+survives one.
+
+One implementation decision beyond what's specified above: `reported` is
+stored as the curve-only value (the live reading with any *existing*
+`value_offset` already subtracted back out), not the raw on-screen value
+at capture time. This keeps a second/later recalibration's `offset()`
+correct — computed fresh against the pristine curve each time rather than
+compounding against the previous correction — at no extra cost, since the
+UI already holds the current offset it's about to overwrite.
+
+Still deferred: the distinct "sender disconnected" indicator (see Failure
+modes) and the two-point/multi-point overlay (see Calibration overlay file
+above) if real-sensor testing shows a single offset isn't enough.
 
 **Self-test sweep (revised).** `TestADCDataProvider::generate_channels` now
 synthesizes each calibrated channel's raw count instead of sharing one 0–4095
@@ -674,3 +698,7 @@ to the whole curve); multi-point overlay deferred pending real-sensor testing.*
 counts from the datasheet curves via `pub` Ω→raw / volts→raw inverses in
 `hardware/sensors.rs` (supersedes the earlier "no shared helper needed"
 resolution); see Implementation status.*
+
+*Revised: September 12, 2026 — `sensor_calibration.json`, the value-offset
+overlay, and the field calibration UI (DiagPage) implemented, closing out
+GitHub issue #26; see Implementation status.*

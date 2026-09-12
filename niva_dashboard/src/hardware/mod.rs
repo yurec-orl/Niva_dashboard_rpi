@@ -8,6 +8,7 @@ pub mod sensors;
 pub mod sensor_manager;
 pub mod sensor_value;
 pub mod sensor_config;
+pub mod sensor_calibration;
 pub mod heading_fusion_sensor;
 
 pub use gpio_input::GpioInput;

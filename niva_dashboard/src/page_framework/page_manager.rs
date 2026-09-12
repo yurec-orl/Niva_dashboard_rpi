@@ -25,7 +25,9 @@ use crate::util::config::Config;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use std::fs;
+use std::sync::atomic::AtomicU32;
 use std::sync::mpsc::{Sender, Receiver};
+use std::sync::Arc;
 
 const STATUS_LINE_X_MARGIN : f32 = 20.0;
 const STATUS_LINE_Y_MARGIN : f32 = 25.0;
@@ -300,6 +302,18 @@ pub struct PageManager {
     // same condition as adc_frame.
     adc_version_frame: Option<AdcVersionFrame>,
 
+    // Live value_offset cell per `calibrated_analog` sensor id (coolant/oil/fuel), handed
+    // to DiagPage's field calibration UI -- see SENSOR_CALIBRATION_DESIGN.md. A clone, not
+    // a manager handle, same rationale as `v_supply` in hardware::sensor_config: DiagPage
+    // writes a new offset directly and it takes effect on the sensor's next read(), no
+    // restart needed. Empty when the ADC was unavailable at startup (no calibrated sensors
+    // exist to offer).
+    calib_offsets: HashMap<String, Arc<AtomicU32>>,
+
+    // Where DiagPage persists a new field capture (sensor_calibration.json) so it survives
+    // a restart -- see hardware::sensor_calibration.
+    calib_path: std::path::PathBuf,
+
     // Handle to the shared GNSS line buffer, used to build the GNSS diagnostic terminal
     // page. None when the GNSS data provider failed to start.
     gnss_frame: Option<GnssFrame>,
@@ -366,7 +380,9 @@ impl PageManager {
                bno_frame: Option<Bno085Frame>,
                gnss_provider: Option<GnssDataProvider>, bno_provider: Option<Bno085DataProvider>,
                alert_manager: AlertManager, heading_fusion: Option<HeadingFusionSensor>,
-               master_warning_led: Option<GpioOutput>) -> Self {
+               master_warning_led: Option<GpioOutput>,
+               calib_offsets: HashMap<String, Arc<AtomicU32>>,
+               calib_path: std::path::PathBuf) -> Self {
         let mut buttons_map = HashMap::new();
         buttons_map.insert('1', ButtonPosition::Left1);
         buttons_map.insert('2', ButtonPosition::Left2);
@@ -410,6 +426,8 @@ impl PageManager {
             adc_frame,
             osc_frame,
             adc_version_frame,
+            calib_offsets,
+            calib_path,
             gnss_frame,
             bno_frame,
             gnss_provider,
@@ -563,7 +581,9 @@ impl PageManager {
         let diag_page = Box::new(DiagPage::new(DIAG_PAGE_ID,
                                                smart_sender.clone(),
                                                self.get_event_receiver(),
-                                               self.adc_version_frame.clone()));
+                                               self.adc_version_frame.clone(),
+                                               self.calib_offsets.clone(),
+                                               self.calib_path.clone()));
 
         let log_page = Box::new(TerminalPage::new_log(LOG_PAGE_ID, "Log",
                                                        smart_sender.clone(),

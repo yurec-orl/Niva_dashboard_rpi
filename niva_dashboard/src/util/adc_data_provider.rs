@@ -1146,7 +1146,7 @@ mod tests {
             // low-Ω end for all three senders, so it carries value 100 and the zero end 0.
             let mut sensor = CalibratedVariableResistanceAnalogSensor::new(
                 "x".to_string(), "x".to_string(), "u".to_string(), r_series,
-                vec![(ohm_at_full, 100.0), (ohm_at_zero, 0.0)], 0.0,
+                vec![(ohm_at_full, 100.0), (ohm_at_zero, 0.0)], Arc::new(AtomicU32::new(0.0f32.to_bits())),
                 ValueConstraints::analog(0.0, 100.0), v_supply.clone(),
             );
 

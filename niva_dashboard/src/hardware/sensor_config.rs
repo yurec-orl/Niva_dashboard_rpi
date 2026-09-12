@@ -17,6 +17,7 @@ use crate::hardware::analog_signal_processing::{
 };
 use crate::hardware::digital_signal_processing::{DigitalSignalDebouncer, DigitalSignalProcessor};
 use crate::hardware::hw_providers::{ADCChannelProvider, HWInput, OneWireTempChannelProvider};
+use crate::hardware::sensor_calibration::CalibrationRecord;
 use crate::hardware::sensor_manager::{SensorAnalogInputChain, SensorDigitalInputChain, SensorManager};
 use crate::hardware::sensor_value::ValueConstraints;
 use crate::hardware::sensors::{
@@ -27,6 +28,7 @@ use crate::util::adc_data_provider::{ADCFrame, AdcTempFrame};
 
 use rppal::gpio::Level;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
@@ -232,13 +234,22 @@ pub fn load_chains(
     temp_frame: Option<AdcTempFrame>,
     mgr: &mut SensorManager,
 ) -> Result<(), String> {
-    load_chains_with_options(path, group, frame, temp_frame, mgr, false)
+    // No calibration overlay applied and the resulting offset handles discarded -- only the
+    // "sensor" group's `calibrated_analog` entries care about either, and the one caller that
+    // needs them uses `load_chains_with_options` directly (see main.rs::add_adc_sensor_chains).
+    load_chains_with_options(path, group, frame, temp_frame, mgr, false, &HashMap::new(), &mut HashMap::new())
 }
 
 /// Like [`load_chains`], but `bypass_analog_filters` drops every analog chain's configured
 /// `analog_processors` (moving averages / dampeners). The startup self-test sweep uses this:
 /// those filters reject driving noise over seconds-to-minutes and only smear its ~2 s bench
 /// sweep (see `TestADCDataProvider`). Digital `debounce` stages are unaffected.
+///
+/// `calibration` overlays a field-captured `value_offset` onto each `calibrated_analog`
+/// sensor by id (see hardware::sensor_calibration), falling back to the config file's own
+/// `value_offset` (normally 0.0) for an id with no calibration record. `offsets_out` is
+/// filled with that sensor's live offset cell, by id -- the handle the field calibration UI
+/// (`DiagPage`) writes through afterwards to apply a new capture without a restart.
 pub fn load_chains_with_options(
     path: &Path,
     group: &str,
@@ -246,6 +257,8 @@ pub fn load_chains_with_options(
     temp_frame: Option<AdcTempFrame>,
     mgr: &mut SensorManager,
     bypass_analog_filters: bool,
+    calibration: &HashMap<String, CalibrationRecord>,
+    offsets_out: &mut HashMap<String, Arc<AtomicU32>>,
 ) -> Result<(), String> {
     let contents = std::fs::read_to_string(path)
         .map_err(|e| format!("sensor config: failed to read {path:?}: {e}"))?;
@@ -259,7 +272,7 @@ pub fn load_chains_with_options(
     let v_supply = Arc::new(AtomicU32::new(NOMINAL_SUPPLY_V.to_bits()));
 
     for entry in entries.iter().filter(|e| e.group == group) {
-        build_chain(entry, frame.clone(), temp_frame.as_ref(), &v_supply, mgr, bypass_analog_filters)?;
+        build_chain(entry, frame.clone(), temp_frame.as_ref(), &v_supply, mgr, bypass_analog_filters, calibration, offsets_out)?;
     }
     Ok(())
 }
@@ -271,12 +284,14 @@ fn build_chain(
     v_supply: &Arc<AtomicU32>,
     mgr: &mut SensorManager,
     bypass_analog_filters: bool,
+    calibration: &HashMap<String, CalibrationRecord>,
+    offsets_out: &mut HashMap<String, Arc<AtomicU32>>,
 ) -> Result<(), String> {
     let input = HWInput::from_config_name(&entry.hw_input)
         .ok_or_else(|| format!("sensor config: unknown hw_input '{}'", entry.hw_input))?;
 
     match entry.provider.as_str() {
-        "adc" => build_adc_chain(entry, input, frame, v_supply, mgr, bypass_analog_filters),
+        "adc" => build_adc_chain(entry, input, frame, v_supply, mgr, bypass_analog_filters, calibration, offsets_out),
         "adc_temp" => build_adc_temp_chain(entry, input, temp_frame, mgr),
         other => Err(format!(
             "sensor config: hw_input '{}' has unsupported provider '{}' (expected \"adc\" or \"adc_temp\")",
@@ -292,6 +307,8 @@ fn build_adc_chain(
     v_supply: &Arc<AtomicU32>,
     mgr: &mut SensorManager,
     bypass_analog_filters: bool,
+    calibration: &HashMap<String, CalibrationRecord>,
+    offsets_out: &mut HashMap<String, Arc<AtomicU32>>,
 ) -> Result<(), String> {
     // Configured analog stages, or none when the caller asked for them bypassed (self-test).
     let analog_processors = || -> Vec<Box<dyn AnalogSignalProcessor + Send>> {
@@ -380,12 +397,18 @@ fn build_adc_chain(
                 ));
             }
             points.sort_by(|a, b| a.0.partial_cmp(&b.0).expect("curve ohm values are finite"));
+            // A prior field capture (sensor_calibration.json) overrides the config file's own
+            // value_offset (normally 0.0); either way the live cell is handed back via
+            // offsets_out so the field calibration UI can write a new capture in later.
+            let initial_offset = calibration.get(id).map(CalibrationRecord::offset).unwrap_or(*value_offset);
+            let offset_cell = Arc::new(AtomicU32::new(initial_offset.to_bits()));
+            offsets_out.insert(id.clone(), offset_cell.clone());
             let chain = SensorAnalogInputChain::new(
                 Box::new(ADCChannelProvider::new(input, frame)),
                 analog_processors(),
                 Box::new(CalibratedVariableResistanceAnalogSensor::new(
                     id.clone(), name.clone(), units.clone(), *r_series_ohm,
-                    points, *value_offset, constraints.build(&entry.hw_input)?,
+                    points, offset_cell, constraints.build(&entry.hw_input)?,
                     v_supply.clone(),
                 )),
             );
@@ -452,6 +475,7 @@ fn build_adc_temp_chain(
 mod tests {
     use super::*;
     use crate::util::adc_data_provider::TestADCDataProvider;
+    use std::sync::atomic::Ordering;
 
     fn write_temp_config(json: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
@@ -575,6 +599,39 @@ mod tests {
             assert_eq!(v.constraints.critical_low, Some(0.5));
             assert_eq!(v.constraints.warning_low, Some(1.0));
         }
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// A calibration overlay record for a `calibrated_analog` sensor's id overrides the
+    /// config file's own `value_offset` (here 0.0), and the resulting live offset cell is
+    /// handed back via `offsets_out` -- see SENSOR_CALIBRATION_DESIGN.md's overlay design
+    /// and DiagPage's field calibration UI, which writes through that same handle later.
+    #[test]
+    fn calibration_overlay_sets_initial_offset_and_is_returned_in_offsets_out() {
+        let json = r#"[
+            {"group":"sensor","hw_input":"HwOilPress","provider":"adc",
+             "analog_processors":[{"type":"moving_average","window":1}],
+             "sensor":{"kind":"calibrated_analog","id":"HwOilPress","name":"ДАВЛ МАСЛА","units":"кгс/см²",
+               "r_series_ohm":130.8,
+               "curve":[{"ohm":7.5,"value":8.0},{"ohm":118.0,"value":4.0},{"ohm":305.0,"value":0.0}],
+               "constraints":{"min":0.0,"max":8.0}}}
+        ]"#;
+        let path = write_temp_config(json);
+        let provider = TestADCDataProvider::start();
+        let frame = provider.frame();
+        std::thread::sleep(Duration::from_millis(50));
+
+        let mut calibration = HashMap::new();
+        calibration.insert("HwOilPress".to_string(), CalibrationRecord { reported: 4.0, true_value: 4.5 });
+        let mut offsets_out = HashMap::new();
+        let mut mgr = SensorManager::new();
+        load_chains_with_options(&path, "sensor", frame, None, &mut mgr, false, &calibration, &mut offsets_out)
+            .expect("should load with a calibration overlay applied");
+
+        let cell = offsets_out.get("HwOilPress").expect("offset cell should be returned for the calibrated sensor");
+        let offset = f32::from_bits(cell.load(Ordering::Relaxed));
+        assert!((offset - 0.5).abs() < 0.001, "expected the overlay's 4.5 - 4.0 = 0.5, got {offset}");
+
         std::fs::remove_file(&path).ok();
     }
 
