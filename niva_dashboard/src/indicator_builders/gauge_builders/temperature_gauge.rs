@@ -74,12 +74,12 @@ pub fn build_temperature_gauge(
             radius - gauge_major_mark_length / 2.0,
             gauge_major_mark_length,    // Thick arc section to mark critical temp
             GAUGE_CRITICAL_ZONE_COLOR,
-            end_angle - 45.0f32.to_radians(), // Start a bit before the end angle
+            end_angle - 33.75f32.to_radians(), // Start a bit before the end angle
             end_angle,
         )),
         // Fine marks for temperature readings (50-120°C)
         Box::new(NeedleGaugeMarksDecorator::new(
-            7, // 7 marks for temperature range
+            9, // 9 marks for temperature range
             gauge_minor_mark_length,
             gauge_minor_mark_thickness,
             GAUGE_MINOR_MARK_COLOR,
