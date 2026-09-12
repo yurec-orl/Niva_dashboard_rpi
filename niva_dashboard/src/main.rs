@@ -37,7 +37,7 @@ use crate::hardware::gpio_input::{GpioInput, GpioInputConfig, GpioOutput};
 use rppal::gpio::{Level, Bias};
 use std::collections::HashMap;
 use std::env;
-use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -63,7 +63,7 @@ fn setup_context() -> GraphicsContext {
 //
 // Caller must keep the returned TestADCDataProvider alive for the sweep to animate —
 // dropping it stops the synthetic writer thread. The sweep clock is not started here:
-// the caller must call begin_sweep() once the render loop is about to start, otherwise
+// the caller must call begin() once the render loop is about to start, otherwise
 // the ~1 s of remaining startup (pages/indicators/GL) eats the rise-and-fall animation.
 fn setup_self_test_sensors() -> Result<(SensorManager, TestADCDataProvider), String> {
     let mut mgr = SensorManager::new();
@@ -91,8 +91,23 @@ fn setup_self_test_sensors() -> Result<(SensorManager, TestADCDataProvider), Str
     Ok((mgr, test_adc))
 }
 
-fn setup_sensors(adc: Option<ADCFrame>, adc_temp: Option<AdcTempFrame>, ups: Option<UpsRawFrame>, gnss: Option<GnssFrame>, bno: Option<Bno085Frame>, calibration: &HashMap<String, CalibrationRecord>) -> Result<(SensorManager, Option<heading_fusion_sensor::HeadingFusionSensor>, HashMap<String, Arc<AtomicU32>>), String> {
+fn setup_sensors(adc: Option<ADCFrame>, adc_temp: Option<AdcTempFrame>, ups: Option<UpsRawFrame>, gnss: Option<GnssFrame>, bno: Option<Bno085Frame>, calibration: &HashMap<String, CalibrationRecord>, bench_test_mode: Arc<AtomicBool>) -> Result<(SensorManager, Option<heading_fusion_sensor::HeadingFusionSensor>, HashMap<String, Arc<AtomicU32>>), String> {
     let mut mgr = SensorManager::new();
+
+    // Bench test mode indicator -- added once, permanently, unlike every other chain here:
+    // its provider just reads `bench_test_mode` (flipped by PageManager::toggle_bench_test_mode
+    // on DiagPage's ТЕСТ button), so the chain itself never needs to change, only the flag.
+    // See hw_providers::FlagDigitalProvider and SensorManager::redirect_adc_chains -- bench
+    // mode swaps this SAME manager's ADC-backed chains onto a synthetic frame rather than
+    // building a second manager, so UPS/GNSS/BNO085/master-warning/link-health chains below
+    // are completely unaffected by it.
+    let bench_test_chain = SensorDigitalInputChain::new(
+        Box::new(FlagDigitalProvider::new(HWInput::HwBenchTestInput, bench_test_mode)),
+        vec![],
+        Box::new(GenericDigitalSensor::new("HwBenchTestInput".to_string(), "BENCH TEST".to_string(),
+                                           Level::High, ValueConstraints::digital_warning())),
+    );
+    mgr.add_digital_sensor_chain(bench_test_chain);
     // Cloned before the GNSS scalar-chain block below consumes `gnss` -- needed again for the
     // heading fusion chain further down.
     let gnss_for_fusion = gnss.clone();
@@ -267,7 +282,10 @@ fn setup_sensors(adc: Option<ADCFrame>, adc_temp: Option<AdcTempFrame>, ups: Opt
 //
 // Shared by setup_sensors (real, serial-fed ADCFrame) and setup_self_test_sensors
 // (TestADCDataProvider's synthetic ADCFrame) — self-test exercises this exact wiring
-// instead of a hand-duplicated copy, so the two can't silently drift apart.
+// instead of a hand-duplicated copy, so the two can't silently drift apart. Bench test mode
+// (PageManager::toggle_bench_test_mode) does NOT call this a second time -- it redirects
+// the one real SensorManager's already-built chains onto a synthetic frame instead (see
+// SensorManager::redirect_adc_chains), so it never needs a second set of these chains.
 //
 // `bypass_analog_filters` drops every analog chain's moving-average/dampener stage. Only
 // the self-test path passes true: those filters exist to reject driving noise over
@@ -535,12 +553,17 @@ fn main() -> std::process::ExitCode {
     // SENSOR_CALIBRATION_DESIGN.md) shares that fallback -- a missing file is fine (no
     // calibration captured yet), but malformed JSON in one that exists is treated the same
     // as a bad sensor_config.json rather than silently ignored.
+    // Shared with the "BENCH TEST" indicator chain setup_sensors adds below and with
+    // PageManager (see toggle_bench_test_mode) -- flipping this is the entire mechanism by
+    // which bench test mode turns its "РЕЖИМ ТЕСТ" alert on and off.
+    let bench_test_mode = Arc::new(AtomicBool::new(false));
+
     let sensor_setup = (|| -> Result<_, String> {
         let calibration = hardware::sensor_calibration::load(&hardware::sensor_calibration::default_path())
             .map_err(|e| format!("sensor_calibration.json: {}", e))?;
         let (self_test_sensors, test_adc_provider) = setup_self_test_sensors()?;
         let button_sensors = setup_button_sensors(adc_frame.clone())?;
-        let (sensors, heading_fusion, calib_offsets) = setup_sensors(adc_frame, adc_temp_frame, ups_frame, gnss_frame, bno_frame, &calibration)?;
+        let (sensors, heading_fusion, calib_offsets) = setup_sensors(adc_frame, adc_temp_frame, ups_frame, gnss_frame, bno_frame, &calibration, bench_test_mode.clone())?;
         Ok((self_test_sensors, test_adc_provider, button_sensors, sensors, heading_fusion, calib_offsets))
     })();
     let (self_test_sensors, mut test_adc_provider, button_sensors, sensors, heading_fusion, calib_offsets) = match sensor_setup {
@@ -565,14 +588,14 @@ fn main() -> std::process::ExitCode {
         }
     };
 
-    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag, osc_frame, adc_version_frame, gnss_frame_for_diag, bno_frame_for_diag, gnss, bno085, alert_manager, heading_fusion, master_warning_led, calib_offsets, hardware::sensor_calibration::default_path());
+    let mut mgr = PageManager::new(context, self_test_sensors, ui_style, input_sources, UpsMonitor::new(), adc_frame_for_diag, osc_frame, adc_version_frame, gnss_frame_for_diag, bno_frame_for_diag, gnss, bno085, alert_manager, heading_fusion, master_warning_led, calib_offsets, hardware::sensor_calibration::default_path(), bench_test_mode);
 
     mgr.setup().expect("Failed to setup page manager");
 
     // Start the synthetic sweep now, with the render loop about to begin, so the whole
     // 0 → max → 0 needle animation is on screen (setup above already wired the chains to
     // its frames). The swap timer below shares this origin.
-    test_adc_provider.begin_sweep();
+    test_adc_provider.begin();
 
     // Setup timer to switch the self-test sensor manager to the functional set once the
     // self-test sweep finishes. test_adc_provider is moved in so its synthetic writer

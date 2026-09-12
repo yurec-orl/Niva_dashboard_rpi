@@ -92,3 +92,7 @@ build.rs.out
 # Per-vehicle field calibration overlay (SENSOR_CALIBRATION_DESIGN.md) -- not checked in,
 # unlike the hand-authored sensor_config.json it lives next to.
 niva_dashboard/sensor_calibration.json
+
+# Bench-test target values for DiagPage's ТЕСТ (bench test mode) button -- per-bench-session
+# tuning data, not checked in, same reasoning as sensor_calibration.json above.
+niva_dashboard/mock_sensor_values.json

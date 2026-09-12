@@ -16,16 +16,16 @@ use crate::hardware::heading_fusion_sensor::{HeadingFusionSensor, HeadingAnchorS
 use crate::hardware::gpio_input::GpioOutput;
 use crate::alerts::alert_manager::{AlertManager, Severity};
 use crate::alerts::watchdog::Watchdog;
-use crate::util::adc_data_provider::{ADCFrame, AdcVersionFrame, OscFrame};
+use crate::util::adc_data_provider::{ADCFrame, AdcVersionFrame, OscFrame, TestADCDataProvider};
 use crate::util::gnss_data_provider::{GnssFrame, GnssDataProvider, TestGnssDataProvider};
 use crate::util::bno085_data_provider::{Bno085Frame, Bno085DataProvider, TestBno085DataProvider};
 use crate::util::ups_monitor::UpsMonitor;
 use crate::util::config::Config;
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use std::fs;
-use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::Arc;
 
@@ -347,6 +347,27 @@ pub struct PageManager {
     // sits there wrong once real data resumes. None outside an active test session.
     gnss_test_anchor_snapshot: Option<HeadingAnchorSnapshot>,
 
+    // Bench test mode (DiagPage's "ТЕСТ" button, UIEvent::ToggleBenchTestMode) -- redirects
+    // `sensor_manager`'s ADC-backed chains onto a synthetic settle-mode frame (see
+    // hardware::mock_sensor_config, SensorManager::redirect_adc_chains), so the field
+    // calibration UI can be exercised on the bench without real senders wired up. Unlike
+    // the one-shot self-test/SwitchSensorSet handoff, this can be toggled back and forth
+    // indefinitely -- see toggle_bench_test_mode(). `sensor_manager` itself is never
+    // swapped or rebuilt, so UPS/GNSS/BNO085/master-warning/link-health chains (on entirely
+    // separate hardware from the ADC) are completely unaffected by it.
+    //
+    // Owns the settle-mode synthetic writer thread; None while bench mode is off. Dropping
+    // it (assigning None) stops the thread, same as self-test's TestADCDataProvider.
+    bench_settle_provider: Option<TestADCDataProvider>,
+    // Shared with the permanent HwBenchTestInput chain's FlagDigitalProvider (see
+    // main.rs::setup_sensors) -- the "РЕЖИМ ТЕСТ" alert's watchdog reads that chain, so
+    // flipping this flag is the entire on/off mechanism for that indicator.
+    bench_test_mode: Arc<AtomicBool>,
+    // mock_sensor_values.json's mtime as of the last (re)load, so the per-tick poll in the
+    // main loop below can detect an edit and hot-reload without a restart. None while bench
+    // mode is off.
+    bench_config_mtime: Option<SystemTime>,
+
     // Reads GnssFrame/Bno085Frame directly and is ticked once per loop iteration below,
     // independent of `sensor_manager`'s self-test/real handoff -- see
     // hardware::heading_fusion_sensor. None when either source's data provider failed to
@@ -382,7 +403,8 @@ impl PageManager {
                alert_manager: AlertManager, heading_fusion: Option<HeadingFusionSensor>,
                master_warning_led: Option<GpioOutput>,
                calib_offsets: HashMap<String, Arc<AtomicU32>>,
-               calib_path: std::path::PathBuf) -> Self {
+               calib_path: std::path::PathBuf,
+               bench_test_mode: Arc<AtomicBool>) -> Self {
         let mut buttons_map = HashMap::new();
         buttons_map.insert('1', ButtonPosition::Left1);
         buttons_map.insert('2', ButtonPosition::Left2);
@@ -435,6 +457,9 @@ impl PageManager {
             gnss_test_provider: None,
             bno_test_provider: None,
             gnss_test_anchor_snapshot: None,
+            bench_settle_provider: None,
+            bench_test_mode,
+            bench_config_mtime: None,
             heading_fusion,
             fps_counter: FpsCounter::new(),
             start_time: Instant::now(),
@@ -747,6 +772,24 @@ impl PageManager {
             Some(std::time::Duration::from_secs(5)),        // Ignore brief transients
         );
 
+        // Bench test mode indicator (see toggle_bench_test_mode) -- registered here, once,
+        // same as every other watchdog in this function. HwBenchTestInput is a permanent
+        // chain (main.rs::setup_sensors) whose FlagDigitalProvider reads `bench_test_mode`,
+        // toggled by DiagPage's ТЕСТ button -- so this watchdog only reads as warning while
+        // that flag is set, a no-op the rest of the time. Short display_timeout + near-zero
+        // remove_timeout is alerts::alert_manager's self-refreshing pattern -- see its
+        // module doc -- so this alert stays continuously visible for as long as bench mode
+        // is on and disappears within ~1 s of it being toggled off, no manual removal
+        // needed.
+        let bench_test_watchdog = Watchdog::new(
+            HWInput::HwBenchTestInput,
+            "РЕЖИМ ТЕСТ".to_string(),
+            Severity::Warning,
+            Some(std::time::Duration::from_secs(1)),
+            Some(std::time::Duration::ZERO),
+            None,
+        );
+
         self.alert_manager.add_watchdog(engine_temp_watchdog);
         self.alert_manager.add_watchdog(oil_press_low_watchdog);
         self.alert_manager.add_watchdog(adc_link_watchdog);
@@ -754,6 +797,7 @@ impl PageManager {
         self.alert_manager.add_watchdog(ups_on_battery_watchdog);
         self.alert_manager.add_watchdog(ups_low_charge_watchdog);
         self.alert_manager.add_watchdog(ups_crit_charge_watchdog);
+        self.alert_manager.add_watchdog(bench_test_watchdog);
     }
 
     // Do first-time initialization and start main loop.
@@ -862,6 +906,9 @@ impl PageManager {
             }
 
             self.ups_monitor.check(&self.sensor_manager);
+
+            // No-op while bench test mode is off (see toggle_bench_test_mode).
+            self.poll_bench_config_reload();
 
             // Update FPS counter
             self.fps_counter.update();
@@ -1021,6 +1068,9 @@ impl PageManager {
             UIEvent::NavToggleGnssTest => {
                 self.toggle_gnss_test_mode();
             }
+            UIEvent::ToggleBenchTestMode => {
+                self.toggle_bench_test_mode();
+            }
             _ => {}
         }
     }
@@ -1070,6 +1120,71 @@ impl PageManager {
                 fusion.zero_correction();
             }
         }
+    }
+
+    // Redirects `sensor_manager`'s ADC-backed chains (see
+    // SensorManager::redirect_adc_chains) between the real ADC frame and a synthetic
+    // settle-mode one whose channels ramp to and hold configurable targets from
+    // mock_sensor_values.json -- lets the field calibration UI be exercised on the bench
+    // without real senders wired up. `sensor_manager` itself is never swapped or rebuilt,
+    // so the calibrated senders' offset cells (`self.calib_offsets`) are simply the same
+    // cells the whole time -- no cross-manager sharing needed -- and UPS/GNSS/BNO085/
+    // master-warning/link-health chains (unrelated hardware) are completely unaffected.
+    //
+    // The "РЕЖИМ ТЕСТ" warning that indicates bench mode is on is a permanent watchdog
+    // registered once in setup_alerts() against the permanent HwBenchTestInput chain (see
+    // main.rs::setup_sensors) -- this function's only job for that indicator is flipping
+    // `bench_test_mode`, the flag that chain's FlagDigitalProvider reads.
+    fn toggle_bench_test_mode(&mut self) {
+        if self.bench_settle_provider.is_some() {
+            log::info!("Bench test mode OFF, restoring real sensors");
+            self.bench_settle_provider = None; // Drop stops the settle-mode writer thread.
+            if let Some(real_frame) = self.adc_frame.clone() {
+                self.sensor_manager.redirect_adc_chains(real_frame.clone());
+                self.sensor_manager.set_adc_frame(Some(real_frame));
+            }
+            self.bench_test_mode.store(false, Ordering::Relaxed);
+            self.bench_config_mtime = None;
+        } else {
+            let targets = match crate::hardware::mock_sensor_config::load(&crate::hardware::mock_sensor_config::default_path()) {
+                Ok(targets) => targets,
+                Err(e) => {
+                    log::error!("Failed to enable bench test mode: {}", e);
+                    return;
+                }
+            };
+            log::info!("Bench test mode ON, sensors now synthetic (settling)");
+            let mut provider = TestADCDataProvider::deferred_settled(targets);
+            provider.begin();
+            self.sensor_manager.redirect_adc_chains(provider.frame());
+            self.sensor_manager.set_adc_frame(Some(provider.frame()));
+            self.bench_settle_provider = Some(provider);
+            self.bench_test_mode.store(true, Ordering::Relaxed);
+            self.bench_config_mtime = fs::metadata(crate::hardware::mock_sensor_config::default_path())
+                .and_then(|m| m.modified()).ok();
+        }
+    }
+
+    // Polls mock_sensor_values.json's mtime once per frame while bench test mode is active
+    // and hot-reloads it on change, so bench targets can be retuned mid-session without
+    // restarting the dashboard (which would drop out of bench mode and rerun the startup
+    // self-test). Mirrors util::shutdown::watch_for_updates' mtime-compare technique, but
+    // deliberately not its process-restart consequence -- see this feature's design notes.
+    fn poll_bench_config_reload(&mut self) {
+        let Some(provider) = self.bench_settle_provider.as_ref() else { return };
+        let path = crate::hardware::mock_sensor_config::default_path();
+        let current_mtime = fs::metadata(&path).and_then(|m| m.modified()).ok();
+        if current_mtime == self.bench_config_mtime {
+            return;
+        }
+        match crate::hardware::mock_sensor_config::load(&path) {
+            Ok(targets) => {
+                log::info!("mock_sensor_values.json changed, reloading bench test targets");
+                provider.set_targets(targets);
+            }
+            Err(e) => log::error!("Failed to reload mock_sensor_values.json: {}", e),
+        }
+        self.bench_config_mtime = current_mtime;
     }
 
     // Nudges the fused heading's manual anchor by delta_deg, based on the currently

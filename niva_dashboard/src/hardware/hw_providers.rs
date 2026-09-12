@@ -26,6 +26,8 @@ use crate::util::gnss_data_provider::GnssFrame;
 use crate::util::ups_i2c_provider::UpsRawFrame;
 
 use rppal::gpio::Level;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /////////////////////////////////////////////////////////////////////////
@@ -105,6 +107,12 @@ pub enum HWInput {
     HwDeadReckoningElapsed,
     // Fake input for test alert
     HwTestAlertInput,
+    // Fake input driving the persistent "bench test mode active" warning (see
+    // page_manager::toggle_bench_test_mode) -- kept separate from HwTestAlertInput so the
+    // two don't share a watchdog: HwTestAlertInput's watchdog is a one-shot ("do not display
+    // again") startup check, and bench test mode can be toggled on/off repeatedly for as
+    // long as the process runs.
+    HwBenchTestInput,
 }
 
 impl HWInput {
@@ -200,6 +208,7 @@ impl HWInput {
             HWInput::HwHeadingAccuracy => "HwHeadingAccuracy",
             HWInput::HwDeadReckoningElapsed => "HwDeadReckoningElapsed",
             HWInput::HwTestAlertInput => "HwTestAlertInput",
+            HWInput::HwBenchTestInput => "HwBenchTestInput",
         }
     }
 
@@ -221,7 +230,7 @@ impl HWInput {
         HWInput::HwBno085Heading, HWInput::HwBno085Link,
         HWInput::HwTempOut, HWInput::HwTempInt, HWInput::HwHeading,
         HWInput::HwHeadingConfidence, HWInput::HwHeadingAccuracy, HWInput::HwDeadReckoningElapsed,
-        HWInput::HwTestAlertInput,
+        HWInput::HwTestAlertInput, HWInput::HwBenchTestInput,
     ];
 
     /// Resolves a config-file string (matching a variant's name exactly, e.g.
@@ -615,6 +624,33 @@ impl HWDigitalProvider for TestDigitalDataProvider {
     }
 }
 
+/// Reports `Level::High` for as long as a shared flag is set, `Level::Low` otherwise --
+/// e.g. PageManager's bench test mode indicator (`HwBenchTestInput`, see
+/// toggle_bench_test_mode), where the flag is flipped by a runtime UI toggle rather than
+/// following a timeout like `TestDigitalDataProvider`. Added once, permanently, to the
+/// real `SensorManager` at startup (see main.rs::setup_sensors) since the chain itself
+/// never needs to be added/removed -- only the flag changes.
+pub struct FlagDigitalProvider {
+    input: HWInput,
+    active: Arc<AtomicBool>,
+}
+
+impl FlagDigitalProvider {
+    pub fn new(input: HWInput, active: Arc<AtomicBool>) -> Self {
+        FlagDigitalProvider { input, active }
+    }
+}
+
+impl HWDigitalProvider for FlagDigitalProvider {
+    fn input(&self) -> HWInput {
+        self.input
+    }
+
+    fn read_digital(&self, _input: HWInput) -> Result<Level, String> {
+        Ok(if self.active.load(Ordering::Relaxed) { Level::High } else { Level::Low })
+    }
+}
+
 pub struct TestAnalogDataProvider {
     input: HWInput,
     start_time: Instant,
@@ -986,6 +1022,21 @@ mod tests {
         let result = provider.read_digital(HWInput::HwTurnSignal);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Level::High);
+    }
+
+    // Test FlagDigitalProvider
+    #[test]
+    fn test_flag_digital_provider_tracks_shared_flag() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let provider = FlagDigitalProvider::new(HWInput::HwBenchTestInput, flag.clone());
+        assert_eq!(provider.input(), HWInput::HwBenchTestInput);
+        assert_eq!(provider.read_digital(HWInput::HwBenchTestInput).unwrap(), Level::Low);
+
+        flag.store(true, Ordering::Relaxed);
+        assert_eq!(provider.read_digital(HWInput::HwBenchTestInput).unwrap(), Level::High);
+
+        flag.store(false, Ordering::Relaxed);
+        assert_eq!(provider.read_digital(HWInput::HwBenchTestInput).unwrap(), Level::Low);
     }
 
     // Test TestAnalogDataProvider

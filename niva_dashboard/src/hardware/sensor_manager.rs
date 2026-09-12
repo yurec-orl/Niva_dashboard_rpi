@@ -57,7 +57,7 @@
 //! ```
 
 use crate::hardware::sensors::{AnalogSensor, DigitalSensor};
-use crate::hardware::hw_providers::{HWInput, HWAnalogProvider, HWDigitalProvider};
+use crate::hardware::hw_providers::{HWInput, HWAnalogProvider, HWDigitalProvider, ADCChannelProvider};
 use crate::hardware::analog_signal_processing::AnalogSignalProcessor;
 use crate::hardware::digital_signal_processing::DigitalSignalProcessor;
 use crate::hardware::sensor_value::SensorValue;
@@ -151,6 +151,33 @@ impl SensorManager {
     /// report connectivity. Only needed when chains include ADCChannelProviders.
     pub fn set_adc_frame(&mut self, frame: Option<ADCFrame>) {
         self.adc_frame = frame;
+    }
+
+    /// Points every chain whose `HWInput` is ADC-backed (`HWInput::adc_channel().is_some()`
+    /// -- the same predicate `ADCChannelProvider::new` itself uses) at a fresh
+    /// `ADCChannelProvider` reading `frame` instead of whatever frame it was reading before,
+    /// leaving every other chain (UPS, GNSS, BNO085, master warning, link-health,
+    /// one-wire-temp) completely untouched.
+    ///
+    /// This is how bench test mode (`PageManager::toggle_bench_test_mode`) swaps in
+    /// synthetic sensor data without rebuilding the manager: call once with a synthetic
+    /// settle-mode frame to enter bench mode, and again with the real frame to leave it --
+    /// same function, same manager, both directions. Doesn't touch `adc_frame` (see
+    /// `set_adc_frame`); callers that want `adc_link_down()` to track the new frame too
+    /// must call that separately.
+    pub fn redirect_adc_chains(&mut self, frame: ADCFrame) {
+        for chain in &mut self.digital_sensors {
+            let input = chain.hw_provider.input();
+            if input.adc_channel().is_some() {
+                chain.hw_provider = Box::new(ADCChannelProvider::new(input, frame.clone()));
+            }
+        }
+        for chain in &mut self.analog_sensors {
+            let input = chain.hw_provider.input();
+            if input.adc_channel().is_some() {
+                chain.hw_provider = Box::new(ADCChannelProvider::new(input, frame.clone()));
+            }
+        }
     }
 
     /// True if this manager depends on the ADC link and that link is currently down.
@@ -260,6 +287,7 @@ mod tests {
     use crate::hardware::analog_signal_processing::AnalogSignalProcessorMovingAverage;
     use crate::hardware::sensors::{GenericDigitalSensor, GenericAnalogSensor};
     use crate::hardware::sensor_value::ValueConstraints;
+    use crate::util::adc_data_provider::TestADCDataProvider;
     use rppal::gpio::Level;
 
     /// Always-failing analog provider, standing in for e.g. GnssChannelProvider reading a
@@ -353,6 +381,48 @@ mod tests {
                "Fuel percentage should be between 0 and 100");
         
         log::info!("✓ Analog sensor chain test passed");
+    }
+
+    /// Always-erroring provider standing in for "whatever provider a real build originally
+    /// wired up" -- if `redirect_adc_chains` did nothing, reads would keep failing.
+    struct AlwaysErrAnalogProvider(HWInput);
+    impl HWAnalogProvider for AlwaysErrAnalogProvider {
+        fn input(&self) -> HWInput { self.0 }
+        fn read_analog(&self, _input: HWInput) -> Result<u16, String> {
+            Err("should have been replaced by redirect_adc_chains".to_string())
+        }
+    }
+
+    #[test]
+    fn test_redirect_adc_chains_only_touches_adc_backed_inputs() {
+        let mut manager = SensorManager::new();
+
+        // HwOilPress has an ADC channel mapping (HWInput::adc_channel) -- redirect_adc_chains
+        // must replace its provider.
+        manager.add_analog_sensor_chain(SensorAnalogInputChain::new(
+            Box::new(AlwaysErrAnalogProvider(HWInput::HwOilPress)),
+            vec![],
+            Box::new(GenericAnalogSensor::new("oil".to_string(), "Oil".to_string(), "".to_string(),
+                ValueConstraints::analog(0.0, 1023.0), 1.0)),
+        ));
+        // HwGnssSpeed has no ADC channel mapping -- must be left completely alone.
+        manager.add_analog_sensor_chain(SensorAnalogInputChain::new(
+            Box::new(TestAnalogDataProvider::new(HWInput::HwGnssSpeed)),
+            vec![],
+            Box::new(GenericAnalogSensor::new("gnss".to_string(), "GNSS".to_string(), "".to_string(),
+                ValueConstraints::analog(0.0, 200.0), 1.0)),
+        ));
+
+        let provider = TestADCDataProvider::start();
+        let frame = provider.frame();
+        std::thread::sleep(Duration::from_millis(50));
+
+        manager.redirect_adc_chains(frame);
+
+        assert!(manager.read_analog_sensor(HWInput::HwOilPress).is_ok(),
+            "ADC-backed chain must now read through the new frame instead of erroring");
+        assert!(manager.read_analog_sensor(HWInput::HwGnssSpeed).is_ok(),
+            "non-ADC-backed chain must be untouched (still its own TestAnalogDataProvider)");
     }
 
     #[test]

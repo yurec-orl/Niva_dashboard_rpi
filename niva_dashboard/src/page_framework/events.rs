@@ -54,6 +54,7 @@ pub enum UIEvent {
 
     // Switch sensors event
     SwitchSensorSet,
+    ToggleBenchTestMode,   // ДИАГ's "ТЕСТ" button: swap live sensors for settled synthetic ones
 
     // Horz page events
     HorzCalibrate,  // Zero out current pitch/roll error (persisted at the BNO085 provider level)
@@ -210,6 +211,9 @@ impl SmartEventSender {
             UIEvent::SwitchToPage(_) |
             UIEvent::SuppressAlerts |
             UIEvent::SwitchSensorSet |
+            // Bench test mode swaps PageManager's owned sensor_manager, same reason as
+            // SwitchSensorSet above.
+            UIEvent::ToggleBenchTestMode |
             // Manual heading anchor lives in PageManager's heading_fusion, not the page.
             UIEvent::NavHeadingIncrease |
             UIEvent::NavHeadingDecrease |
@@ -305,6 +309,7 @@ mod tests {
             UIEvent::Restart,
             UIEvent::SuppressAlerts,
             UIEvent::SwitchSensorSet,
+            UIEvent::ToggleBenchTestMode,
             UIEvent::NavHeadingIncrease,
             UIEvent::NavHeadingDecrease,
             UIEvent::NavToggleGnssTest,

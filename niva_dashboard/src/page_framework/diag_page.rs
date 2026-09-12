@@ -144,6 +144,10 @@ impl DiagPage {
                 let sender = self.smart_event_sender.clone();
                 move || sender.send(UIEvent::Restart)
             }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Right2, "ТЕСТ".into(), Box::new({
+                let sender = self.smart_event_sender.clone();
+                move || sender.send(UIEvent::ToggleBenchTestMode)
+            }) as Box<dyn FnMut()>),
             PageButton::new(ButtonPosition::Right3, "КАЛИБР".into(), Box::new({
                 let sender = self.smart_event_sender.clone();
                 move || sender.send(UIEvent::CalibEnter)

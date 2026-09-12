@@ -1,3 +1,4 @@
+use crate::hardware::hw_providers::HWInput;
 use crate::util::serial_reader::{LineSerialReader, SerialReader};
 
 use std::collections::HashMap;
@@ -765,35 +766,62 @@ const SELF_TEST_SUPPLY_MIN_V: f32 = 10.0;
 const SELF_TEST_SUPPLY_MAX_V: f32 = 16.0;
 const SELF_TEST_V12_TRIM: f32 = 1.036;
 
+/// Fallback bench-settle targets used by settle mode (see `Mode::Settle` below) when
+/// `mock_sensor_values.json` doesn't specify a channel — picked to read as a plausible
+/// normal-running state, not to match any particular vehicle's actual curves. The three
+/// resistive senders instead fall back to the self-test sweep's own span midpoints
+/// (SELF_TEST_*_OHM_SPAN above), so this doesn't need a second set of ohm constants.
+const SETTLE_DEFAULT_SUPPLY_V: f32 = 13.8;
+const SETTLE_DEFAULT_SPEED_KMH: f32 = 0.0;
+const SETTLE_DEFAULT_TACHO_RPM: f32 = 800.0;
+
+/// Fraction of the remaining current→target distance closed per tick — governs how quickly
+/// settle mode ramps to a newly (re)loaded target. ~1.2 s to get within 1% of target at the
+/// 20 ms SELF_TEST_TICK cadence.
+const SETTLE_APPROACH_RATE: f32 = 0.05;
+
+/// Which animation `TestADCDataProvider`'s writer thread runs — see the two constructors.
+enum Mode {
+    /// The original startup self-test: a single fixed 0→1→0 sweep across each channel's
+    /// full physical range, ending after SELF_TEST_DURATION (see `run_loop`/`envelope`).
+    Sweep,
+    /// Bench test mode (DiagPage's ТЕСТ button): ramps each channel toward, and holds it
+    /// at, a configurable target (mock_sensor_config.rs) indefinitely — no end time. The
+    /// shared map is re-read every tick so `set_targets` can retarget a running settle
+    /// without restarting the thread (hot-reloading mock_sensor_values.json).
+    Settle { targets: Arc<Mutex<HashMap<HWInput, f32>>> },
+}
+
 /// Populates an ADCFrame with synthetic values instead of reading the STM32 over serial —
 /// mirrors ADCDataProvider's shape (owns an ADCFrame, updates it from a background thread) so
-/// self-test can wire the exact same ADCChannelProvider / signal-processor / logical-sensor
-/// chains as production (see main.rs's add_adc_sensor_chains), differing only in where the
-/// raw channel bytes come from. Runs a fixed rise/fall sweep once and then stops updating;
-/// the caller is expected to drop it (which stops the thread) once the real ADCDataProvider's
-/// frame is ready to take over.
+/// self-test and bench test mode can both wire the exact same ADCChannelProvider /
+/// signal-processor / logical-sensor chains as production (see main.rs's
+/// add_adc_sensor_chains), differing only in where the raw channel bytes come from and which
+/// `Mode` drives them. The caller is expected to drop it (which stops the thread) once it no
+/// longer needs the synthetic frame to keep animating.
 pub struct TestADCDataProvider {
     should_stop: Arc<AtomicBool>,
     frame: ADCFrame,
     temp_frame: AdcTempFrame,
     thread: Option<thread::JoinHandle<()>>,
+    mode: Mode,
 }
 
 impl TestADCDataProvider {
     /// Starts generating synthetic frames immediately. The returned handle must be kept
     /// alive for the sweep to keep animating — dropping it stops the background thread.
-    /// Test-only convenience; production uses deferred() + begin_sweep() to control when
+    /// Test-only convenience; production uses deferred() + begin() to control when
     /// the sweep clock starts relative to the first rendered frame.
     #[cfg(test)]
     pub fn start() -> Self {
         let mut provider = Self::deferred();
-        provider.begin_sweep();
+        provider.begin();
         provider
     }
 
     /// Builds the provider and its synthetic frames without starting the sweep, so the
     /// sensor chains can take frame()/temp_frame() handles now while the sweep clock only
-    /// starts at begin_sweep(). Startup wires the chains early but doesn't render for
+    /// starts at begin(). Startup wires the chains early but doesn't render for
     /// another ~1 s (page/indicator/GL/freetype setup); starting the clock here instead
     /// would burn the rise and part of the fall before the first frame is drawn, so the
     /// needles would only ever be seen travelling back down toward zero.
@@ -803,12 +831,38 @@ impl TestADCDataProvider {
             frame: ADCFrame::new(),
             temp_frame: AdcTempFrame::new(),
             thread: None,
+            mode: Mode::Sweep,
         }
     }
 
-    /// Spawns the synthetic writer thread and starts the sweep clock. Call once, just
-    /// before the render loop begins. No-op if the sweep is already running.
-    pub fn begin_sweep(&mut self) {
+    /// Like `deferred()`, but builds a provider whose writer thread (started the same way,
+    /// via `begin()`) ramps to and holds `targets` indefinitely instead of running the
+    /// fixed startup sweep — see `Mode::Settle`. Used by bench test mode
+    /// (page_manager::toggle_bench_test_mode).
+    pub fn deferred_settled(targets: HashMap<HWInput, f32>) -> Self {
+        TestADCDataProvider {
+            should_stop: Arc::new(AtomicBool::new(false)),
+            frame: ADCFrame::new(),
+            temp_frame: AdcTempFrame::new(),
+            thread: None,
+            mode: Mode::Settle { targets: Arc::new(Mutex::new(targets)) },
+        }
+    }
+
+    /// Replaces the running settle-mode animation's targets (e.g. mock_sensor_values.json
+    /// was hot-reloaded); the writer thread picks them up on its next tick and ramps toward
+    /// them at the same SETTLE_APPROACH_RATE as the initial settle, so a retarget doesn't
+    /// jump. No-op (not an error) if this provider is in `Mode::Sweep`.
+    pub fn set_targets(&self, targets: HashMap<HWInput, f32>) {
+        if let Mode::Settle { targets: shared } = &self.mode {
+            *shared.lock().unwrap() = targets;
+        }
+    }
+
+    /// Spawns the synthetic writer thread and starts its clock, running whichever `Mode`
+    /// this provider was constructed with. Call once, just before the render loop begins
+    /// (sweep mode) or from the bench-mode toggle (settle mode). No-op if already running.
+    pub fn begin(&mut self) {
         if self.thread.is_some() {
             return;
         }
@@ -816,10 +870,19 @@ impl TestADCDataProvider {
         let thread_frame = self.frame.clone();
         let thread_temp_frame = self.temp_frame.clone();
 
-        self.thread = thread::Builder::new()
-            .name("test-adc-data-provider".into())
-            .spawn(move || Self::run_loop(&thread_should_stop, &thread_frame, &thread_temp_frame))
-            .ok();
+        self.thread = match &self.mode {
+            Mode::Sweep => thread::Builder::new()
+                .name("test-adc-data-provider".into())
+                .spawn(move || Self::run_loop_sweep(&thread_should_stop, &thread_frame, &thread_temp_frame))
+                .ok(),
+            Mode::Settle { targets } => {
+                let thread_targets = Arc::clone(targets);
+                thread::Builder::new()
+                    .name("bench-adc-data-provider".into())
+                    .spawn(move || Self::run_loop_settle(&thread_should_stop, &thread_frame, &thread_targets))
+                    .ok()
+            }
+        };
     }
 
     /// Returns a cloneable handle to the shared frame, same as ADCDataProvider::frame().
@@ -833,7 +896,7 @@ impl TestADCDataProvider {
         self.temp_frame.clone()
     }
 
-    fn run_loop(should_stop: &AtomicBool, frame: &ADCFrame, temp_frame: &AdcTempFrame) {
+    fn run_loop_sweep(should_stop: &AtomicBool, frame: &ADCFrame, temp_frame: &AdcTempFrame) {
         let start = Instant::now();
         while !should_stop.load(Ordering::Relaxed) {
             let elapsed = start.elapsed();
@@ -845,6 +908,26 @@ impl TestADCDataProvider {
             for (rom, raw_16ths) in Self::generate_temp_readings(elapsed) {
                 temp_frame.update_reading(rom, raw_16ths);
             }
+            thread::sleep(SELF_TEST_TICK);
+        }
+    }
+
+    /// Runs indefinitely (until `should_stop`, i.e. the provider is dropped) instead of
+    /// stopping after SELF_TEST_DURATION — bench mode stays live for as long as it's
+    /// toggled on. `current` is local per-channel ramp state, carried tick to tick; targets
+    /// are re-read from the shared map every tick so `set_targets` takes effect smoothly
+    /// without restarting the thread.
+    ///
+    /// Only writes `frame` (the 16 ADC sensor channels) -- unlike sweep mode, settle mode's
+    /// `temp_frame` is never touched: `SensorManager::redirect_adc_chains` (what actually
+    /// wires this provider's frame into bench mode) only redirects ADC-backed chains, so
+    /// the one-wire DS18B20 chains stay on the real `AdcTempFrame` throughout, and
+    /// synthesizing readings nothing reads would just be dead work.
+    fn run_loop_settle(should_stop: &AtomicBool, frame: &ADCFrame, targets: &Mutex<HashMap<HWInput, f32>>) {
+        let mut current: HashMap<HWInput, f32> = HashMap::new();
+        while !should_stop.load(Ordering::Relaxed) {
+            let snapshot = targets.lock().unwrap().clone();
+            frame.update(Self::generate_channels_settle(&mut current, &snapshot));
             thread::sleep(SELF_TEST_TICK);
         }
     }
@@ -932,6 +1015,52 @@ impl TestADCDataProvider {
         channels[AdcChannel::HighBeamOn.index()] = digital_raw; // HwHighBeam
         channels[AdcChannel::ParkBrakeOn.index()] = digital_raw; // HwParkBrake
         channels[AdcChannel::CenterDiffLock.index()] = digital_raw; // HwDiffLock
+        channels
+    }
+
+    /// Nudges `current[input]` a `SETTLE_APPROACH_RATE` fraction of the way toward
+    /// `targets[input]` (or `default` if that channel has no configured target) and returns
+    /// the new value. `current` starts every channel at 0.0 on first touch, so bench mode
+    /// always visibly ramps up from zero rather than snapping straight to target.
+    fn settle_toward(current: &mut HashMap<HWInput, f32>, targets: &HashMap<HWInput, f32>, input: HWInput, default: f32) -> f32 {
+        let target = *targets.get(&input).unwrap_or(&default);
+        let value = current.entry(input).or_insert(0.0);
+        *value += (target - *value) * SETTLE_APPROACH_RATE;
+        *value
+    }
+
+    /// Settle-mode counterpart to `generate_channels`: instead of computing every channel
+    /// from a single shared elapsed-time envelope, each analog channel ramps independently
+    /// toward its own configured (or default) target — see `Mode::Settle`. Digital lines
+    /// hold a fixed "no active alarm" state (bench mode isn't meant to exercise those; the
+    /// calibration UI this feeds only covers the three resistive senders).
+    fn generate_channels_settle(current: &mut HashMap<HWInput, f32>, targets: &HashMap<HWInput, f32>) -> Vec<u16> {
+        let oil_ohm = Self::settle_toward(current, targets, HWInput::HwOilPress,
+            (SELF_TEST_OIL_OHM_SPAN.0 + SELF_TEST_OIL_OHM_SPAN.1) / 2.0);
+        let fuel_ohm = Self::settle_toward(current, targets, HWInput::HwFuelLvl,
+            (SELF_TEST_FUEL_OHM_SPAN.0 + SELF_TEST_FUEL_OHM_SPAN.1) / 2.0);
+        let coolant_ohm = Self::settle_toward(current, targets, HWInput::HwEngineCoolantTemp,
+            (SELF_TEST_COOLANT_OHM_SPAN.0 + SELF_TEST_COOLANT_OHM_SPAN.1) / 2.0);
+        let supply_v = Self::settle_toward(current, targets, HWInput::Hw12v, SETTLE_DEFAULT_SUPPLY_V);
+        let speed_kmh = Self::settle_toward(current, targets, HWInput::HwSpeed, SETTLE_DEFAULT_SPEED_KMH);
+        let tacho_rpm = Self::settle_toward(current, targets, HWInput::HwTacho, SETTLE_DEFAULT_TACHO_RPM);
+
+        let mut channels = vec![0u16; 16];
+        channels[AdcChannel::OilPressure.index()] = crate::hardware::sensors::calibrated_sender_raw_from_ohm(oil_ohm, SELF_TEST_OIL_R_SERIES_OHM, supply_v);
+        channels[AdcChannel::FuelLevel.index()] = crate::hardware::sensors::calibrated_sender_raw_from_ohm(fuel_ohm, SELF_TEST_FUEL_R_SERIES_OHM, supply_v);
+        channels[AdcChannel::EngineTemp.index()] = crate::hardware::sensors::calibrated_sender_raw_from_ohm(coolant_ohm, SELF_TEST_COOLANT_R_SERIES_OHM, supply_v);
+        channels[AdcChannel::Voltage12V.index()] = crate::hardware::sensors::v12_raw_from_volts(supply_v, SELF_TEST_V12_TRIM);
+        channels[AdcChannel::Tacho.index()] = crate::hardware::sensors::tacho_period_raw_from_rpm(tacho_rpm);
+        channels[AdcChannel::Speed.index()] = crate::hardware::sensors::speed_period_raw_from_kmh(speed_kmh);
+        channels[AdcChannel::OilPressureLow.index()] = 0;
+        channels[AdcChannel::FuelLow.index()] = 0;
+        channels[AdcChannel::AlternatorCharging.index()] = 0;
+        channels[AdcChannel::ExteriorLightsOn.index()] = 0;
+        channels[AdcChannel::BrakeFluid.index()] = 0;
+        channels[AdcChannel::TurnSignalOn.index()] = 0;
+        channels[AdcChannel::HighBeamOn.index()] = 0;
+        channels[AdcChannel::ParkBrakeOn.index()] = 0;
+        channels[AdcChannel::CenterDiffLock.index()] = 0;
         channels
     }
 }
