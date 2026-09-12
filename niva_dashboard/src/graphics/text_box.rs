@@ -44,15 +44,15 @@ impl TextBoxRenderer {
         width: f32,
         height: f32,
     ) -> Result<(), String> {
-        let font = ui_style.get_string(TEXT_MONOSPACE_FONT, TERMINAL_FONT_PATH);
-        let font_size = ui_style.get_integer(TEXT_MONOSPACE_FONT_SIZE, 16);
-        let text_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (1.0, 1.0, 1.0));
-        let bg_enabled = ui_style.get_bool(TERMINAL_BACKGROUND_ENABLED, true);
-        let bg_color = ui_style.get_color(TERMINAL_BACKGROUND_COLOR, (0.0, 0.0, 0.0));
-        let border_enabled = ui_style.get_bool(TERMINAL_BORDER_ENABLED, true);
-        let border_color = ui_style.get_color(TERMINAL_BORDER_COLOR, (1.0, 1.0, 1.0));
-        let border_width = ui_style.get_float(TERMINAL_BORDER_WIDTH, 2.0);
-        let padding = ui_style.get_float(TERMINAL_PADDING, 8.0);
+        let font = ui_style.get_string(StyleKey::TextMonospaceFont);
+        let font_size = ui_style.get_integer(StyleKey::TextMonospaceFontSize);
+        let text_color = ui_style.get_color(StyleKey::TerminalTextColor);
+        let bg_enabled = ui_style.get_bool(StyleKey::TerminalBackgroundEnabled);
+        let bg_color = ui_style.get_color(StyleKey::TerminalBackgroundColor);
+        let border_enabled = ui_style.get_bool(StyleKey::TerminalBorderEnabled);
+        let border_color = ui_style.get_color(StyleKey::TerminalBorderColor);
+        let border_width = ui_style.get_float(StyleKey::TerminalBorderWidth);
+        let padding = ui_style.get_float(StyleKey::TerminalPadding);
 
         if bg_enabled {
             context.fill_rect(x, y, width, height, bg_color)?;

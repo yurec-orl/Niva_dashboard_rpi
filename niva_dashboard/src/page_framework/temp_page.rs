@@ -68,18 +68,18 @@ impl Page for TempPage {
     }
 
     fn render(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
-        let title_font = ui_style.get_string(TEXT_PRIMARY_FONT, DEFAULT_GLOBAL_FONT_PATH);
-        let title_font_size = ui_style.get_integer(TEXT_PRIMARY_FONT_SIZE, 24);
-        let title_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (1.0, 1.0, 1.0));
+        let title_font = ui_style.get_string(StyleKey::TextPrimaryFont);
+        let title_font_size = ui_style.get_integer(StyleKey::TextPrimaryFontSize);
+        let title_color = ui_style.get_color(StyleKey::TerminalTextColor);
 
-        let font = ui_style.get_string(TEXT_MONOSPACE_FONT, TERMINAL_FONT_PATH);
-        let font_size = ui_style.get_integer(TEXT_MONOSPACE_FONT_SIZE, 20);
+        let font = ui_style.get_string(StyleKey::TextMonospaceFont);
+        let font_size = ui_style.get_integer(StyleKey::TextMonospaceFontSize);
 
-        let label_color = ui_style.get_color(TEXT_PRIMARY_COLOR, (0.9, 0.9, 0.9));
-        let stale_color = ui_style.get_color(TEXT_SECONDARY_COLOR, (0.5, 0.5, 0.5));
-        let normal_color = ui_style.get_color(TEXT_PRIMARY_COLOR, (0.9, 0.9, 0.9));
-        let warning_color = ui_style.get_color(BAR_WARNING_COLOR, (0.9, 0.75, 0.2));
-        let critical_color = ui_style.get_color(BAR_CRITICAL_COLOR, (0.9, 0.3, 0.3));
+        let label_color = ui_style.get_color(StyleKey::TextPrimaryColor);
+        let stale_color = ui_style.get_color(StyleKey::TextSecondaryColor);
+        let normal_color = ui_style.get_color(StyleKey::TextPrimaryColor);
+        let warning_color = ui_style.get_color(StyleKey::BarWarningColor);
+        let critical_color = ui_style.get_color(StyleKey::BarCriticalColor);
 
         context.render_text_with_font(
             "ТЕМПЕРАТУРА", CONTENT_X_MARGIN, TITLE_Y, 1.0, title_color, &title_font, title_font_size,

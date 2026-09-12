@@ -43,8 +43,8 @@ pub struct HorzPage {
 
 impl HorzPage {
     pub fn new(id: u32, smart_event_sender: SmartEventSender, event_receiver: EventReceiver, bno_frame: Option<Bno085Frame>, ui_style: &UIStyle) -> Self {
-        let heading_label_color = ui_style.get_color(COMPASS_HEADING_COLOR, (0.9, 0.9, 1.0));
-        let heading_label_font = ui_style.get_string(COMPASS_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
+        let heading_label_color = ui_style.get_color(StyleKey::CompassHeadingColor);
+        let heading_label_font = ui_style.get_string(StyleKey::CompassLabelFont);
 
         let mut page = HorzPage {
             base: PageBase::new(id, "Horz".to_string()),
@@ -55,8 +55,8 @@ impl HorzPage {
             roll_indicator: RollIndicator::new().with_decorators(vec![Box::new(RollScaleDecorator::new())]),
             heading_indicator: TextIndicator::new().with_font(heading_label_font, 36, 1.0).with_colors(heading_label_color, (1.0, 1.0, 0.0), (1.0, 0.0, 0.0)).
                 with_parameters(TextAlignment::Center, false, false, true).with_decorators(vec![
-                    Box::new(BoxDecorator::new(2.0, COMPASS_HEADING_COLOR, 0.0)),
-                    //Box::new(TriangleDecorator::new([(0.5, 1.5), (0.35, 1.2), (0.65, 1.2)], 2.0, COMPASS_HEADING_COLOR, true)),
+                    Box::new(BoxDecorator::new(2.0, StyleKey::CompassHeadingColor, 0.0)),
+                    //Box::new(TriangleDecorator::new([(0.5, 1.5), (0.35, 1.2), (0.65, 1.2)], 2.0, StyleKey::CompassHeadingColor, true)),
                 ]),
         };
 
@@ -192,18 +192,18 @@ impl Page for HorzPage {
         let roll_value = SensorValue::analog(self.roll_deg(), -180.0, 180.0, "\u{00B0}", "КРЕН", "bno085_game_roll");
         self.roll_indicator.render(&roll_value, roll_bounds, ui_style, context)?;
 
-        let header_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (1.0, 1.0, 1.0));
-        let text_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (0.8, 0.8, 0.8));
-        let warning_color = ui_style.get_color(TEXT_WARNING_COLOR, (1.0, 1.0, 0.0));
-        let font = ui_style.get_string(TEXT_MONOSPACE_FONT, TERMINAL_FONT_PATH);
-        let font_size = ui_style.get_integer(TEXT_MONOSPACE_FONT_SIZE, 16);
+        let header_color = ui_style.get_color(StyleKey::TerminalTextColor);
+        let text_color = ui_style.get_color(StyleKey::TerminalTextColor);
+        let warning_color = ui_style.get_color(StyleKey::TextWarningColor);
+        let font = ui_style.get_string(StyleKey::TextMonospaceFont);
+        let font_size = ui_style.get_integer(StyleKey::TextMonospaceFontSize);
 
         let ins_lines = self.get_ins_info_lines();
         self.render_info_lines(&ins_lines, (INFO_X_MARGIN, INFO_Y), context, &[text_color, warning_color, header_color], &font, font_size)?;
 
         // Aux heading indicator
 
-        let heading_font = ui_style.get_string(COMPASS_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
+        let heading_font = ui_style.get_string(StyleKey::CompassLabelFont);
         let heading_font_height = context.get_line_height_with_font(1.0, &heading_font, 36)?;
         let heading_font_width = context.calculate_text_width_with_font("0000", 1.0, &heading_font, 36)?;
 

@@ -150,40 +150,40 @@ impl Indicator for DigitalSegmentedIndicator {
         };
 
         // Use DSEG font for 7-segment look
-        let font_path = style.get_string(DIGITAL_DISPLAY_FONT, DIGITAL_DISPLAY_FONT_PATH);
-        let font_size = style.get_integer(DIGITAL_DISPLAY_FONT_SIZE, 32) as u32;
-        let scale = style.get_float(DIGITAL_DISPLAY_SCALE, 2.0);
+        let font_path = style.get_string(StyleKey::DigitalDisplayFont);
+        let font_size = style.get_integer(StyleKey::DigitalDisplayFontSize) as u32;
+        let scale = style.get_float(StyleKey::DigitalDisplayScale);
         
         // Render border and background if enabled
-        let background_enabled = style.get_bool(DIGITAL_DISPLAY_BACKGROUND_ENABLED, false);
-        let border_enabled = style.get_bool(DIGITAL_DISPLAY_BORDER_ENABLED, true);
+        let background_enabled = style.get_bool(StyleKey::DigitalDisplayBackgroundEnabled);
+        let border_enabled = style.get_bool(StyleKey::DigitalDisplayBorderEnabled);
 
-        let mut background_color = style.get_color(DIGITAL_DISPLAY_BACKGROUND_COLOR, (1.0, 0.65, 0.0)); // Amber background
+        let mut background_color = style.get_color(StyleKey::DigitalDisplayBackgroundColor); // Amber background
 
         if background_enabled {
             context.render_rectangle(
                 bounds.x, bounds.y, bounds.width, bounds.height,
                 background_color, true,
                 1.0,    // Width doesn't matter for filled
-                style.get_float(DIGITAL_DISPLAY_BORDER_RADIUS, 8.0),
+                style.get_float(StyleKey::DigitalDisplayBorderRadius),
             )?;
         } else if border_enabled {
             context.render_rectangle(
                 bounds.x, bounds.y, bounds.width, bounds.height,
-                style.get_color(DIGITAL_DISPLAY_BORDER_COLOR, (1.0, 1.0, 1.0)), false,
-                style.get_float(DIGITAL_DISPLAY_BORDER_WIDTH, 2.0),
-                style.get_float(DIGITAL_DISPLAY_BORDER_RADIUS, 8.0),
+                style.get_color(StyleKey::DigitalDisplayBorderColor), false,
+                style.get_float(StyleKey::DigitalDisplayBorderWidth),
+                style.get_float(StyleKey::DigitalDisplayBorderRadius),
             )?;
             background_color = (0.0, 0.0, 0.0); // Use black background if only border
         }
 
-        let active_color = style.get_color(DIGITAL_DISPLAY_ACTIVE_COLOR, (0.0, 0.0, 0.0)); // Black by default
+        let active_color = style.get_color(StyleKey::DigitalDisplayActiveColor); // Black by default
 
-        let mut inactive_color = style.get_color(DIGITAL_DISPLAY_INACTIVE_COLOR, (0.84, 0.41, 0.0));
+        let mut inactive_color = style.get_color(StyleKey::DigitalDisplayInactiveColor);
         inactive_color = blend_colors(
             background_color,
             inactive_color,
-            style.get_float(DIGITAL_DISPLAY_INACTIVE_COLOR_BLENDING, 1.0).clamp(0.0, 1.0)
+            style.get_float(StyleKey::DigitalDisplayInactiveColorBlending).clamp(0.0, 1.0)
         );
         
         // Render inactive segments as background

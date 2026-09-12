@@ -1,5 +1,5 @@
 use crate::graphics::context::GraphicsContext;
-use crate::graphics::ui_style::UIStyle;
+use crate::graphics::ui_style::{UIStyle, StyleKey};
 use crate::indicators::IndicatorBounds;
 
 #[derive(Debug, Clone, Copy)]
@@ -32,7 +32,7 @@ pub struct LabelDecorator {
     text: String,
     font_path: String,
     font_size: u32,
-    color_key: &'static str,
+    color_key: StyleKey,
     alignment_h: DecoratorAlignmentH,
     alignment_v: DecoratorAlignmentV,
     offset_h: f32,
@@ -45,7 +45,7 @@ impl LabelDecorator {
         text: String,
         font_path: String,
         font_size: u32,
-        color_key: &'static str,
+        color_key: StyleKey,
         alignment_h: DecoratorAlignmentH,
         alignment_v: DecoratorAlignmentV,
     ) -> Self {
@@ -100,7 +100,7 @@ impl Decorator for LabelDecorator {
     ) -> Result<(), String> {
         // Calculate label position
         let (x, y) = self.calculate_position(&bounds, context)?;
-        let color = style.get_color(self.color_key, (1.0, 0.0, 1.0));
+        let color = style.get_color(self.color_key);
         
         // Render the label
         context.render_text_with_font(
@@ -120,7 +120,7 @@ impl Decorator for LabelDecorator {
 pub struct ArcDecorator {
     radius: f32,
     thickness: f32,
-    color_key: &'static str,
+    color_key: StyleKey,
     start_angle: f32,
     end_angle: f32,
 }
@@ -129,7 +129,7 @@ impl ArcDecorator {
     pub fn new(
         radius: f32,
         thickness: f32,
-        color_key: &'static str,
+        color_key: StyleKey,
         start_angle: f32,
         end_angle: f32,
     ) -> Self {
@@ -153,7 +153,7 @@ impl Decorator for ArcDecorator {
         // Calculate center point
         let center_x = bounds.x + bounds.width / 2.0;
         let center_y = bounds.y + bounds.height / 2.0;
-        let color = style.get_color(self.color_key, (1.0, 0.0, 1.0));
+        let color = style.get_color(self.color_key);
         
         // Render the arc
         context.render_circle_arc_outline(
@@ -176,7 +176,7 @@ impl Decorator for ArcDecorator {
 pub struct TriangleDecorator {
     vertices: [(f32, f32); 3],
     thickness: f32,
-    color_key: &'static str,
+    color_key: StyleKey,
     filled: bool,
 }
 
@@ -184,7 +184,7 @@ impl TriangleDecorator {
     pub fn new(
         vertices: [(f32, f32); 3],
         thickness: f32,
-        color_key: &'static str,
+        color_key: StyleKey,
         filled: bool,
     ) -> Self {
         Self {
@@ -203,7 +203,7 @@ impl Decorator for TriangleDecorator {
         style: &UIStyle,
         context: &mut GraphicsContext,
     ) -> Result<(), String> {
-        let color = style.get_color(self.color_key, (1.0, 0.0, 1.0));
+        let color = style.get_color(self.color_key);
 
         let points: [(f32, f32); 3] = [
             (bounds.x + self.vertices[0].0 * bounds.width, bounds.y + self.vertices[0].1 * bounds.height),
@@ -219,12 +219,12 @@ impl Decorator for TriangleDecorator {
 
 pub struct BoxDecorator {
     border_thickness: f32,
-    color_key: &'static str,
+    color_key: StyleKey,
     corner_radius: f32,
 }
 
 impl BoxDecorator {
-    pub fn new(border_thickness: f32, color_key: &'static str, corner_radius: f32) -> Self {
+    pub fn new(border_thickness: f32, color_key: StyleKey, corner_radius: f32) -> Self {
         BoxDecorator {
             border_thickness,
             color_key,
@@ -240,7 +240,7 @@ impl Decorator for BoxDecorator {
         style: &UIStyle,
         context: &mut GraphicsContext,
     ) -> Result<(), String> {
-        let color = style.get_color(self.color_key, (1.0, 0.0, 1.0));
+        let color = style.get_color(self.color_key);
 
         // Render the box outline
         context.render_rectangle(

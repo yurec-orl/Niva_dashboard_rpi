@@ -52,14 +52,14 @@ impl Indicator for PitchIndicator {
         let pitch_deg = value.as_f32();
         let pitch_deg = if pitch_deg.is_finite() { pitch_deg } else { 0.0 };
 
-        let sky_color = style.get_color(PITCH_SKY_COLOR, (0.42, 0.64, 0.85));
-        let ground_color = style.get_color(PITCH_GROUND_COLOR, (0.45, 0.29, 0.16));
-        let above_label_color = style.get_color(PITCH_ABOVE_HORIZON_LABEL_COLOR, (0.0, 0.0, 0.0));
-        let below_label_color = style.get_color(PITCH_BELOW_HORIZON_LABEL_COLOR, (1.0, 1.0, 1.0));
-        let border_color = style.get_color(PITCH_BORDER_COLOR, (1.0, 1.0, 1.0));
-        let border_width = style.get_float(PITCH_BORDER_WIDTH, 2.0);
-        let font = style.get_string(PITCH_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
-        let font_size = style.get_integer(PITCH_LABEL_FONT_SIZE, 42);
+        let sky_color = style.get_color(StyleKey::PitchSkyColor);
+        let ground_color = style.get_color(StyleKey::PitchGroundColor);
+        let above_label_color = style.get_color(StyleKey::PitchAboveHorizonLabelColor);
+        let below_label_color = style.get_color(StyleKey::PitchBelowHorizonLabelColor);
+        let border_color = style.get_color(StyleKey::PitchBorderColor);
+        let border_width = style.get_float(StyleKey::PitchBorderWidth);
+        let font = style.get_string(StyleKey::PitchLabelFont);
+        let font_size = style.get_integer(StyleKey::PitchLabelFontSize);
 
         let (cx, cy) = bounds.center();
         let top = bounds.y;

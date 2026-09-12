@@ -202,12 +202,12 @@ impl Page for OscPage {
     }
 
     fn render(&self, context: &mut GraphicsContext, _sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
-        let title_font = ui_style.get_string(TEXT_PRIMARY_FONT, DEFAULT_GLOBAL_FONT_PATH);
-        let title_font_size = ui_style.get_integer(TEXT_PRIMARY_FONT_SIZE, 24);
-        let title_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (1.0, 1.0, 1.0));
-        let text_font = ui_style.get_string(TEXT_MONOSPACE_FONT, TERMINAL_FONT_PATH);
-        let text_font_size = ui_style.get_integer(TEXT_MONOSPACE_FONT_SIZE, 16);
-        let text_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (0.8, 0.8, 0.8));
+        let title_font = ui_style.get_string(StyleKey::TextPrimaryFont);
+        let title_font_size = ui_style.get_integer(StyleKey::TextPrimaryFontSize);
+        let title_color = ui_style.get_color(StyleKey::TerminalTextColor);
+        let text_font = ui_style.get_string(StyleKey::TextMonospaceFont);
+        let text_font_size = ui_style.get_integer(StyleKey::TextMonospaceFontSize);
+        let text_color = ui_style.get_color(StyleKey::TerminalTextColor);
 
         context.render_text_with_font(
             "ОСЦИЛЛОГРАФ (БОРТ СЕТЬ)", GRAPH_LEFT_MARGIN, TITLE_Y, 1.0, title_color, &title_font, title_font_size,

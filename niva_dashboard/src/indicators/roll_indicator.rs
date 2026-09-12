@@ -49,7 +49,7 @@ impl Indicator for RollIndicator {
         let roll_deg = value.as_f32();
         let roll_deg = if roll_deg.is_finite() { roll_deg } else { 0.0 };
 
-        let color = style.get_color(ROLL_INDICATOR_COLOR, (1.0, 1.0, 0.0));
+        let color = style.get_color(StyleKey::RollIndicatorColor);
 
         let (cx, cy) = bounds.center();
         let w = bounds.width / 6.0;
@@ -147,9 +147,9 @@ impl Decorator for RollScaleDecorator {
         let (cx, cy) = bounds.center();
         let radius = bounds.width / 2.0;
 
-        let mark_color = style.get_color(ROLL_SCALE_COLOR, (1.0, 1.0, 1.0));
-        let label_font = style.get_string(ROLL_SCALE_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
-        let label_font_size = style.get_integer(ROLL_SCALE_LABEL_FONT_SIZE, 32);
+        let mark_color = style.get_color(StyleKey::RollScaleColor);
+        let label_font = style.get_string(StyleKey::RollScaleLabelFont);
+        let label_font_size = style.get_integer(StyleKey::RollScaleLabelFontSize);
 
         let steps = (self.max_angle_deg / self.minor_step_deg).round() as i32;
 

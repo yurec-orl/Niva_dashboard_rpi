@@ -22,18 +22,18 @@ pub fn build_voltage_bar(
     ui_style: &UIStyle,
 ) -> (Box<dyn Indicator>, IndicatorBounds) {
     // Bar configuration from UI style
-    let segment_count = ui_style.get_integer(BAR_SEGMENT_COUNT, 10) as usize;
-    let segment_gap = ui_style.get_float(BAR_SEGMENT_GAP, 4.0);
+    let segment_count = ui_style.get_integer(StyleKey::BarSegmentCount) as usize;
+    let segment_gap = ui_style.get_float(StyleKey::BarSegmentGap);
 
     // Text styling from UI configuration
-    let font_path = ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH);
-    let title_font_size = ui_style.get_integer(TEXT_PRIMARY_FONT_SIZE, 14) as u32;
-    let unit_font_size = ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32;
-    let scale_font_size = ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32;
+    let font_path = ui_style.get_string(StyleKey::TextSecondaryFont);
+    let title_font_size = ui_style.get_integer(StyleKey::TextPrimaryFontSize) as u32;
+    let unit_font_size = ui_style.get_integer(StyleKey::TextSecondaryFontSize) as u32;
+    let scale_font_size = ui_style.get_integer(StyleKey::TextSecondaryFontSize) as u32;
     
     // Scale marks styling
-    let marks_width = ui_style.get_float(BAR_MARKS_WIDTH, 10.0);
-    let marks_thickness = ui_style.get_float(BAR_MARKS_THICKNESS, 4.0);
+    let marks_width = ui_style.get_float(StyleKey::BarMarksWidth);
+    let marks_thickness = ui_style.get_float(StyleKey::BarMarksThickness);
 
     let voltage_bar = VerticalBarIndicator::new(segment_count)
         .with_segment_gap(segment_gap)
@@ -43,7 +43,7 @@ pub fn build_voltage_bar(
                 "СЕТЬ".into(),
                 font_path.clone(),
                 title_font_size,
-                BAR_MARK_LABELS_COLOR,
+                StyleKey::BarMarkLabelsColor,
                 DecoratorAlignmentH::Center,
                 DecoratorAlignmentV::Top,
             )),
@@ -52,7 +52,7 @@ pub fn build_voltage_bar(
                 "В".into(),
                 font_path.clone(),
                 unit_font_size,
-                BAR_MARK_LABELS_COLOR,
+                StyleKey::BarMarkLabelsColor,
                 DecoratorAlignmentH::Center,
                 DecoratorAlignmentV::Bottom,
             )),
@@ -61,9 +61,9 @@ pub fn build_voltage_bar(
                 vec!["16-".into(), "12-".into(), "8-".into()],
                 font_path,
                 scale_font_size,
-                BAR_MARK_LABELS_COLOR,
+                StyleKey::BarMarkLabelsColor,
                 DecoratorAlignmentH::Left,
-            ).with_scale_marks(BAR_MARKS_COLOR, marks_width, marks_thickness)),
+            ).with_scale_marks(StyleKey::BarMarksColor, marks_width, marks_thickness)),
         ]);
 
     let bounds = IndicatorBounds::new(x, y, width, height);
@@ -76,7 +76,8 @@ mod tests {
 
     #[test]
     fn test_build_voltage_bar_bounds_and_type() {
-        let ui_style = UIStyle::new();
+        let ui_style = UIStyle::from_file(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui_style.json"))
+            .expect("repo ui_style.json should load and validate");
         let (indicator, bounds) = build_voltage_bar(2.0, 4.0, 70.0, 260.0, &ui_style);
 
         assert_eq!(bounds.x, 2.0);

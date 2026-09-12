@@ -51,19 +51,19 @@ impl VerticalBarIndicator {
         if let Some(critical_high) = value.constraints.critical_high {
             let normalized_critical = (critical_high - value.constraints.min_value) / (value.constraints.max_value - value.constraints.min_value);
             if segment_position <= normalized_critical && normalized_value >= normalized_critical {
-                return style.get_color("bar_critical_color", (1.0, 0.0, 0.0)); // Red for critical
+                return style.get_color(StyleKey::BarCriticalColor); // Red for critical
             }
         }
         
         if let Some(warning_high) = value.constraints.warning_high {
             let normalized_warning = (warning_high - value.constraints.min_value) / (value.constraints.max_value - value.constraints.min_value);
             if segment_position <= normalized_warning && normalized_value >= normalized_warning {
-                return style.get_color("bar_warning_color", (1.0, 0.65, 0.0)); // Orange for warning
+                return style.get_color(StyleKey::BarWarningColor); // Orange for warning
             }
         }
         
         // Default normal color
-        style.get_color("bar_normal_color", (0.0, 1.0, 0.0)) // Green for normal
+        style.get_color(StyleKey::BarNormalColor) // Green for normal
     }
 
     /// Get cached shader program for batch rendering
@@ -193,20 +193,20 @@ impl Indicator for VerticalBarIndicator {
         // Render decorators first, then the display itself over the decorators
         self.base.render_decorators(bounds, style, context)?;
 
-        let background_enabled = style.get_bool(BAR_BACKGROUND_ENABLED, true);
-        let border_enabled = style.get_bool(BAR_BORDER_ENABLED, true);
-        let border_width = style.get_float(BAR_BORDER_WIDTH, 4.0);
+        let background_enabled = style.get_bool(StyleKey::BarBackgroundEnabled);
+        let border_enabled = style.get_bool(StyleKey::BarBorderEnabled);
+        let border_width = style.get_float(StyleKey::BarBorderWidth);
 
         if background_enabled {
-            let bg_color = style.get_color(BAR_BACKGROUND_COLOR, (1.0, 0.65, 0.0)); // Default amber
+            let bg_color = style.get_color(StyleKey::BarBackgroundColor); // Default amber
             context.render_rectangle(bounds.x, bounds.y, bounds.width, bounds.height,
                 bg_color, true, 1.0,
-                style.get_float(BAR_CORNER_RADIUS, 8.0))?;
+                style.get_float(StyleKey::BarCornerRadius))?;
         } else if border_enabled {
-            let border_color = style.get_color(BAR_BORDER_COLOR, (1.0, 0.65, 0.0)); // Default amber
+            let border_color = style.get_color(StyleKey::BarBorderColor); // Default amber
             context.render_rectangle(bounds.x, bounds.y, bounds.width, bounds.height,
                 border_color, false, border_width,
-                style.get_float(BAR_CORNER_RADIUS, 8.0))?;
+                style.get_float(StyleKey::BarCornerRadius))?;
         }
 
         // Extract numeric value; anything else (ValueData::Empty -- no reading, see #28)
@@ -253,7 +253,7 @@ impl Indicator for VerticalBarIndicator {
         let segment_width = available_width;
         
         // Get background color for empty segments
-        let empty_color = style.get_color(BAR_EMPTY_COLOR, (0.2, 0.2, 0.2)); // Dark gray for empty
+        let empty_color = style.get_color(StyleKey::BarEmptyColor); // Dark gray for empty
         
         unsafe {
             // Enable blending for smooth rendering
@@ -316,9 +316,9 @@ pub struct VerticalBarScaleDecorator {
     labels: Vec<String>,    // Labels for each scale mark - no labels if empty
     font_path: String,
     font_size: u32,
-    color_key: &'static str,
+    color_key: StyleKey,
     scale_marks: bool,      // Whether to draw scale marks
-    marks_color_key: &'static str,
+    marks_color_key: Option<StyleKey>,
     marks_width: f32,
     marks_thickness: f32,
     alignment_h: DecoratorAlignmentH,
@@ -331,7 +331,7 @@ impl VerticalBarScaleDecorator {
         labels: Vec<String>,
         font_path: String,
         font_size: u32,
-        color_key: &'static str,
+        color_key: StyleKey,
         alignment_h: DecoratorAlignmentH,
     ) -> Self {
         Self {
@@ -340,7 +340,7 @@ impl VerticalBarScaleDecorator {
             font_path,
             font_size,
             color_key,
-            marks_color_key: "",
+            marks_color_key: None,
             marks_thickness: 1.0,
             marks_width: 5.0,
             alignment_h,
@@ -348,9 +348,9 @@ impl VerticalBarScaleDecorator {
     }
 
     /// Enable scale marks with specified color key, width and thickness
-    pub fn with_scale_marks(mut self, marks_color_key: &'static str, width: f32, thickness: f32) -> Self {
+    pub fn with_scale_marks(mut self, marks_color_key: StyleKey, width: f32, thickness: f32) -> Self {
         self.scale_marks = true;
-        self.marks_color_key = marks_color_key;
+        self.marks_color_key = Some(marks_color_key);
         self.marks_width = width;
         self.marks_thickness = thickness;
         self
@@ -369,9 +369,12 @@ impl Decorator for VerticalBarScaleDecorator {
             return Ok(()); // Nothing to render
         }
 
-        let color = style.get_color(self.color_key, (1.0, 0.0, 1.0));
-        let marks_color = if self.scale_marks && !self.marks_color_key.is_empty() {
-            style.get_color(self.marks_color_key, (1.0, 0.0, 1.0))
+        let color = style.get_color(self.color_key);
+        let marks_color = if self.scale_marks {
+            match self.marks_color_key {
+                Some(marks_key) => style.get_color(marks_key),
+                None => (1.0, 1.0, 1.0), // fallback, not used if scale_marks is false
+            }
         } else {
             (1.0, 1.0, 1.0) // fallback, not used if scale_marks is false
         };

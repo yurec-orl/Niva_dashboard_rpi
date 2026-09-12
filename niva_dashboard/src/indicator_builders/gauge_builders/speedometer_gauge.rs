@@ -23,26 +23,26 @@ pub fn build_speedometer_gauge(
     // Speedometer configuration
     let start_angle = -225.0f32.to_radians(); // Start at 7 o'clock position
     let end_angle = 45.0f32.to_radians();     // End at 1 o'clock position
-    let needle_length = ui_style.get_float(GAUGE_NEEDLE_LENGTH, 0.8);
-    let needle_base_width = ui_style.get_float(GAUGE_NEEDLE_WIDTH, 8.0);
-    let needle_tip_width = ui_style.get_float(GAUGE_NEEDLE_TIP_WIDTH, 1.0);
+    let needle_length = ui_style.get_float(StyleKey::GaugeNeedleLength);
+    let needle_base_width = ui_style.get_float(StyleKey::GaugeNeedleWidth);
+    let needle_tip_width = ui_style.get_float(StyleKey::GaugeNeedleTipWidth);
 
     // Border arc parameters
-    let arc_width = ui_style.get_float(GAUGE_INACTIVE_ZONE_WIDTH, 4.0);
+    let arc_width = ui_style.get_float(StyleKey::GaugeInactiveZoneWidth);
 
     // Label styling from UI configuration
-    let gauge_labels_font = ui_style.get_string(GAUGE_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
-    let gauge_labels_font_size = ui_style.get_integer(GAUGE_LABEL_FONT_SIZE, 10) as u32;
-    let gauge_labels_offset = ui_style.get_float(GAUGE_LABEL_OFFSET, -35.0);
+    let gauge_labels_font = ui_style.get_string(StyleKey::GaugeLabelFont);
+    let gauge_labels_font_size = ui_style.get_integer(StyleKey::GaugeLabelFontSize) as u32;
+    let gauge_labels_offset = ui_style.get_float(StyleKey::GaugeLabelOffset);
 
     // Mark styling
-    let gauge_minor_mark_length = ui_style.get_float(GAUGE_MINOR_MARK_LENGTH, 6.0);
-    let gauge_minor_mark_thickness = ui_style.get_float(GAUGE_MINOR_MARK_WIDTH, 2.0);
-    let gauge_major_mark_length = ui_style.get_float(GAUGE_MAJOR_MARK_LENGTH, 12.0);
-    let gauge_major_mark_thickness = ui_style.get_float(GAUGE_MAJOR_MARK_WIDTH, 4.0);
+    let gauge_minor_mark_length = ui_style.get_float(StyleKey::GaugeMinorMarkLength);
+    let gauge_minor_mark_thickness = ui_style.get_float(StyleKey::GaugeMinorMarkWidth);
+    let gauge_major_mark_length = ui_style.get_float(StyleKey::GaugeMajorMarkLength);
+    let gauge_major_mark_thickness = ui_style.get_float(StyleKey::GaugeMajorMarkWidth);
 
-    let unit_offset_h = ui_style.get_float(GAUGE_UNIT_OFFSET_H, 0.0);
-    let unit_offset_v = ui_style.get_float(GAUGE_UNIT_OFFSET_V, 20.0);
+    let unit_offset_h = ui_style.get_float(StyleKey::GaugeUnitOffsetH);
+    let unit_offset_v = ui_style.get_float(StyleKey::GaugeUnitOffsetV);
 
     let speedometer = NeedleIndicator::new(
         start_angle,
@@ -50,7 +50,7 @@ pub fn build_speedometer_gauge(
         needle_length,
         needle_base_width,
         needle_tip_width,
-        GAUGE_NEEDLE_COLOR,
+        StyleKey::GaugeNeedleColor,
     ).with_scale(0.0, 180.0) // Matches the 0-180 km/h marks/labels below
     .with_decorators(vec![
         // Fine marks for precise readings (every 5 km/h)
@@ -58,7 +58,7 @@ pub fn build_speedometer_gauge(
             37, // 37 marks for 0-180 km/h range (every 5 km/h)
             gauge_minor_mark_length,
             gauge_minor_mark_thickness,
-            GAUGE_MINOR_MARK_COLOR,
+            StyleKey::GaugeMinorMarkColor,
             radius,
             start_angle,
             end_angle,
@@ -68,7 +68,7 @@ pub fn build_speedometer_gauge(
             19, // 19 major marks for 0-180 km/h range
             gauge_major_mark_length,
             gauge_major_mark_thickness,
-            GAUGE_MAJOR_MARK_COLOR,
+            StyleKey::GaugeMajorMarkColor,
             radius,
             start_angle,
             end_angle,
@@ -77,7 +77,7 @@ pub fn build_speedometer_gauge(
         Box::new(ArcDecorator::new(
             radius,
             arc_width,
-            GAUGE_BORDER_COLOR,
+            StyleKey::GaugeBorderColor,
             start_angle,
             end_angle,
         )),
@@ -85,15 +85,15 @@ pub fn build_speedometer_gauge(
         Box::new(ArcDecorator::new(
             radius,
             arc_width, // Arc thickness
-            GAUGE_INACTIVE_ZONE_COLOR,
+            StyleKey::GaugeInactiveZoneColor,
             end_angle,
             start_angle + 2.0 * PI, // Complete the circle
         )),
         Box::new(LabelDecorator::new( // Speed label at bottom
             "км/ч".to_string(),
-            ui_style.get_string(GAUGE_UNIT_FONT, DEFAULT_GLOBAL_FONT_PATH),
-            ui_style.get_integer(GAUGE_UNIT_FONT_SIZE, 14),
-            GAUGE_UNIT_COLOR,
+            ui_style.get_string(StyleKey::GaugeUnitFont),
+            ui_style.get_integer(StyleKey::GaugeUnitFontSize),
+            StyleKey::GaugeUnitColor,
             DecoratorAlignmentH::Center,
             DecoratorAlignmentV::Center,
         ).with_offset(unit_offset_h, unit_offset_v)), // slight offset to avoid overlap
@@ -101,7 +101,7 @@ pub fn build_speedometer_gauge(
             (0..=9).map(|v| (v * 20).to_string()).collect(), // 0, 20, ..., 180 km/h labels
             gauge_labels_font,
             gauge_labels_font_size,
-            GAUGE_LABEL_COLOR,
+            StyleKey::GaugeLabelColor,
             radius + gauge_labels_offset, // Negative offset moves labels inside the gauge
             start_angle,
             end_angle,
@@ -124,7 +124,8 @@ mod tests {
 
     #[test]
     fn test_build_speedometer_gauge_bounds_and_type() {
-        let ui_style = UIStyle::new();
+        let ui_style = UIStyle::from_file(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui_style.json"))
+            .expect("repo ui_style.json should load and validate");
         let (indicator, bounds) = build_speedometer_gauge(400.0, 240.0, 180.0, &ui_style);
 
         assert_eq!(bounds.x, 220.0);

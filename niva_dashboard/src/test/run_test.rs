@@ -562,7 +562,7 @@ fn dump_osc_buffer_csv(samples: &[u16]) -> Option<String> {
 
 /// Digital segmented display demonstration and test
 fn run_digital_display_test(context: &mut GraphicsContext) -> Result<(), String> {
-    let ui_style = UIStyle::new();
+    let ui_style = UIStyle::from_file(&UIStyle::default_path()).expect("ui_style.json should load and validate");
     
     log::info!("\n=== Testing Digital Display Rendering ===");
     

@@ -371,12 +371,9 @@ fn setup_input_sources(button_sensors: SensorManager) -> Vec<Box<dyn InputSource
     sources
 }
 
-fn setup_ui_style() -> graphics::ui_style::UIStyle {
-    let ui_style = graphics::ui_style::UIStyle::new();
-    // ui_style.read_from_file("/etc/niva_dashboard/ui_style.json").unwrap_or_else(|e| {
-    //     print!("Warning: Failed to read UI style config: {}\r\n", e);
-    // });
-    ui_style
+fn setup_ui_style() -> Result<graphics::ui_style::UIStyle, String> {
+    graphics::ui_style::UIStyle::from_file(&graphics::ui_style::UIStyle::default_path())
+        .map_err(|e| format!("ui_style.json: {}", e))
 }
 
 fn setup_adc_data_provider() -> Result<ADCDataProvider, std::string::String> {
@@ -572,7 +569,10 @@ fn main() -> std::process::ExitCode {
     };
 
     let input_sources = setup_input_sources(button_sensors);
-    let ui_style = setup_ui_style();
+    let ui_style = match setup_ui_style() {
+        Ok(s) => s,
+        Err(e) => return config_error_fallback_loop(&mut context, &e),
+    };
     // Starts disabled: alerts (e.g. engine temp, oil pressure) must not fire against the
     // synthetic self-test sensor sweep. Enabled once the self-test sequence hands off to
     // the real sensor set (PageManager's UIEvent::SwitchSensorSet handler).

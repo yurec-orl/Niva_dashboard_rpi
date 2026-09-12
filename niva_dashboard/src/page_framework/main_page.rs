@@ -97,11 +97,11 @@ impl MainPage {
             bounds
         };
 
-        let indicator_font = ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH);
-        let indicator_font_size = ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32;
-        let indicator_color = ui_style.get_color(TEXT_SECONDARY_COLOR, (1.0, 1.0, 1.0));
-        let indicator_warning_color = ui_style.get_color(TEXT_WARNING_COLOR, (1.0, 1.0, 0.0));
-        let indicator_error_color = ui_style.get_color(TEXT_ERROR_COLOR, (1.0, 0.0, 0.0));
+        let indicator_font = ui_style.get_string(StyleKey::TextSecondaryFont);
+        let indicator_font_size = ui_style.get_integer(StyleKey::TextSecondaryFontSize) as u32;
+        let indicator_color = ui_style.get_color(StyleKey::TextSecondaryColor);
+        let indicator_warning_color = ui_style.get_color(StyleKey::TextWarningColor);
+        let indicator_error_color = ui_style.get_color(StyleKey::TextErrorColor);
 
         // Digital sensors - plain text readout, no precision setting
         let digital_inputs = [

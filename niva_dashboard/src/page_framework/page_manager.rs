@@ -1288,9 +1288,9 @@ impl PageManager {
         }
 
         if is_pressed {
-            let padding = self.ui_style.get_float(PAGE_BUTTON_PRESSED_FRAME_PADDING, 4.0);
-            let thickness = self.ui_style.get_float(PAGE_BUTTON_PRESSED_FRAME_WIDTH, 2.0);
-            let frame_color = self.ui_style.get_color(PAGE_BUTTON_PRESSED_FRAME_COLOR, (1.0, 1.0, 1.0));
+            let padding = self.ui_style.get_float(StyleKey::PageButtonPressedFramePadding);
+            let thickness = self.ui_style.get_float(StyleKey::PageButtonPressedFrameWidth);
+            let frame_color = self.ui_style.get_color(StyleKey::PageButtonPressedFrameColor);
             self.context.stroke_rect(
                 render_x - padding,
                 y - padding,
@@ -1311,10 +1311,10 @@ impl PageManager {
         }
 
         // Render settings
-        let label_font = self.ui_style.get_string(PAGE_BUTTON_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
-        let label_font_size = self.ui_style.get_integer(PAGE_BUTTON_LABEL_FONT_SIZE, 14);
-        let label_color = self.ui_style.get_color(PAGE_BUTTON_LABEL_COLOR, (1.0, 1.0, 1.0));
-        let orientation = self.ui_style.get_string(PAGE_BUTTON_LABEL_ORIENTATION, "horizontal");
+        let label_font = self.ui_style.get_string(StyleKey::PageButtonLabelFont);
+        let label_font_size = self.ui_style.get_integer(StyleKey::PageButtonLabelFontSize);
+        let label_color = self.ui_style.get_color(StyleKey::PageButtonLabelColor);
+        let orientation = self.ui_style.get_string(StyleKey::PageButtonLabelOrientation);
 
         // Collect button data first to avoid borrowing conflicts
         let button_data: Vec<(ButtonPosition, String, bool)> = {
@@ -1390,9 +1390,9 @@ impl PageManager {
         let status_y = self.context.height as f32 - STATUS_LINE_Y_MARGIN; // 25 pixels from bottom
         let status_x = STATUS_LINE_X_MARGIN; // 20 pixels from left
 
-        let status_font = self.ui_style.get_string(PAGE_STATUS_FONT, DEFAULT_GLOBAL_FONT_PATH);
-        let status_font_size = self.ui_style.get_integer(PAGE_STATUS_FONT_SIZE, 14);
-        let status_color = self.ui_style.get_color(PAGE_STATUS_COLOR, (0.7, 0.7, 0.7));
+        let status_font = self.ui_style.get_string(StyleKey::PageStatusFont);
+        let status_font_size = self.ui_style.get_integer(StyleKey::PageStatusFontSize);
+        let status_color = self.ui_style.get_color(StyleKey::PageStatusColor);
 
         self.context.render_text_with_font(
             &status_text,

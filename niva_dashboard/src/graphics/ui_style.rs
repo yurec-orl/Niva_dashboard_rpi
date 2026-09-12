@@ -2,31 +2,36 @@
 
 //! UI Style Configuration System
 //!
-//! Simple flat key-value style system for dashboard elements.
-//! Uses string constants for style element names and supports JSON serialization.
+//! Every style value lives in one checked-in JSON file (see `default_path()`), keyed by
+//! the `StyleKey` enum below. There are no compiled-in style defaults: a key missing from
+//! the file, or present with the wrong kind of value, fails validation in `from_file`/
+//! `from_json` -- the caller (see `main.rs::setup_ui_style`) treats that like any other
+//! bad config file and shows the config-error screen rather than falling back silently.
 //!
-//! Example JSON format:
+//! Example JSON format (bare literals, no type tags -- the expected type comes from each
+//! key's declared `ValueKind`, not from how the JSON value happens to be shaped):
 //! ```json
 //! {
-//!   "GAUGE_NEEDLE_COLOR": "#FF0000",
+//!   "gauge_needle_color": "#FF0000",
 //!   "gauge_background_color": "#000000",
-//!   "gauge_mark_font": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 //!   "gauge_mark_font_size": 14,
 //!   "gauge_major_mark_width": 2.0,
-//!   "gauge_minor_mark_width": 1.0,
 //!   "bar_fill_color": "#00FF00",
-//!   "global_brightness": 1.0
+//!   "global_contrast": 1.0
 //! }
 //! ```
 
 use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 // =============================================================================
-// STYLE ELEMENT NAME CONSTANTS
+// BOOTSTRAP FONT CONSTANTS
 // =============================================================================
+// These stay as plain Rust constants, outside the StyleKey/JSON system: they're used
+// where a font is needed independently of whether the style file loaded successfully --
+// main.rs's config_error_fallback_loop (which renders the error screen when e.g. THIS
+// file fails to load) and IndicatorBase's own struct Default (text_indicator.rs).
 
-// Default values
 pub const DEFAULT_GLOBAL_FONT_PATH: &str = "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf";  // Use monospace for more digital look
 pub const DEFAULT_GLOBAL_FONT_SIZE: u32 = 18;
 
@@ -40,721 +45,380 @@ pub const DIGITAL_DISPLAY_MONO_FONT_PATH: &str = "/home/user/Work/Niva_Dashboard
 // Terminal-style monospace font, for scrolling text boxes (log/ADC diagnostic output)
 pub const TERMINAL_FONT_PATH: &str = "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/DejaVuSansMono.ttf";
 
-// Global Style Elements
-pub const GLOBAL_CONTRAST: &str = "global_contrast";
-pub const GLOBAL_BACKGROUND_COLOR: &str = "global_background_color";
-pub const GLOBAL_FONT_PATH: &str = "global_font_path";
-pub const GLOBAL_FONT_SIZE: &str = "global_font_size";
-
-// Page manager style elements
-pub const PAGE_BUTTON_LABEL_FONT: &str = "page_button_label_font";
-pub const PAGE_BUTTON_LABEL_FONT_SIZE: &str = "page_button_label_font_size";
-pub const PAGE_BUTTON_LABEL_ORIENTATION: &str = "page_button_label_orientation"; // "horizontal" or "vertical"
-pub const PAGE_BUTTON_LABEL_COLOR: &str = "page_button_label_color";
-pub const PAGE_BUTTON_PRESSED_FRAME_COLOR: &str = "page_button_pressed_frame_color";
-pub const PAGE_BUTTON_PRESSED_FRAME_WIDTH: &str = "page_button_pressed_frame_width";
-pub const PAGE_BUTTON_PRESSED_FRAME_PADDING: &str = "page_button_pressed_frame_padding";
-pub const PAGE_STATUS_FONT: &str = "page_status_font";
-pub const PAGE_STATUS_FONT_SIZE: &str = "page_status_font_size";
-pub const PAGE_STATUS_COLOR: &str = "page_status_color";
-
-// Gauge Style Elements
-pub const GAUGE_BACKGROUND_COLOR: &str = "gauge_background_color";
-pub const GAUGE_BORDER_COLOR: &str = "gauge_border_color";
-pub const GAUGE_BORDER_WIDTH: &str = "gauge_border_width";
-pub const GAUGE_RADIUS: &str = "gauge_radius";
-
-// Gauge Needle
-pub const GAUGE_NEEDLE_COLOR: &str = "GAUGE_NEEDLE_COLOR";
-pub const GAUGE_NEEDLE_WIDTH: &str = "GAUGE_NEEDLE_WIDTH";
-pub const GAUGE_NEEDLE_LENGTH: &str = "GAUGE_NEEDLE_LENGTH";
-pub const GAUGE_NEEDLE_TIP_WIDTH: &str = "GAUGE_NEEDLE_TIP_WIDTH";
-pub const GAUGE_NEEDLE_CENTER_COLOR: &str = "GAUGE_NEEDLE_CENTER_COLOR";
-pub const GAUGE_NEEDLE_CENTER_RADIUS: &str = "GAUGE_NEEDLE_CENTER_RADIUS";
-pub const GAUGE_NEEDLE_SHADOW_ENABLED: &str = "GAUGE_NEEDLE_SHADOW_ENABLED";
-pub const GAUGE_NEEDLE_SHADOW_COLOR: &str = "GAUGE_NEEDLE_SHADOW_COLOR";
-pub const GAUGE_NEEDLE_GLOW_ENABLED: &str = "GAUGE_NEEDLE_GLOW_ENABLED";
-
-// Gauge Marks
-pub const GAUGE_MAJOR_MARK_COLOR: &str = "gauge_major_mark_color";
-pub const GAUGE_MAJOR_MARK_WIDTH: &str = "gauge_major_mark_width";
-pub const GAUGE_MAJOR_MARK_LENGTH: &str = "gauge_major_mark_length";
-pub const GAUGE_MAJOR_MARK_OFFSET: &str = "gauge_major_mark_offset";
-pub const GAUGE_MAJOR_MARK_ENABLED: &str = "gauge_major_mark_enabled";
-pub const GAUGE_MAJOR_MARK_COUNT: &str = "gauge_major_mark_count";
-
-pub const GAUGE_MINOR_MARK_COLOR: &str = "gauge_minor_mark_color";
-pub const GAUGE_MINOR_MARK_WIDTH: &str = "gauge_minor_mark_width";
-pub const GAUGE_MINOR_MARK_LENGTH: &str = "gauge_minor_mark_length";
-pub const GAUGE_MINOR_MARK_OFFSET: &str = "gauge_minor_mark_offset";
-pub const GAUGE_MINOR_MARK_ENABLED: &str = "gauge_minor_mark_enabled";
-pub const GAUGE_MINOR_MARK_COUNT: &str = "gauge_minor_mark_count";
-
-// Gauge Labels
-pub const GAUGE_LABEL_COLOR: &str = "gauge_label_color";
-pub const GAUGE_LABEL_FONT: &str = "gauge_label_font";
-pub const GAUGE_LABEL_FONT_SIZE: &str = "gauge_label_font_size";
-pub const GAUGE_LABEL_OFFSET: &str = "gauge_label_offset";
-pub const GAUGE_LABEL_ENABLED: &str = "gauge_label_enabled";
-
-pub const GAUGE_TITLE_COLOR: &str = "gauge_title_color";
-pub const GAUGE_TITLE_FONT: &str = "gauge_title_font";
-pub const GAUGE_TITLE_FONT_SIZE: &str = "gauge_title_font_size";
-pub const GAUGE_TITLE_OFFSET_H: &str = "gauge_title_offset_h";
-pub const GAUGE_TITLE_OFFSET_V: &str = "gauge_title_offset_v";
-pub const GAUGE_TITLE_ENABLED: &str = "gauge_title_enabled";
-
-pub const GAUGE_UNIT_COLOR: &str = "gauge_unit_color";
-pub const GAUGE_UNIT_FONT: &str = "gauge_unit_font";
-pub const GAUGE_UNIT_FONT_SIZE: &str = "gauge_unit_font_size";
-pub const GAUGE_UNIT_OFFSET_H: &str = "gauge_unit_offset_h";
-pub const GAUGE_UNIT_OFFSET_V: &str = "gauge_unit_offset_v";
-pub const GAUGE_UNIT_ENABLED: &str = "gauge_unit_enabled";
-
-// Gauge Zones
-pub const GAUGE_NORMAL_ZONE_COLOR: &str = "gauge_normal_zone_color";
-pub const GAUGE_NORMAL_ZONE_WIDTH: &str = "gauge_normal_zone_width";
-pub const GAUGE_NORMAL_ZONE_ENABLED: &str = "gauge_normal_zone_enabled";
-
-pub const GAUGE_WARNING_ZONE_COLOR: &str = "gauge_warning_zone_color";
-pub const GAUGE_WARNING_ZONE_WIDTH: &str = "gauge_warning_zone_width";
-pub const GAUGE_WARNING_ZONE_ENABLED: &str = "gauge_warning_zone_enabled";
-
-pub const GAUGE_CRITICAL_ZONE_COLOR: &str = "gauge_critical_zone_color";
-pub const GAUGE_CRITICAL_ZONE_WIDTH: &str = "gauge_critical_zone_width";
-pub const GAUGE_CRITICAL_ZONE_ENABLED: &str = "gauge_critical_zone_enabled";
-
-pub const GAUGE_INACTIVE_ZONE_COLOR: &str = "gauge_inactive_zone_color";
-pub const GAUGE_INACTIVE_ZONE_WIDTH: &str = "gauge_inactive_zone_width";
-pub const GAUGE_INACTIVE_ZONE_ENABLED: &str = "gauge_inactive_zone_enabled";
-
-// Bar Indicator Style Elements
-pub const BAR_BACKGROUND_COLOR: &str = "bar_background_color";
-pub const BAR_BACKGROUND_ENABLED: &str = "bar_background_enabled";
-pub const BAR_BORDER_COLOR: &str = "bar_border_color";
-pub const BAR_BORDER_ENABLED: &str = "bar_border_enabled";
-pub const BAR_BORDER_WIDTH: &str = "bar_border_width";
-pub const BAR_CORNER_RADIUS: &str = "bar_corner_radius";
-
-pub const BAR_EMPTY_COLOR: &str = "bar_empty_color";
-pub const BAR_NORMAL_COLOR: &str = "bar_normal_color";
-pub const BAR_WARNING_COLOR: &str = "bar_warning_color";
-pub const BAR_CRITICAL_COLOR: &str = "bar_critical_color";
-
-pub const BAR_MARKS_COLOR: &str = "bar_marks_color";
-pub const BAR_MARKS_WIDTH: &str = "bar_marks_width";
-pub const BAR_MARKS_THICKNESS: &str = "bar_marks_thickness";
-
-pub const BAR_MARK_LABELS_COLOR: &str = "bar_mark_labels_color";
-
-pub const BAR_SEGMENT_COUNT: &str = "bar_segment_count";
-pub const BAR_SEGMENT_GAP: &str = "bar_segment_gap";
-
-// Compass Style Elements
-pub const COMPASS_MAJOR_MARK_COLOR: &str = "compass_major_mark_color";
-pub const COMPASS_MINOR_MARK_COLOR: &str = "compass_minor_mark_color";
-pub const COMPASS_LABEL_COLOR: &str = "compass_label_color";
-pub const COMPASS_LABEL_FONT: &str = "compass_label_font";
-pub const COMPASS_LABEL_FONT_SIZE: &str = "compass_label_font_size";
-pub const COMPASS_ARROW_COLOR: &str = "compass_arrow_color";
-pub const COMPASS_CENTER_LINE_COLOR: &str = "compass_center_line_color";
-pub const COMPASS_HEADING_COLOR: &str = "compass_heading_color";
-pub const COMPASS_HDOP_EXCELLENT_COLOR: &str = "compass_hdop_excellent_color";
-pub const COMPASS_HDOP_GOOD_COLOR: &str = "compass_hdop_good_color";
-pub const COMPASS_HDOP_MODERATE_COLOR: &str = "compass_hdop_moderate_color";
-pub const COMPASS_HDOP_POOR_COLOR: &str = "compass_hdop_poor_color";
-
-// Pitch (artificial horizon) Style Elements
-pub const PITCH_SKY_COLOR: &str = "pitch_sky_color";
-pub const PITCH_GROUND_COLOR: &str = "pitch_ground_color";
-pub const PITCH_ABOVE_HORIZON_LABEL_COLOR: &str = "pitch_above_horizon_label_color";
-pub const PITCH_BELOW_HORIZON_LABEL_COLOR: &str = "pitch_below_horizon_label_color";
-pub const PITCH_BORDER_COLOR: &str = "pitch_border_color";
-pub const PITCH_BORDER_WIDTH: &str = "pitch_border_width";
-pub const PITCH_LABEL_FONT: &str = "pitch_label_font";
-pub const PITCH_LABEL_FONT_SIZE: &str = "pitch_label_font_size";
-pub const ROLL_INDICATOR_COLOR: &str = "roll_indicator_color";
-pub const ROLL_SCALE_COLOR: &str = "roll_scale_color";
-pub const ROLL_SCALE_LABEL_FONT: &str = "roll_scale_label_font";
-pub const ROLL_SCALE_LABEL_FONT_SIZE: &str = "roll_scale_label_font_size";
-
-// Text Style Elements
-pub const TEXT_PRIMARY_COLOR: &str = "text_primary_color";
-pub const TEXT_SECONDARY_COLOR: &str = "text_secondary_color";
-pub const TEXT_ACCENT_COLOR: &str = "text_accent_color";
-pub const TEXT_WARNING_COLOR: &str = "text_warning_color";
-pub const TEXT_ERROR_COLOR: &str = "text_error_color";
-
-pub const TEXT_PRIMARY_FONT: &str = "text_primary_font";
-pub const TEXT_PRIMARY_FONT_SIZE: &str = "text_primary_font_size";
-pub const TEXT_SECONDARY_FONT: &str = "text_secondary_font";
-pub const TEXT_SECONDARY_FONT_SIZE: &str = "text_secondary_font_size";
-pub const TEXT_MONOSPACE_FONT: &str = "text_monospace_font";
-pub const TEXT_MONOSPACE_FONT_SIZE: &str = "text_monospace_font_size";
-pub const TEXT_SMALL_FONT: &str = "text_small_font";
-pub const TEXT_SMALL_FONT_SIZE: &str = "text_small_font_size";
-
-pub const TEXT_LINE_SPACING: &str = "text_line_spacing";
-pub const TEXT_LETTER_SPACING: &str = "text_letter_spacing";
-
-// Terminal / scrolling text box style elements
-pub const TERMINAL_BACKGROUND_COLOR: &str = "terminal_background_color";
-pub const TERMINAL_BACKGROUND_ENABLED: &str = "terminal_background_enabled";
-pub const TERMINAL_BORDER_COLOR: &str = "terminal_border_color";
-pub const TERMINAL_BORDER_ENABLED: &str = "terminal_border_enabled";
-pub const TERMINAL_BORDER_WIDTH: &str = "terminal_border_width";
-pub const TERMINAL_TEXT_COLOR: &str = "terminal_text_color";
-pub const TERMINAL_PADDING: &str = "terminal_padding";
-
-// Digital Display Style Elements (7-segment style)
-pub const DIGITAL_DISPLAY_FONT: &str = "digital_display_font";
-pub const DIGITAL_DISPLAY_FONT_SIZE: &str = "digital_display_font_size";
-pub const DIGITAL_DISPLAY_SCALE: &str = "digital_display_scale";
-pub const DIGITAL_DISPLAY_ACTIVE_COLOR: &str = "digital_display_active_color";
-pub const DIGITAL_DISPLAY_INACTIVE_COLOR: &str = "digital_display_inactive_color";
-pub const DIGITAL_DISPLAY_INACTIVE_COLOR_BLENDING: &str = "digital_display_inactive_color_blending";
-pub const DIGITAL_DISPLAY_BACKGROUND_COLOR: &str = "digital_display_background_color";
-pub const DIGITAL_DISPLAY_BACKGROUND_ENABLED: &str = "digital_display_background_enabled";
-pub const DIGITAL_DISPLAY_BORDER_ENABLED: &str = "digital_display_border_enabled";
-pub const DIGITAL_DISPLAY_BORDER_COLOR: &str = "digital_display_border_color";
-pub const DIGITAL_DISPLAY_BORDER_WIDTH: &str = "digital_display_border_width";
-pub const DIGITAL_DISPLAY_BORDER_RADIUS: &str = "digital_display_border_radius";
-
-// Extended Digital Display Fonts (additional variants)
-pub const DIGITAL_DISPLAY_FONT_ITALIC: &str = "digital_display_font_italic";
-pub const DIGITAL_DISPLAY_14SEG_FONT: &str = "digital_display_14seg_font";
-pub const DIGITAL_DISPLAY_14SEG_ITALIC: &str = "digital_display_14seg_italic";
-
-// Warning Indicator Style Elements
-pub const INDICATOR_NORMAL_COLOR: &str = "indicator_normal_color";
-pub const INDICATOR_WARNING_COLOR: &str = "indicator_warning_color";
-pub const INDICATOR_CRITICAL_COLOR: &str = "indicator_critical_color";
-pub const INDICATOR_OFF_COLOR: &str = "indicator_off_color";
-pub const INDICATOR_BLINK_SPEED: &str = "indicator_blink_speed";
-pub const INDICATOR_GLOW_ENABLED: &str = "indicator_glow_enabled";
-pub const INDICATOR_GLOW_RADIUS: &str = "indicator_glow_radius";
-pub const INDICATOR_SIZE: &str = "indicator_size";
-
-// Animation Settings
-pub const ANIMATION_NEEDLE_SPEED: &str = "animation_needle_speed";
-pub const ANIMATION_BAR_SPEED: &str = "animation_bar_speed";
-pub const ANIMATION_SMOOTH_ENABLED: &str = "animation_smooth_enabled";
-
-// Alerts settings
-pub const ALERT_FONT_PATH: &str = "alert_font_path";
-pub const ALERT_FONT_SIZE: &str = "alert_font_size";
-pub const ALERT_WARNING_COLOR: &str = "alert_warning_color";
-pub const ALERT_CRITICAL_COLOR: &str = "alert_critical_color";
-pub const ALERT_BACKGROUND_COLOR: &str = "alert_background_color";
-pub const ALERT_BORDER_COLOR: &str = "alert_border_color";
-pub const ALERT_BORDER_WIDTH: &str = "alert_border_width";
-pub const ALERT_MARGIN: &str = "alert_border_margin";
-pub const ALERT_CORNER_RADIUS: &str = "alert_corner_radius";
-pub const ALERT_SOUND_PATH: &str = "alert_sound_path";
-
 // =============================================================================
-// STYLE VALUE TYPES
+// STYLE KEYS
 // =============================================================================
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum UIStyleValue {
-    Color(String),      // Hex color: "#FF0000" or named: "red"
-    Float(f32),         // Numeric values: width, size, etc.
-    Integer(u32),       // Integer values: count, size
-    Boolean(bool),      // Enable/disable flags
-    String(String),     // Font paths, text values
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ValueKind {
+    Color,
+    Float,
+    Integer,
+    Boolean,
+    String,
 }
 
-impl UIStyleValue {
-    /// Convert to color tuple (r, g, b) with values 0.0-1.0
-    pub fn as_color(&self) -> Result<(f32, f32, f32), String> {
-        match self {
-            UIStyleValue::Color(color_str) => parse_color(color_str),
-            _ => Err("Value is not a color".to_string()),
+/// Declares the `StyleKey` enum from one list of `Variant: Kind = "json_name"` entries,
+/// plus `StyleKey::ALL` (every variant, for exhaustive load-time validation),
+/// `StyleKey::json_name()`, and `StyleKey::kind()`. One list to edit when adding a key --
+/// nothing to keep in sync by hand.
+macro_rules! define_style_keys {
+    ($($variant:ident : $kind:ident = $json_name:literal),+ $(,)?) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub enum StyleKey {
+            $($variant),+
         }
-    }
-    
-    /// Convert to color tuple with alpha (r, g, b, a) with values 0.0-1.0
-    pub fn as_color_rgba(&self) -> Result<(f32, f32, f32, f32), String> {
-        let (r, g, b) = self.as_color()?;
-        Ok((r, g, b, 1.0))
-    }
-    
-    pub fn as_float(&self) -> Result<f32, String> {
-        match self {
-            UIStyleValue::Float(f) => Ok(*f),
-            UIStyleValue::Integer(i) => Ok(*i as f32),
-            _ => Err("Value is not a float".to_string()),
+
+        impl StyleKey {
+            pub const ALL: &'static [StyleKey] = &[$(StyleKey::$variant),+];
+
+            pub fn json_name(&self) -> &'static str {
+                match self {
+                    $(StyleKey::$variant => $json_name),+
+                }
+            }
+
+            pub fn kind(&self) -> ValueKind {
+                match self {
+                    $(StyleKey::$variant => ValueKind::$kind),+
+                }
+            }
         }
-    }
-    
-    pub fn as_integer(&self) -> Result<u32, String> {
-        match self {
-            UIStyleValue::Integer(i) => Ok(*i),
-            UIStyleValue::Float(f) => Ok(*f as u32),
-            _ => Err("Value is not an integer".to_string()),
-        }
-    }
-    
-    pub fn as_bool(&self) -> Result<bool, String> {
-        match self {
-            UIStyleValue::Boolean(b) => Ok(*b),
-            _ => Err("Value is not a boolean".to_string()),
-        }
-    }
-    
-    pub fn as_string(&self) -> Result<&str, String> {
-        match self {
-            UIStyleValue::String(s) => Ok(s),
-            _ => Err("Value is not a string".to_string()),
-        }
-    }
+    };
+}
+
+define_style_keys! {
+    // Global
+    GlobalContrast: Float = "global_contrast",
+    GlobalBackgroundColor: Color = "global_background_color",
+    GlobalFontPath: String = "global_font_path",
+    GlobalFontSize: Integer = "global_font_size",
+
+    // Page manager
+    PageButtonLabelFont: String = "page_button_label_font",
+    PageButtonLabelFontSize: Integer = "page_button_label_font_size",
+    PageButtonLabelOrientation: String = "page_button_label_orientation", // "horizontal" or "vertical"
+    PageButtonLabelColor: Color = "page_button_label_color",
+    PageButtonPressedFrameColor: Color = "page_button_pressed_frame_color",
+    PageButtonPressedFrameWidth: Float = "page_button_pressed_frame_width",
+    PageButtonPressedFramePadding: Float = "page_button_pressed_frame_padding",
+    PageStatusFont: String = "page_status_font",
+    PageStatusFontSize: Integer = "page_status_font_size",
+    PageStatusColor: Color = "page_status_color",
+
+    // Gauge
+    GaugeBackgroundColor: Color = "gauge_background_color",
+    GaugeBorderColor: Color = "gauge_border_color",
+    GaugeBorderWidth: Float = "gauge_border_width",
+    GaugeRadius: Float = "gauge_radius",
+
+    // Gauge needle
+    GaugeNeedleColor: Color = "gauge_needle_color",
+    GaugeNeedleWidth: Float = "gauge_needle_width",
+    GaugeNeedleLength: Float = "gauge_needle_length",
+    GaugeNeedleTipWidth: Float = "gauge_needle_tip_width",
+    GaugeNeedleCenterColor: Color = "gauge_needle_center_color",
+    GaugeNeedleCenterRadius: Float = "gauge_needle_center_radius",
+    GaugeNeedleShadowEnabled: Boolean = "gauge_needle_shadow_enabled",
+    GaugeNeedleShadowColor: Color = "gauge_needle_shadow_color",
+    GaugeNeedleGlowEnabled: Boolean = "gauge_needle_glow_enabled",
+
+    // Gauge marks
+    GaugeMajorMarkColor: Color = "gauge_major_mark_color",
+    GaugeMajorMarkWidth: Float = "gauge_major_mark_width",
+    GaugeMajorMarkLength: Float = "gauge_major_mark_length",
+    GaugeMajorMarkOffset: Float = "gauge_major_mark_offset",
+    GaugeMajorMarkEnabled: Boolean = "gauge_major_mark_enabled",
+    GaugeMajorMarkCount: Integer = "gauge_major_mark_count",
+    GaugeMinorMarkColor: Color = "gauge_minor_mark_color",
+    GaugeMinorMarkWidth: Float = "gauge_minor_mark_width",
+    GaugeMinorMarkLength: Float = "gauge_minor_mark_length",
+    GaugeMinorMarkOffset: Float = "gauge_minor_mark_offset",
+    GaugeMinorMarkEnabled: Boolean = "gauge_minor_mark_enabled",
+    GaugeMinorMarkCount: Integer = "gauge_minor_mark_count",
+
+    // Gauge labels
+    GaugeLabelColor: Color = "gauge_label_color",
+    GaugeLabelFont: String = "gauge_label_font",
+    GaugeLabelFontSize: Integer = "gauge_label_font_size",
+    GaugeLabelOffset: Float = "gauge_label_offset",
+    GaugeLabelEnabled: Boolean = "gauge_label_enabled",
+    GaugeTitleColor: Color = "gauge_title_color",
+    GaugeTitleFont: String = "gauge_title_font",
+    GaugeTitleFontSize: Integer = "gauge_title_font_size",
+    GaugeTitleOffsetH: Float = "gauge_title_offset_h",
+    GaugeTitleOffsetV: Float = "gauge_title_offset_v",
+    GaugeTitleEnabled: Boolean = "gauge_title_enabled",
+    GaugeUnitColor: Color = "gauge_unit_color",
+    GaugeUnitFont: String = "gauge_unit_font",
+    GaugeUnitFontSize: Integer = "gauge_unit_font_size",
+    GaugeUnitOffsetH: Float = "gauge_unit_offset_h",
+    GaugeUnitOffsetV: Float = "gauge_unit_offset_v",
+    GaugeUnitEnabled: Boolean = "gauge_unit_enabled",
+
+    // Gauge zones
+    GaugeNormalZoneColor: Color = "gauge_normal_zone_color",
+    GaugeNormalZoneWidth: Float = "gauge_normal_zone_width",
+    GaugeNormalZoneEnabled: Boolean = "gauge_normal_zone_enabled",
+    GaugeWarningZoneColor: Color = "gauge_warning_zone_color",
+    GaugeWarningZoneWidth: Float = "gauge_warning_zone_width",
+    GaugeWarningZoneEnabled: Boolean = "gauge_warning_zone_enabled",
+    GaugeCriticalZoneColor: Color = "gauge_critical_zone_color",
+    GaugeCriticalZoneWidth: Float = "gauge_critical_zone_width",
+    GaugeCriticalZoneEnabled: Boolean = "gauge_critical_zone_enabled",
+    GaugeInactiveZoneColor: Color = "gauge_inactive_zone_color",
+    GaugeInactiveZoneWidth: Float = "gauge_inactive_zone_width",
+    GaugeInactiveZoneEnabled: Boolean = "gauge_inactive_zone_enabled",
+
+    // Bar indicator
+    BarBackgroundColor: Color = "bar_background_color",
+    BarBackgroundEnabled: Boolean = "bar_background_enabled",
+    BarBorderColor: Color = "bar_border_color",
+    BarBorderEnabled: Boolean = "bar_border_enabled",
+    BarBorderWidth: Float = "bar_border_width",
+    BarCornerRadius: Float = "bar_corner_radius",
+    BarEmptyColor: Color = "bar_empty_color",
+    BarNormalColor: Color = "bar_normal_color",
+    BarWarningColor: Color = "bar_warning_color",
+    BarCriticalColor: Color = "bar_critical_color",
+    BarMarksColor: Color = "bar_marks_color",
+    BarMarksWidth: Float = "bar_marks_width",
+    BarMarksThickness: Float = "bar_marks_thickness",
+    BarMarkLabelsColor: Color = "bar_mark_labels_color",
+    BarSegmentCount: Integer = "bar_segment_count",
+    BarSegmentGap: Float = "bar_segment_gap",
+
+    // Compass
+    CompassMajorMarkColor: Color = "compass_major_mark_color",
+    CompassMinorMarkColor: Color = "compass_minor_mark_color",
+    CompassLabelColor: Color = "compass_label_color",
+    CompassLabelFont: String = "compass_label_font",
+    CompassLabelFontSize: Integer = "compass_label_font_size",
+    CompassArrowColor: Color = "compass_arrow_color",
+    CompassCenterLineColor: Color = "compass_center_line_color",
+    CompassHeadingColor: Color = "compass_heading_color",
+    CompassHdopExcellentColor: Color = "compass_hdop_excellent_color",
+    CompassHdopGoodColor: Color = "compass_hdop_good_color",
+    CompassHdopModerateColor: Color = "compass_hdop_moderate_color",
+    CompassHdopPoorColor: Color = "compass_hdop_poor_color",
+
+    // Pitch (artificial horizon)
+    PitchSkyColor: Color = "pitch_sky_color",
+    PitchGroundColor: Color = "pitch_ground_color",
+    PitchAboveHorizonLabelColor: Color = "pitch_above_horizon_label_color",
+    PitchBelowHorizonLabelColor: Color = "pitch_below_horizon_label_color",
+    PitchBorderColor: Color = "pitch_border_color",
+    PitchBorderWidth: Float = "pitch_border_width",
+    PitchLabelFont: String = "pitch_label_font",
+    PitchLabelFontSize: Integer = "pitch_label_font_size",
+    RollIndicatorColor: Color = "roll_indicator_color",
+    RollScaleColor: Color = "roll_scale_color",
+    RollScaleLabelFont: String = "roll_scale_label_font",
+    RollScaleLabelFontSize: Integer = "roll_scale_label_font_size",
+
+    // Text
+    TextPrimaryColor: Color = "text_primary_color",
+    TextSecondaryColor: Color = "text_secondary_color",
+    TextAccentColor: Color = "text_accent_color",
+    TextWarningColor: Color = "text_warning_color",
+    TextErrorColor: Color = "text_error_color",
+    TextPrimaryFont: String = "text_primary_font",
+    TextPrimaryFontSize: Integer = "text_primary_font_size",
+    TextSecondaryFont: String = "text_secondary_font",
+    TextSecondaryFontSize: Integer = "text_secondary_font_size",
+    TextMonospaceFont: String = "text_monospace_font",
+    TextMonospaceFontSize: Integer = "text_monospace_font_size",
+    TextSmallFont: String = "text_small_font",
+    TextSmallFontSize: Integer = "text_small_font_size",
+    TextLineSpacing: Float = "text_line_spacing",
+    TextLetterSpacing: Float = "text_letter_spacing",
+
+    // Terminal / scrolling text box
+    TerminalBackgroundColor: Color = "terminal_background_color",
+    TerminalBackgroundEnabled: Boolean = "terminal_background_enabled",
+    TerminalBorderColor: Color = "terminal_border_color",
+    TerminalBorderEnabled: Boolean = "terminal_border_enabled",
+    TerminalBorderWidth: Float = "terminal_border_width",
+    TerminalTextColor: Color = "terminal_text_color",
+    TerminalPadding: Float = "terminal_padding",
+
+    // Digital display (7-segment style)
+    DigitalDisplayFont: String = "digital_display_font",
+    DigitalDisplayFontSize: Integer = "digital_display_font_size",
+    DigitalDisplayScale: Float = "digital_display_scale",
+    DigitalDisplayActiveColor: Color = "digital_display_active_color",
+    DigitalDisplayInactiveColor: Color = "digital_display_inactive_color",
+    DigitalDisplayInactiveColorBlending: Float = "digital_display_inactive_color_blending",
+    DigitalDisplayBackgroundColor: Color = "digital_display_background_color",
+    DigitalDisplayBackgroundEnabled: Boolean = "digital_display_background_enabled",
+    DigitalDisplayBorderEnabled: Boolean = "digital_display_border_enabled",
+    DigitalDisplayBorderColor: Color = "digital_display_border_color",
+    DigitalDisplayBorderWidth: Float = "digital_display_border_width",
+    DigitalDisplayBorderRadius: Float = "digital_display_border_radius",
+    DigitalDisplayFontItalic: String = "digital_display_font_italic",
+    DigitalDisplay14SegFont: String = "digital_display_14seg_font",
+    DigitalDisplay14SegItalic: String = "digital_display_14seg_italic",
+
+    // Warning indicator
+    IndicatorNormalColor: Color = "indicator_normal_color",
+    IndicatorWarningColor: Color = "indicator_warning_color",
+    IndicatorCriticalColor: Color = "indicator_critical_color",
+    IndicatorOffColor: Color = "indicator_off_color",
+    IndicatorBlinkSpeed: Float = "indicator_blink_speed",
+    IndicatorGlowEnabled: Boolean = "indicator_glow_enabled",
+    IndicatorGlowRadius: Float = "indicator_glow_radius",
+    IndicatorSize: Float = "indicator_size",
+
+    // Animation
+    AnimationNeedleSpeed: Float = "animation_needle_speed",
+    AnimationBarSpeed: Float = "animation_bar_speed",
+    AnimationSmoothEnabled: Boolean = "animation_smooth_enabled",
+
+    // Alerts
+    AlertFontPath: String = "alert_font_path",
+    AlertFontSize: Integer = "alert_font_size",
+    AlertWarningColor: Color = "alert_warning_color",
+    AlertCriticalColor: Color = "alert_critical_color",
+    AlertBackgroundColor: Color = "alert_background_color",
+    AlertBorderColor: Color = "alert_border_color",
+    AlertBorderWidth: Float = "alert_border_width",
+    AlertMargin: Float = "alert_margin",
+    AlertCornerRadius: Float = "alert_corner_radius",
+    AlertSoundPath: String = "alert_sound_path",
 }
 
 // =============================================================================
-// UI STYLE MAIN STRUCT
+// VALUE COERCION
+// =============================================================================
+// Operates on raw serde_json::Value scalars rather than a hand-rolled tagged enum, so the
+// checked-in JSON can use plain literals ("gauge_needle_color": "#FF0000") -- the expected
+// type comes from the StyleKey's declared ValueKind, not from the JSON value's shape.
+
+fn value_as_color(value: &serde_json::Value) -> Result<(f32, f32, f32), String> {
+    match value.as_str() {
+        Some(s) => parse_color(s),
+        None => Err(format!("expected a color string, got {value}")),
+    }
+}
+
+fn value_as_float(value: &serde_json::Value) -> Result<f32, String> {
+    value.as_f64().map(|f| f as f32).ok_or_else(|| format!("expected a number, got {value}"))
+}
+
+fn value_as_integer(value: &serde_json::Value) -> Result<u32, String> {
+    if let Some(u) = value.as_u64() {
+        Ok(u as u32)
+    } else if let Some(f) = value.as_f64() {
+        Ok(f as u32)
+    } else {
+        Err(format!("expected an integer, got {value}"))
+    }
+}
+
+fn value_as_bool(value: &serde_json::Value) -> Result<bool, String> {
+    value.as_bool().ok_or_else(|| format!("expected a boolean, got {value}"))
+}
+
+fn value_as_string(value: &serde_json::Value) -> Result<String, String> {
+    value.as_str().map(|s| s.to_string()).ok_or_else(|| format!("expected a string, got {value}"))
+}
+
+fn validate_kind(value: &serde_json::Value, kind: ValueKind) -> Result<(), String> {
+    match kind {
+        ValueKind::Color => value_as_color(value).map(|_| ()),
+        ValueKind::Float => value_as_float(value).map(|_| ()),
+        ValueKind::Integer => value_as_integer(value).map(|_| ()),
+        ValueKind::Boolean => value_as_bool(value).map(|_| ()),
+        ValueKind::String => value_as_string(value).map(|_| ()),
+    }
+}
+
+// =============================================================================
+// UI STYLE
 // =============================================================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct UIStyle {
-    values: HashMap<String, HashMap<String, UIStyleValue>>,
+    values: HashMap<StyleKey, serde_json::Value>,
 }
 
 impl UIStyle {
-    pub fn new() -> Self {
-        let mut style = UIStyle {
-            values: HashMap::new(),
-        };
-        style.load_defaults();
-        style
+    /// Where the checked-in style file lives -- alongside Cargo.toml in the niva_dashboard
+    /// crate dir, the same HOME-based construction as sensor_config::default_path() /
+    /// sensor_calibration::default_path().
+    pub fn default_path() -> PathBuf {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/user".to_string());
+        PathBuf::from(format!("{home}/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/niva_dashboard/ui_style.json"))
     }
-    
-    /// Load style from JSON string
-    /// Supports both old flat format and new grouped format
-    pub fn from_json(json_str: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        // Try to parse as new grouped format first
-        if let Ok(grouped_values) = serde_json::from_str::<HashMap<String, HashMap<String, UIStyleValue>>>(json_str) {
-            let mut style = UIStyle { values: grouped_values };
-            // Ensure we have a default group
-            if !style.values.contains_key("default") {
-                style.values.insert("default".to_string(), HashMap::new());
-                style.load_defaults();
-            }
-            return Ok(style);
-        }
-        
-        // Fall back to old flat format for backward compatibility
-        let flat_values: HashMap<String, UIStyleValue> = serde_json::from_str(json_str)?;
-        let mut style = UIStyle::new(); // Start with defaults
-        
-        // Put flat values into "default" group
-        let default_group = style.values.get_mut("default").unwrap();
-        for (key, value) in flat_values {
-            default_group.insert(key, value);
-        }
-        
-        Ok(style)
-    }
-    
-    /// Save style to JSON string
-    pub fn to_json(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(&self.values)
-    }
-    
-    /// Load style from JSON file
-    pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let json_str = std::fs::read_to_string(path)?;
+
+    /// Loads and validates `path`. Fail-fast: every `StyleKey` must be present with a
+    /// value that coerces to its declared `ValueKind`, or this returns `Err` listing
+    /// *every* problem found (not just the first), so a bad file can be fixed in one pass.
+    pub fn from_file(path: &Path) -> Result<Self, String> {
+        let json_str = std::fs::read_to_string(path)
+            .map_err(|e| format!("ui style: failed to read {path:?}: {e}"))?;
         Self::from_json(&json_str)
     }
-    
-    /// Save style to JSON file
-    pub fn to_file(&self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let json_str = self.to_json()?;
-        std::fs::write(path, json_str)?;
-        Ok(())
-    }
-    
-    /// Get a style value from specific group, with fallback to "default" group
-    pub fn get(&self, key: &str) -> Option<&UIStyleValue> {
-        self.get_with_group(key, None)
-    }
-    
-    /// Get a style value with optional group parameter
-    pub fn get_with_group(&self, key: &str, group: Option<&str>) -> Option<&UIStyleValue> {
-        // Try specific group first if provided
-        if let Some(group_name) = group {
-            if let Some(group_values) = self.values.get(group_name) {
-                if let Some(value) = group_values.get(key) {
-                    return Some(value);
-                }
+
+    /// Loads and validates a style from a JSON string. See [`Self::from_file`].
+    pub fn from_json(json_str: &str) -> Result<Self, String> {
+        let raw: HashMap<String, serde_json::Value> = serde_json::from_str(json_str)
+            .map_err(|e| format!("ui style: failed to parse JSON: {e}"))?;
+
+        let mut values = HashMap::with_capacity(StyleKey::ALL.len());
+        let mut problems = Vec::new();
+
+        for key in StyleKey::ALL {
+            match raw.get(key.json_name()) {
+                Some(value) => match validate_kind(value, key.kind()) {
+                    Ok(()) => {
+                        values.insert(*key, value.clone());
+                    }
+                    Err(reason) => problems.push(format!("'{}': {}", key.json_name(), reason)),
+                },
+                None => problems.push(format!("'{}': missing", key.json_name())),
             }
         }
-        
-        // Fall back to default group
-        self.values.get("default")?.get(key)
-    }
-    
-    /// Set a style value in specific group (defaults to "default" group)
-    pub fn set(&mut self, key: &str, value: UIStyleValue) {
-        self.set_with_group(key, value, None);
-    }
-    
-    /// Set a style value with optional group parameter
-    pub fn set_with_group(&mut self, key: &str, value: UIStyleValue, group: Option<&str>) {
-        let group_name = group.unwrap_or("default");
-        
-        // Ensure group exists
-        if !self.values.contains_key(group_name) {
-            self.values.insert(group_name.to_string(), HashMap::new());
+
+        if !problems.is_empty() {
+            return Err(format!(
+                "ui style validation failed ({} problem(s)):\n  {}",
+                problems.len(),
+                problems.join("\n  ")
+            ));
         }
-        
-        self.values.get_mut(group_name).unwrap().insert(key.to_string(), value);
+
+        Ok(UIStyle { values })
     }
-    
-    /// Get color value with brightness applied
-    pub fn get_color(&self, key: &str, default: (f32, f32, f32)) -> (f32, f32, f32) {
-        self.get_color_with_group(key, default, None)
+
+    // Every accessor below panics if `key` is somehow absent -- validation in
+    // from_file/from_json already guarantees every StyleKey is present and coerces to its
+    // declared kind, so reaching the "missing"/coercion-failure branch here means a
+    // programming error (a key read via the wrong accessor for its kind), not a bad file.
+
+    pub fn get_color(&self, key: StyleKey) -> (f32, f32, f32) {
+        let value = self.values.get(&key).unwrap_or_else(|| panic!("StyleKey::{key:?} missing after validation"));
+        value_as_color(value).unwrap_or_else(|e| panic!("StyleKey::{key:?}: {e}"))
     }
-    
-    /// Get color value with optional group parameter and brightness applied
-    pub fn get_color_with_group(&self, key: &str, default: (f32, f32, f32), group: Option<&str>) -> (f32, f32, f32) {
-        match self.get_with_group(key, group) {
-            Some(value) => match value.as_color() {
-                Ok((r, g, b)) => (r, g, b),
-                Err(_) => {
-                    log::warn!("Warning: Style key '{}' exists but cannot be converted to color, using default: ({}, {}, {})", key, default.0, default.1, default.2);
-                    default
-                }
-            },
-            None => {
-                log::warn!("Warning: Style key '{}' not found, using default color: ({}, {}, {})", key, default.0, default.1, default.2);
-                default
-            }
-        }
+
+    pub fn get_float(&self, key: StyleKey) -> f32 {
+        let value = self.values.get(&key).unwrap_or_else(|| panic!("StyleKey::{key:?} missing after validation"));
+        value_as_float(value).unwrap_or_else(|e| panic!("StyleKey::{key:?}: {e}"))
     }
-    
-    /// Get color value with alpha and brightness applied
-    pub fn get_color_rgba(&self, key: &str, default: (f32, f32, f32, f32)) -> (f32, f32, f32, f32) {
-        self.get_color_rgba_with_group(key, default, None)
+
+    pub fn get_integer(&self, key: StyleKey) -> u32 {
+        let value = self.values.get(&key).unwrap_or_else(|| panic!("StyleKey::{key:?} missing after validation"));
+        value_as_integer(value).unwrap_or_else(|e| panic!("StyleKey::{key:?}: {e}"))
     }
-    
-    /// Get color value with alpha, optional group parameter, and brightness applied
-    pub fn get_color_rgba_with_group(&self, key: &str, default: (f32, f32, f32, f32), group: Option<&str>) -> (f32, f32, f32, f32) {
-        let (r, g, b) = self.get_color_with_group(key, (default.0, default.1, default.2), group);
-        (r, g, b, default.3)
+
+    pub fn get_bool(&self, key: StyleKey) -> bool {
+        let value = self.values.get(&key).unwrap_or_else(|| panic!("StyleKey::{key:?} missing after validation"));
+        value_as_bool(value).unwrap_or_else(|e| panic!("StyleKey::{key:?}: {e}"))
     }
-    
-    /// Get float value with fallback
-    pub fn get_float(&self, key: &str, default: f32) -> f32 {
-        self.get_float_with_group(key, default, None)
-    }
-    
-    /// Get float value with optional group parameter and fallback
-    pub fn get_float_with_group(&self, key: &str, default: f32, group: Option<&str>) -> f32 {
-        match self.get_with_group(key, group) {
-            Some(value) => match value.as_float() {
-                Ok(val) => val,
-                Err(_) => {
-                    log::warn!("Warning: Style key '{}' exists but cannot be converted to float, using default: {}", key, default);
-                    default
-                }
-            },
-            None => {
-                log::warn!("Warning: Style key '{}' not found, using default float: {}", key, default);
-                default
-            }
-        }
-    }
-    
-    /// Get integer value with fallback
-    pub fn get_integer(&self, key: &str, default: u32) -> u32 {
-        self.get_integer_with_group(key, default, None)
-    }
-    
-    /// Get integer value with optional group parameter and fallback
-    pub fn get_integer_with_group(&self, key: &str, default: u32, group: Option<&str>) -> u32 {
-        match self.get_with_group(key, group) {
-            Some(value) => match value.as_integer() {
-                Ok(val) => val,
-                Err(_) => {
-                    log::warn!("Warning: Style key '{}' exists but cannot be converted to integer, using default: {}", key, default);
-                    default
-                }
-            },
-            None => {
-                log::warn!("Warning: Style key '{}' not found, using default integer: {}", key, default);
-                default
-            }
-        }
-    }
-    
-    /// Get boolean value with fallback
-    pub fn get_bool(&self, key: &str, default: bool) -> bool {
-        self.get_bool_with_group(key, default, None)
-    }
-    
-    /// Get boolean value with optional group parameter and fallback
-    pub fn get_bool_with_group(&self, key: &str, default: bool, group: Option<&str>) -> bool {
-        match self.get_with_group(key, group) {
-            Some(value) => match value.as_bool() {
-                Ok(val) => val,
-                Err(_) => {
-                    log::warn!("Warning: Style key '{}' exists but cannot be converted to boolean, using default: {}", key, default);
-                    default
-                }
-            },
-            None => {
-                log::warn!("Warning: Style key '{}' not found, using default boolean: {}", key, default);
-                default
-            }
-        }
-    }
-    
-    /// Get string value with fallback
-    pub fn get_string(&self, key: &str, default: &str) -> String {
-        self.get_string_with_group(key, default, None)
-    }
-    
-    /// Get string value with optional group parameter and fallback
-    pub fn get_string_with_group(&self, key: &str, default: &str, group: Option<&str>) -> String {
-        match self.get_with_group(key, group) {
-            Some(value) => match value.as_string() {
-                Ok(val) => val.to_string(),
-                Err(_) => {
-                    log::warn!("Warning: Style key '{}' exists but cannot be converted to string, using default: '{}'", key, default);
-                    default.to_string()
-                }
-            },
-            None => {
-                log::warn!("Warning: Style key '{}' not found, using default string: '{}'", key, default);
-                default.to_string()
-            }
-        }
-    }
-    
-    /// Load default style values
-    fn load_defaults(&mut self) {
-        // Ensure default group exists
-        self.values.insert("default".to_string(), HashMap::new());
-        
-        // Global defaults
-        self.set(GLOBAL_CONTRAST, UIStyleValue::Float(1.0));
-        self.set(GLOBAL_BACKGROUND_COLOR, UIStyleValue::Color("#000000".to_string()));
-        self.set(GLOBAL_FONT_PATH, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
-        self.set(GLOBAL_FONT_SIZE, UIStyleValue::Integer(DEFAULT_GLOBAL_FONT_SIZE));
-        
-        // Page manager defaults
-        self.set(PAGE_BUTTON_LABEL_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
-        self.set(PAGE_BUTTON_LABEL_FONT_SIZE, UIStyleValue::Integer(24));
-        self.set(PAGE_BUTTON_LABEL_ORIENTATION, UIStyleValue::String("vertical".to_string()));
-        self.set(PAGE_BUTTON_LABEL_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
-        self.set(PAGE_BUTTON_PRESSED_FRAME_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
-        self.set(PAGE_BUTTON_PRESSED_FRAME_WIDTH, UIStyleValue::Float(2.0));
-        self.set(PAGE_BUTTON_PRESSED_FRAME_PADDING, UIStyleValue::Float(4.0));
-        //self.set(PAGE_STATUS_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
-        self.set(PAGE_STATUS_FONT, UIStyleValue::String(TERMINAL_FONT_PATH.to_string()));
-        self.set(PAGE_STATUS_FONT_SIZE, UIStyleValue::Integer(14));
-        self.set(PAGE_STATUS_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
 
-        // Gauge defaults
-        self.set(GAUGE_BACKGROUND_COLOR, UIStyleValue::Color("#000000".to_string()));
-        self.set(GAUGE_BORDER_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
-        self.set(GAUGE_BORDER_WIDTH, UIStyleValue::Float(2.0));
-        self.set(GAUGE_RADIUS, UIStyleValue::Float(80.0));
-        
-        // Needle defaults
-        self.set(GAUGE_NEEDLE_COLOR, UIStyleValue::Color("#FF0000".to_string()));
-        self.set(GAUGE_NEEDLE_WIDTH, UIStyleValue::Float(8.0));
-        self.set(GAUGE_NEEDLE_LENGTH, UIStyleValue::Float(0.8));
-        self.set(GAUGE_NEEDLE_TIP_WIDTH, UIStyleValue::Float(2.0));
-        self.set(GAUGE_NEEDLE_CENTER_COLOR, UIStyleValue::Color("#404040".to_string()));
-        self.set(GAUGE_NEEDLE_CENTER_RADIUS, UIStyleValue::Float(8.0));
-        self.set(GAUGE_NEEDLE_SHADOW_ENABLED, UIStyleValue::Boolean(false));
-        self.set(GAUGE_NEEDLE_SHADOW_COLOR, UIStyleValue::Color("#000000".to_string()));
-        self.set(GAUGE_NEEDLE_GLOW_ENABLED, UIStyleValue::Boolean(false));
-
-        // Gauge marks defaults
-        self.set(GAUGE_MAJOR_MARK_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
-        self.set(GAUGE_MAJOR_MARK_WIDTH, UIStyleValue::Float(2.0));
-        self.set(GAUGE_MAJOR_MARK_LENGTH, UIStyleValue::Float(16.0));
-        self.set(GAUGE_MAJOR_MARK_OFFSET, UIStyleValue::Float(0.0));
-        self.set(GAUGE_MAJOR_MARK_ENABLED, UIStyleValue::Boolean(true));
-        self.set(GAUGE_MAJOR_MARK_COUNT, UIStyleValue::Integer(10));
-
-        self.set(GAUGE_MINOR_MARK_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
-        self.set(GAUGE_MINOR_MARK_WIDTH, UIStyleValue::Float(2.0));
-        self.set(GAUGE_MINOR_MARK_LENGTH, UIStyleValue::Float(10.0));
-        self.set(GAUGE_MINOR_MARK_OFFSET, UIStyleValue::Float(0.0));
-        self.set(GAUGE_MINOR_MARK_ENABLED, UIStyleValue::Boolean(true));
-        self.set(GAUGE_MINOR_MARK_COUNT, UIStyleValue::Integer(37));
-        
-        // Label defaults
-        self.set(GAUGE_LABEL_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
-        self.set(GAUGE_LABEL_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
-        self.set(GAUGE_LABEL_FONT_SIZE, UIStyleValue::Integer(24));
-        self.set(GAUGE_LABEL_OFFSET, UIStyleValue::Float(-35.0));   // Negative to move inside the gauge
-        self.set(GAUGE_LABEL_ENABLED, UIStyleValue::Boolean(true));
-        
-        self.set(GAUGE_TITLE_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
-        self.set(GAUGE_TITLE_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
-        self.set(GAUGE_TITLE_FONT_SIZE, UIStyleValue::Integer(24));
-        self.set(GAUGE_TITLE_OFFSET_H, UIStyleValue::Float(0.0));
-        self.set(GAUGE_TITLE_OFFSET_V, UIStyleValue::Float(-20.0));
-        self.set(GAUGE_TITLE_ENABLED, UIStyleValue::Boolean(true));
-        
-        self.set(GAUGE_UNIT_COLOR, UIStyleValue::Color("#cccccc".to_string()));
-        self.set(GAUGE_UNIT_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
-        self.set(GAUGE_UNIT_FONT_SIZE, UIStyleValue::Integer(18));
-        self.set(GAUGE_UNIT_OFFSET_H, UIStyleValue::Float(0.0));
-        self.set(GAUGE_UNIT_OFFSET_V, UIStyleValue::Float(50.0));
-        self.set(GAUGE_UNIT_ENABLED, UIStyleValue::Boolean(true));
-        
-        // Zone defaults
-        self.set(GAUGE_NORMAL_ZONE_COLOR, UIStyleValue::Color("#008800".to_string()));
-        self.set(GAUGE_NORMAL_ZONE_WIDTH, UIStyleValue::Float(4.0));
-        self.set(GAUGE_NORMAL_ZONE_ENABLED, UIStyleValue::Boolean(false));
-
-        self.set(GAUGE_WARNING_ZONE_COLOR, UIStyleValue::Color("#FFAA00".to_string()));
-        self.set(GAUGE_WARNING_ZONE_WIDTH, UIStyleValue::Float(4.0));
-        self.set(GAUGE_WARNING_ZONE_ENABLED, UIStyleValue::Boolean(false));
-        
-        self.set(GAUGE_CRITICAL_ZONE_COLOR, UIStyleValue::Color("#FF0000".to_string()));
-        self.set(GAUGE_CRITICAL_ZONE_WIDTH, UIStyleValue::Float(4.0));
-        self.set(GAUGE_CRITICAL_ZONE_ENABLED, UIStyleValue::Boolean(false));
-        
-        self.set(GAUGE_INACTIVE_ZONE_COLOR, UIStyleValue::Color("#202020".to_string()));
-        self.set(GAUGE_INACTIVE_ZONE_WIDTH, UIStyleValue::Float(4.0));
-        self.set(GAUGE_INACTIVE_ZONE_ENABLED, UIStyleValue::Boolean(true));
-
-        // Bar defaults
-        self.set(BAR_BACKGROUND_COLOR, UIStyleValue::Color("#404040".to_string()));
-        self.set(BAR_BACKGROUND_ENABLED, UIStyleValue::Boolean(false));
-        self.set(BAR_BORDER_COLOR, UIStyleValue::Color("#FFA500".to_string()));
-        self.set(BAR_BORDER_ENABLED, UIStyleValue::Boolean(true));
-        self.set(BAR_BORDER_WIDTH, UIStyleValue::Float(4.0));
-        self.set(BAR_CORNER_RADIUS, UIStyleValue::Float(8.0));
-
-        self.set(BAR_EMPTY_COLOR, UIStyleValue::Color("#202020".to_string()));
-        self.set(BAR_NORMAL_COLOR, UIStyleValue::Color("#FF7D00".to_string()));
-        self.set(BAR_WARNING_COLOR, UIStyleValue::Color("#FFFF00".to_string()));
-        self.set(BAR_CRITICAL_COLOR, UIStyleValue::Color("#FF0000".to_string()));
-
-        self.set(BAR_MARKS_COLOR, UIStyleValue::Color("#FF7D00".to_string()));
-        self.set(BAR_MARKS_WIDTH, UIStyleValue::Float(12.0));
-        self.set(BAR_MARKS_THICKNESS, UIStyleValue::Float(4.0));
-
-        self.set(BAR_MARK_LABELS_COLOR, UIStyleValue::Color("#FF7D00".to_string()));
-
-        self.set(BAR_SEGMENT_COUNT, UIStyleValue::Integer(10));
-        self.set(BAR_SEGMENT_GAP, UIStyleValue::Float(2.0));
-
-        // Compass defaults
-        self.set(COMPASS_MAJOR_MARK_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
-        self.set(COMPASS_MINOR_MARK_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
-        self.set(COMPASS_LABEL_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
-        self.set(COMPASS_HEADING_COLOR, UIStyleValue::Color("#0088ff".to_string()));
-        self.set(COMPASS_LABEL_FONT, UIStyleValue::String(DEFAULT_GLOBAL_FONT_PATH.to_string()));
-        self.set(COMPASS_LABEL_FONT_SIZE, UIStyleValue::Integer(16));
-        self.set(COMPASS_ARROW_COLOR, UIStyleValue::Color("#FF7D00".to_string()));
-        self.set(COMPASS_CENTER_LINE_COLOR, UIStyleValue::Color("#FF7D00".to_string()));
-        self.set(COMPASS_HDOP_EXCELLENT_COLOR, UIStyleValue::Color("#00FF00".to_string()));
-        self.set(COMPASS_HDOP_GOOD_COLOR, UIStyleValue::Color("#FFFF00".to_string()));
-        self.set(COMPASS_HDOP_MODERATE_COLOR, UIStyleValue::Color("#FFAA00".to_string()));
-        self.set(COMPASS_HDOP_POOR_COLOR, UIStyleValue::Color("#FF0000".to_string()));
-
-        // Pitch (artificial horizon) defaults
-        self.set(PITCH_SKY_COLOR, UIStyleValue::Color("#6BA4D9".to_string()));
-        self.set(PITCH_GROUND_COLOR, UIStyleValue::Color("#734B2A".to_string()));
-        self.set(PITCH_ABOVE_HORIZON_LABEL_COLOR, UIStyleValue::Color("#000000".to_string()));
-        self.set(PITCH_BELOW_HORIZON_LABEL_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
-        self.set(PITCH_BORDER_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
-        self.set(PITCH_BORDER_WIDTH, UIStyleValue::Float(2.0));
-        self.set(PITCH_LABEL_FONT, UIStyleValue::String(DEFAULT_GLOBAL_FONT_PATH.to_string()));
-        self.set(PITCH_LABEL_FONT_SIZE, UIStyleValue::Integer(42));
-        self.set(ROLL_INDICATOR_COLOR, UIStyleValue::Color("#FFFF00".to_string()));
-        self.set(ROLL_SCALE_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
-        self.set(ROLL_SCALE_LABEL_FONT, UIStyleValue::String(DEFAULT_GLOBAL_FONT_PATH.to_string()));
-        self.set(ROLL_SCALE_LABEL_FONT_SIZE, UIStyleValue::Integer(32));
-
-        // Text defaults
-        self.set(TEXT_PRIMARY_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
-        self.set(TEXT_SECONDARY_COLOR, UIStyleValue::Color("#A0A0A0".to_string()));
-        self.set(TEXT_ACCENT_COLOR, UIStyleValue::Color("#0080FF".to_string()));
-        self.set(TEXT_WARNING_COLOR, UIStyleValue::Color("#FFFF00".to_string()));
-        self.set(TEXT_ERROR_COLOR, UIStyleValue::Color("#FF0000".to_string()));
-        
-        self.set(TEXT_PRIMARY_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
-        self.set(TEXT_PRIMARY_FONT_SIZE, UIStyleValue::Integer(24));
-        self.set(TEXT_SECONDARY_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
-        self.set(TEXT_SECONDARY_FONT_SIZE, UIStyleValue::Integer(20));
-        self.set(TEXT_MONOSPACE_FONT, UIStyleValue::String(TERMINAL_FONT_PATH.to_string()));
-        self.set(TEXT_MONOSPACE_FONT_SIZE, UIStyleValue::Integer(16));
-        self.set(TEXT_SMALL_FONT, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
-        self.set(TEXT_SMALL_FONT_SIZE, UIStyleValue::Integer(14));
-
-        self.set(TEXT_LINE_SPACING, UIStyleValue::Float(1.2));
-        self.set(TEXT_LETTER_SPACING, UIStyleValue::Float(0.0));
-
-        // Terminal / scrolling text box defaults (amber theme, matches TEXT_PRIMARY_COLOR)
-        self.set(TERMINAL_BACKGROUND_COLOR, UIStyleValue::Color("#000000".to_string()));
-        self.set(TERMINAL_BACKGROUND_ENABLED, UIStyleValue::Boolean(true));
-        self.set(TERMINAL_BORDER_COLOR, UIStyleValue::Color("#ffffff".to_string()));
-        self.set(TERMINAL_BORDER_ENABLED, UIStyleValue::Boolean(true));
-        self.set(TERMINAL_BORDER_WIDTH, UIStyleValue::Float(2.0));
-        self.set(TERMINAL_TEXT_COLOR, UIStyleValue::Color("#ffffff".to_string()));
-        self.set(TERMINAL_PADDING, UIStyleValue::Float(8.0));
-        
-        // Indicator defaults
-        self.set(INDICATOR_NORMAL_COLOR, UIStyleValue::Color("#00FF00".to_string()));
-        self.set(INDICATOR_WARNING_COLOR, UIStyleValue::Color("#FFAA00".to_string()));
-        self.set(INDICATOR_CRITICAL_COLOR, UIStyleValue::Color("#FF0000".to_string()));
-        self.set(INDICATOR_OFF_COLOR, UIStyleValue::Color("#404040".to_string()));
-        self.set(INDICATOR_BLINK_SPEED, UIStyleValue::Float(2.0));
-        self.set(INDICATOR_GLOW_ENABLED, UIStyleValue::Boolean(false));
-        self.set(INDICATOR_GLOW_RADIUS, UIStyleValue::Float(5.0));
-        self.set(INDICATOR_SIZE, UIStyleValue::Float(24.0));
-        
-        // Digital display defaults (amber theme like classic LCD displays)
-        self.set(DIGITAL_DISPLAY_FONT, UIStyleValue::String(DIGITAL_DISPLAY_FONT_ITALIC_PATH.to_string()));
-        self.set(DIGITAL_DISPLAY_FONT_SIZE, UIStyleValue::Integer(32));
-        self.set(DIGITAL_DISPLAY_SCALE, UIStyleValue::Float(2.0));
-        self.set(DIGITAL_DISPLAY_ACTIVE_COLOR, UIStyleValue::Color("#FFA500".to_string())); // Amber active segments
-        self.set(DIGITAL_DISPLAY_INACTIVE_COLOR, UIStyleValue::Color("#996600".to_string())); // Dark amber inactive segments
-        self.set(DIGITAL_DISPLAY_INACTIVE_COLOR_BLENDING, UIStyleValue::Float(0.4));
-        self.set(DIGITAL_DISPLAY_BACKGROUND_COLOR, UIStyleValue::Color("#000000".to_string())); // Amber background
-        self.set(DIGITAL_DISPLAY_BACKGROUND_ENABLED, UIStyleValue::Boolean(false));
-        self.set(DIGITAL_DISPLAY_BORDER_ENABLED, UIStyleValue::Boolean(true));
-        self.set(DIGITAL_DISPLAY_BORDER_COLOR, UIStyleValue::Color("#FFA500".to_string()));
-        self.set(DIGITAL_DISPLAY_BORDER_WIDTH, UIStyleValue::Float(4.0));
-        self.set(DIGITAL_DISPLAY_BORDER_RADIUS, UIStyleValue::Float(10.0));
-
-        // Extended digital display font defaults
-        self.set(DIGITAL_DISPLAY_FONT_ITALIC, UIStyleValue::String(DIGITAL_DISPLAY_FONT_ITALIC_PATH.to_string()));
-        self.set(DIGITAL_DISPLAY_14SEG_FONT, UIStyleValue::String(DIGITAL_DISPLAY_14SEG_FONT_PATH.to_string()));
-        self.set(DIGITAL_DISPLAY_14SEG_ITALIC, UIStyleValue::String(DIGITAL_DISPLAY_14SEG_ITALIC_PATH.to_string()));
-        
-        // Animation defaults
-        self.set(ANIMATION_NEEDLE_SPEED, UIStyleValue::Float(1.0));
-        self.set(ANIMATION_BAR_SPEED, UIStyleValue::Float(1.0));
-        self.set(ANIMATION_SMOOTH_ENABLED, UIStyleValue::Boolean(true));
-
-        // Alerts defaults
-        self.set(ALERT_FONT_PATH, UIStyleValue::String("/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf".to_string()));
-        self.set(ALERT_FONT_SIZE, UIStyleValue::Integer(48));
-        self.set(ALERT_WARNING_COLOR, UIStyleValue::Color("#FFFF00".to_string()));
-        self.set(ALERT_CRITICAL_COLOR, UIStyleValue::Color("#FF0000".to_string()));
-        self.set(ALERT_BACKGROUND_COLOR, UIStyleValue::Color("#000000".to_string()));
-        self.set(ALERT_BORDER_COLOR, UIStyleValue::Color("#FFFFFF".to_string()));
-        self.set(ALERT_BORDER_WIDTH, UIStyleValue::Float(4.0));
-        self.set(ALERT_MARGIN, UIStyleValue::Float(8.0));
-        self.set(ALERT_CORNER_RADIUS, UIStyleValue::Float(8.0));
-        self.set(ALERT_SOUND_PATH, UIStyleValue::String("".to_string())); // No sound by default
-    }
-}
-
-impl Default for UIStyle {
-    fn default() -> Self {
-        Self::new()
+    pub fn get_string(&self, key: StyleKey) -> String {
+        let value = self.values.get(&key).unwrap_or_else(|| panic!("StyleKey::{key:?} missing after validation"));
+        value_as_string(value).unwrap_or_else(|e| panic!("StyleKey::{key:?}: {e}"))
     }
 }
 
@@ -830,13 +494,6 @@ pub fn blend_colors(color1: (f32, f32, f32), color2: (f32, f32, f32), weight: f3
     )
 }
 
-/// Check if string is a named color
-fn is_named_color(s: &str) -> bool {
-    matches!(s.to_lowercase().as_str(), 
-        "black" | "white" | "red" | "green" | "blue" | "yellow" | 
-        "cyan" | "magenta" | "gray" | "grey" | "orange")
-}
-
 // =============================================================================
 // TESTS
 // =============================================================================
@@ -844,7 +501,7 @@ fn is_named_color(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_color_parsing() {
         assert_eq!(parse_color("#FF0000"), Ok((1.0, 0.0, 0.0)));
@@ -853,56 +510,110 @@ mod tests {
         assert_eq!(parse_color("white"), Ok((1.0, 1.0, 1.0)));
         assert!(parse_color("invalid").is_err());
     }
-    
-    #[test]
-    fn test_style_value_conversion() {
-        let color_val = UIStyleValue::Color("#FF0000".to_string());
-        assert_eq!(color_val.as_color().unwrap(), (1.0, 0.0, 0.0));
-        
-        let float_val = UIStyleValue::Float(2.5);
-        assert_eq!(float_val.as_float().unwrap(), 2.5);
-        
-        let bool_val = UIStyleValue::Boolean(true);
-        assert_eq!(bool_val.as_bool().unwrap(), true);
-    }
-    
-    #[test]
-    fn test_json_serialization() {
-        let mut style = UIStyle::new();
-        style.set(GAUGE_NEEDLE_COLOR, UIStyleValue::Color("#FF0000".to_string()));
-        style.set(GAUGE_BORDER_WIDTH, UIStyleValue::Float(2.5));
-        style.set(GAUGE_LABEL_ENABLED, UIStyleValue::Boolean(true));
-        
-        let json = style.to_json().unwrap();
-        let loaded_style = UIStyle::from_json(&json).unwrap();
-        
-        assert_eq!(loaded_style.get_color(GAUGE_NEEDLE_COLOR, (0.0, 0.0, 0.0)), (1.0, 0.0, 0.0));
-        assert_eq!(loaded_style.get_float(GAUGE_BORDER_WIDTH, 0.0), 2.5);
-        assert_eq!(loaded_style.get_bool(GAUGE_LABEL_ENABLED, false), true);
+
+    fn minimal_json_for_all_keys() -> String {
+        let mut map = serde_json::Map::new();
+        for key in StyleKey::ALL {
+            let value = match key.kind() {
+                ValueKind::Color => serde_json::json!("#FF0000"),
+                ValueKind::Float => serde_json::json!(1.0),
+                ValueKind::Integer => serde_json::json!(1),
+                ValueKind::Boolean => serde_json::json!(true),
+                ValueKind::String => serde_json::json!("value"),
+            };
+            map.insert(key.json_name().to_string(), value);
+        }
+        serde_json::Value::Object(map).to_string()
     }
 
     #[test]
-    fn test_warning_messages() {
-        let style = UIStyle::new();
-        
-        // Test color warning
-        let color = style.get_color("non_existent_color", (0.5, 0.5, 0.5));
-        assert_eq!(color, (0.5, 0.5, 0.5));
-        
-        // Test float warning
-        let float_val = style.get_float("non_existent_float", 3.14);
-        assert_eq!(float_val, 3.14);
-        
-        // Test integer warning
-        let int_val = style.get_integer("non_existent_int", 42);
-        assert_eq!(int_val, 42);
-        
-        // Test boolean warning
-        let bool_val = style.get_bool("non_existent_bool", true);
-        assert_eq!(bool_val, true);
-        
-        // Test string warning
-        let string_val = style.get_string("non_existent_string", "default");
-        assert_eq!(string_val, "default");
+    fn loads_when_every_key_present_and_well_typed() {
+        let style = UIStyle::from_json(&minimal_json_for_all_keys()).expect("should validate");
+        assert_eq!(style.get_color(StyleKey::GaugeNeedleColor), (1.0, 0.0, 0.0));
+        assert_eq!(style.get_integer(StyleKey::GaugeMinorMarkCount), 1);
+        assert_eq!(style.get_bool(StyleKey::GaugeLabelEnabled), true);
+        assert_eq!(style.get_string(StyleKey::GaugeLabelFont), "value");
+    }
+
+    #[test]
+    fn integer_key_coerces_from_a_float_shaped_json_number() {
+        // ALERT_FONT_SIZE-style case: an Integer-kind key stored as e.g. `48.0`.
+        let mut map = serde_json::Map::new();
+        for key in StyleKey::ALL {
+            let value = if *key == StyleKey::AlertFontSize {
+                serde_json::json!(48.0)
+            } else {
+                match key.kind() {
+                    ValueKind::Color => serde_json::json!("#FF0000"),
+                    ValueKind::Float => serde_json::json!(1.0),
+                    ValueKind::Integer => serde_json::json!(1),
+                    ValueKind::Boolean => serde_json::json!(true),
+                    ValueKind::String => serde_json::json!("value"),
+                }
+            };
+            map.insert(key.json_name().to_string(), value);
+        }
+        let json = serde_json::Value::Object(map).to_string();
+        let style = UIStyle::from_json(&json).expect("should validate");
+        assert_eq!(style.get_integer(StyleKey::AlertFontSize), 48);
+        assert_eq!(style.get_float(StyleKey::AlertFontSize), 48.0);
+    }
+
+    #[test]
+    fn missing_key_is_a_load_error() {
+        let mut map = serde_json::Map::new();
+        for key in StyleKey::ALL {
+            if *key == StyleKey::GaugeNeedleColor {
+                continue; // deliberately omitted
+            }
+            let value = match key.kind() {
+                ValueKind::Color => serde_json::json!("#FF0000"),
+                ValueKind::Float => serde_json::json!(1.0),
+                ValueKind::Integer => serde_json::json!(1),
+                ValueKind::Boolean => serde_json::json!(true),
+                ValueKind::String => serde_json::json!("value"),
+            };
+            map.insert(key.json_name().to_string(), value);
+        }
+        let json = serde_json::Value::Object(map).to_string();
+        let err = UIStyle::from_json(&json).expect_err("missing key should fail");
+        assert!(err.contains("gauge_needle_color"));
+    }
+
+    #[test]
+    fn wrong_type_is_a_load_error() {
+        let mut map = serde_json::Map::new();
+        for key in StyleKey::ALL {
+            let value = if *key == StyleKey::GaugeBorderWidth {
+                serde_json::json!("not a number")
+            } else {
+                match key.kind() {
+                    ValueKind::Color => serde_json::json!("#FF0000"),
+                    ValueKind::Float => serde_json::json!(1.0),
+                    ValueKind::Integer => serde_json::json!(1),
+                    ValueKind::Boolean => serde_json::json!(true),
+                    ValueKind::String => serde_json::json!("value"),
+                }
+            };
+            map.insert(key.json_name().to_string(), value);
+        }
+        let json = serde_json::Value::Object(map).to_string();
+        let err = UIStyle::from_json(&json).expect_err("wrong-typed key should fail");
+        assert!(err.contains("gauge_border_width"));
+    }
+
+    #[test]
+    fn reports_every_problem_at_once() {
+        let json = "{}"; // every key missing
+        let err = UIStyle::from_json(json).expect_err("empty file should fail");
+        assert_eq!(err.matches("missing").count(), StyleKey::ALL.len());
+    }
+
+    /// Exercises the repo's actual ui_style.json end to end, so a transcription mistake
+    /// fails `cargo test` instead of only surfacing at dashboard startup.
+    #[test]
+    fn repo_ui_style_json_loads_successfully() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("ui_style.json");
+        UIStyle::from_file(&path).expect("repo ui_style.json should load and validate");
     }
 }

@@ -827,7 +827,7 @@ pub fn run_indicator_zero_position_test(context: &mut GraphicsContext) -> Result
     use crate::indicators::needle_indicator::{NeedleIndicator, NeedleGaugeMarksDecorator};
     use crate::indicators::vertical_bar_indicator::VerticalBarIndicator;
     use crate::indicators::indicator::{Indicator, IndicatorBounds};
-    use crate::graphics::ui_style::UIStyle;
+    use crate::graphics::ui_style::{UIStyle, StyleKey};
     use crate::hardware::sensor_value::SensorValue;
     
     log::info!("=== Indicator Zero Position Test ===");
@@ -847,7 +847,7 @@ pub fn run_indicator_zero_position_test(context: &mut GraphicsContext) -> Result
     }
     
     // Create UI style
-    let ui_style = UIStyle::new();
+    let ui_style = UIStyle::from_file(&UIStyle::default_path()).expect("ui_style.json should load and validate");
     
     // Create zero value providers for testing
     let fuel_provider = TestZeroAnalogDataProvider::new(HWInput::HwFuelLvl);
@@ -889,13 +889,13 @@ pub fn run_indicator_zero_position_test(context: &mut GraphicsContext) -> Result
         0.8,                    // Needle length
         0.05,                   // Base width
         0.02,                   // Tip width
-        "GAUGE_NEEDLE_COLOR"   // needle color key
+        StyleKey::GaugeNeedleColor   // needle color key
     ).with_decorators(vec![
         Box::new(NeedleGaugeMarksDecorator::new(
             6,                                      // Number of marks
             15.0,                                   // Mark length
             2.0,                                    // Mark width
-            "gauge_major_mark_color",              // mark color key
+            StyleKey::GaugeMajorMarkColor,              // mark color key
             90.0,                                   // Radius for marks
             -225.0f32.to_radians(),                 // Start angle
             45.0f32.to_radians()                    // End angle
@@ -908,13 +908,13 @@ pub fn run_indicator_zero_position_test(context: &mut GraphicsContext) -> Result
         0.8,
         0.05,
         0.02,
-        "GAUGE_NEEDLE_COLOR"   // needle color key
+        StyleKey::GaugeNeedleColor   // needle color key
     ).with_decorators(vec![
         Box::new(NeedleGaugeMarksDecorator::new(
             6,                                      // Number of marks
             15.0,                                   // Mark length
             2.0,                                    // Mark width
-            "gauge_major_mark_color",              // mark color key
+            StyleKey::GaugeMajorMarkColor,              // mark color key
             90.0,                                   // Radius for marks
             -225.0f32.to_radians(),                 // Start angle
             45.0f32.to_radians()                    // End angle
@@ -1012,7 +1012,7 @@ pub fn run_indicator_middle_position_test(context: &mut GraphicsContext) -> Resu
     use crate::indicators::needle_indicator::{NeedleIndicator, NeedleGaugeMarksDecorator};
     use crate::indicators::vertical_bar_indicator::VerticalBarIndicator;
     use crate::indicators::indicator::{Indicator, IndicatorBounds};
-    use crate::graphics::ui_style::UIStyle;
+    use crate::graphics::ui_style::{UIStyle, StyleKey};
     use crate::hardware::sensor_value::SensorValue;
     
     log::info!("=== Indicator Middle Position Test ===");
@@ -1032,7 +1032,7 @@ pub fn run_indicator_middle_position_test(context: &mut GraphicsContext) -> Resu
     }
     
     // Create UI style
-    let ui_style = UIStyle::new();
+    let ui_style = UIStyle::from_file(&UIStyle::default_path()).expect("ui_style.json should load and validate");
     
     // Create middle value providers for testing
     let fuel_provider = TestMiddleAnalogDataProvider::new(HWInput::HwFuelLvl);
@@ -1074,13 +1074,13 @@ pub fn run_indicator_middle_position_test(context: &mut GraphicsContext) -> Resu
         0.8,                    // Needle length
         0.05,                   // Base width
         0.02,                   // Tip width
-        "GAUGE_NEEDLE_COLOR"    // needle color key
+        StyleKey::GaugeNeedleColor    // needle color key
     ).with_decorators(vec![
         Box::new(NeedleGaugeMarksDecorator::new(
             6,                                      // Number of marks
             15.0,                                   // Mark length
             2.0,                                    // Mark width
-            "gauge_major_mark_color",              // mark color key
+            StyleKey::GaugeMajorMarkColor,              // mark color key
             90.0,                                   // Radius for marks
             -225.0f32.to_radians(),                 // Start angle
             45.0f32.to_radians()                    // End angle
@@ -1093,13 +1093,13 @@ pub fn run_indicator_middle_position_test(context: &mut GraphicsContext) -> Resu
         0.8,
         0.05,
         0.02,
-        "GAUGE_NEEDLE_COLOR"    // needle color key
+        StyleKey::GaugeNeedleColor    // needle color key
     ).with_decorators(vec![
         Box::new(NeedleGaugeMarksDecorator::new(
             6,                                      // Number of marks
             15.0,                                   // Mark length
             2.0,                                    // Mark width
-            "gauge_major_mark_color",              // mark color key
+            StyleKey::GaugeMajorMarkColor,              // mark color key
             90.0,                                   // Radius for marks
             -225.0f32.to_radians(),                 // Start angle
             45.0f32.to_radians()                    // End angle
@@ -1183,7 +1183,7 @@ pub fn run_indicator_max_position_test(context: &mut GraphicsContext) -> Result<
     use crate::indicators::needle_indicator::{NeedleIndicator, NeedleGaugeMarksDecorator};
     use crate::indicators::vertical_bar_indicator::VerticalBarIndicator;
     use crate::indicators::indicator::{Indicator, IndicatorBounds};
-    use crate::graphics::ui_style::UIStyle;
+    use crate::graphics::ui_style::{UIStyle, StyleKey};
     use crate::hardware::sensor_value::SensorValue;
     
     log::info!("=== Indicator Maximum Position Test ===");
@@ -1203,7 +1203,7 @@ pub fn run_indicator_max_position_test(context: &mut GraphicsContext) -> Result<
     }
     
     // Create UI style
-    let ui_style = UIStyle::new();
+    let ui_style = UIStyle::from_file(&UIStyle::default_path()).expect("ui_style.json should load and validate");
     
     // Create maximum value providers for testing
     let fuel_provider = TestMaxAnalogDataProvider::new(HWInput::HwFuelLvl);
@@ -1245,13 +1245,13 @@ pub fn run_indicator_max_position_test(context: &mut GraphicsContext) -> Result<
         0.8,                    // Needle length
         0.05,                   // Base width
         0.02,                   // Tip width
-        "GAUGE_NEEDLE_COLOR"   // needle color key
+        StyleKey::GaugeNeedleColor   // needle color key
     ).with_decorators(vec![
         Box::new(NeedleGaugeMarksDecorator::new(
             6,                                      // Number of marks
             15.0,                                   // Mark length
             2.0,                                    // Mark width
-            "gauge_major_mark_color",              // mark color key
+            StyleKey::GaugeMajorMarkColor,              // mark color key
             90.0,                                   // Radius for marks
             -225.0f32.to_radians(),                 // Start angle
             45.0f32.to_radians()                    // End angle
@@ -1264,13 +1264,13 @@ pub fn run_indicator_max_position_test(context: &mut GraphicsContext) -> Result<
         0.8,
         0.05,
         0.02,
-        "GAUGE_NEEDLE_COLOR"    // needle color key
+        StyleKey::GaugeNeedleColor    // needle color key
     ).with_decorators(vec![
         Box::new(NeedleGaugeMarksDecorator::new(
             6,                                      // Number of marks
             15.0,                                   // Mark length
             2.0,                                    // Mark width
-            "gauge_major_mark_color",              // mark color key
+            StyleKey::GaugeMajorMarkColor,              // mark color key
             90.0,                                   // Radius for marks
             -225.0f32.to_radians(),                 // Start angle
             45.0f32.to_radians()                    // End angle
@@ -1367,7 +1367,7 @@ pub fn run_fuel_level_grid_test(context: &mut GraphicsContext) -> Result<(), Str
     log::info!("{:>9} | {:>8} | {:>6} | {:>10} {:>10} | {}", "elapsed", "frames", "fps", "avg µs", "max µs", "VmRSS");
     log::info!("{}", "-".repeat(72));
 
-    let ui_style = UIStyle::new();
+    let ui_style = UIStyle::from_file(&UIStyle::default_path()).expect("ui_style.json should load and validate");
 
     const COLS: usize = 10;
     const ROWS: usize = 5;
@@ -1479,7 +1479,7 @@ pub fn run_compass_test(context: &mut GraphicsContext) -> Result<(), String> {
         gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
     }
 
-    let ui_style = UIStyle::new();
+    let ui_style = UIStyle::from_file(&UIStyle::default_path()).expect("ui_style.json should load and validate");
     let gnss = TestGnssDataProvider::start();
     let frame = gnss.frame();
 
@@ -1499,9 +1499,9 @@ pub fn run_compass_test(context: &mut GraphicsContext) -> Result<(), String> {
 
     let mut heading_value = SensorValue::analog(0.0, 0.0, 359.999, "\u{00B0}", "Курс", "test_heading");
 
-    let info_font = ui_style.get_string(TEXT_MONOSPACE_FONT, TERMINAL_FONT_PATH);
-    let info_font_size = ui_style.get_integer(TEXT_MONOSPACE_FONT_SIZE, 16);
-    let info_color = ui_style.get_color(TEXT_PRIMARY_COLOR, (1.0, 0.5, 0.0));
+    let info_font = ui_style.get_string(StyleKey::TextMonospaceFont);
+    let info_font_size = ui_style.get_integer(StyleKey::TextMonospaceFontSize);
+    let info_color = ui_style.get_color(StyleKey::TextPrimaryColor);
 
     let start_time = Instant::now();
     while start_time.elapsed() < COMPASS_TEST_DURATION {

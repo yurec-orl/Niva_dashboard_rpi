@@ -118,9 +118,9 @@ impl GnssPage {
         // instead of silently drifting if that default ever changes.
         let heading_marker_arrow_width = 3.0;
 
-        let heading_label_color = ui_style.get_color(COMPASS_HEADING_COLOR, (0.9, 0.9, 1.0));
-        let heading_label_font = ui_style.get_string(COMPASS_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
-        let status_label_font = ui_style.get_string(COMPASS_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
+        let heading_label_color = ui_style.get_color(StyleKey::CompassHeadingColor);
+        let heading_label_font = ui_style.get_string(StyleKey::CompassLabelFont);
+        let status_label_font = ui_style.get_string(StyleKey::CompassLabelFont);
 
         let accuracy_start_angle = UP_ANGLE - HEADING_ACCURACY_MAX_HALF_SPREAD_DEG.to_radians();
         let accuracy_end_angle = UP_ANGLE + HEADING_ACCURACY_MAX_HALF_SPREAD_DEG.to_radians();
@@ -132,12 +132,12 @@ impl GnssPage {
             heading_accuracy_needle: NeedleIndicator::new(
                 accuracy_start_angle, accuracy_end_angle, 1.0,
                 heading_marker_arrow_width, heading_marker_arrow_width,
-                COMPASS_ARROW_COLOR,
+                StyleKey::CompassArrowColor,
             ).with_shape(Box::new(MarkNeedleShape::new(heading_marker_arrow_width, minor_mark_length))),
             heading_indicator: TextIndicator::new().with_font(heading_label_font, 36, 1.0).with_colors(heading_label_color, (1.0, 1.0, 0.0), (1.0, 0.0, 0.0)).
                 with_parameters(TextAlignment::Center, false, false, true).with_decorators(vec![
-                    Box::new(BoxDecorator::new(2.0, COMPASS_HEADING_COLOR, 0.0)),
-                    Box::new(TriangleDecorator::new([(0.5, 1.5), (0.35, 1.2), (0.65, 1.2)], 2.0, COMPASS_HEADING_COLOR, true)),
+                    Box::new(BoxDecorator::new(2.0, StyleKey::CompassHeadingColor, 0.0)),
+                    Box::new(TriangleDecorator::new([(0.5, 1.5), (0.35, 1.2), (0.65, 1.2)], 2.0, StyleKey::CompassHeadingColor, true)),
                 ]),
             hdop_indicator: HdopIndicator::new(),
             ins_link_indicator: TextIndicator::new()
@@ -414,15 +414,15 @@ impl GnssPage {
     }
 
     fn render_info_mode(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
-        let title_font = ui_style.get_string(TEXT_PRIMARY_FONT, DEFAULT_GLOBAL_FONT_PATH);
-        let title_font_size = ui_style.get_integer(TEXT_PRIMARY_FONT_SIZE, 24);
-        let title_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (1.0, 1.0, 1.0));
+        let title_font = ui_style.get_string(StyleKey::TextPrimaryFont);
+        let title_font_size = ui_style.get_integer(StyleKey::TextPrimaryFontSize);
+        let title_color = ui_style.get_color(StyleKey::TerminalTextColor);
         let header_color = title_color;
-        let text_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (0.8, 0.8, 0.8));
-        let warning_color = ui_style.get_color(TEXT_WARNING_COLOR, (1.0, 1.0, 0.0));
+        let text_color = ui_style.get_color(StyleKey::TerminalTextColor);
+        let warning_color = ui_style.get_color(StyleKey::TextWarningColor);
 
-        let font = ui_style.get_string(TEXT_MONOSPACE_FONT, TERMINAL_FONT_PATH);
-        let font_size = ui_style.get_integer(TEXT_MONOSPACE_FONT_SIZE, 16);
+        let font = ui_style.get_string(StyleKey::TextMonospaceFont);
+        let font_size = ui_style.get_integer(StyleKey::TextMonospaceFontSize);
 
         let w = context.width as f32;
 
@@ -455,12 +455,12 @@ impl GnssPage {
     fn render_pnp_mode(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
         use crate::hardware::sensor_value::{SensorValue, ValueConstraints, ValueMetadata};
 
-        let header_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (1.0, 1.0, 1.0));
-        let text_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (0.8, 0.8, 0.8));
-        let warning_color = ui_style.get_color(TEXT_WARNING_COLOR, (1.0, 1.0, 0.0));
+        let header_color = ui_style.get_color(StyleKey::TerminalTextColor);
+        let text_color = ui_style.get_color(StyleKey::TerminalTextColor);
+        let warning_color = ui_style.get_color(StyleKey::TextWarningColor);
 
-        let font = ui_style.get_string(TEXT_MONOSPACE_FONT, TERMINAL_FONT_PATH);
-        let font_size = ui_style.get_integer(TEXT_MONOSPACE_FONT_SIZE, 16);
+        let font = ui_style.get_string(StyleKey::TextMonospaceFont);
+        let font_size = ui_style.get_integer(StyleKey::TextMonospaceFontSize);
 
         let w = context.width as f32;
         let h = context.height as f32;
@@ -494,7 +494,7 @@ impl GnssPage {
         // same horizontal span, derived from the compass's own geometry so the two can't
         // drift out of alignment.
         
-        let heading_font = ui_style.get_string(COMPASS_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
+        let heading_font = ui_style.get_string(StyleKey::CompassLabelFont);
         let heading_font_height = context.get_line_height_with_font(1.0, &heading_font, 36)?;
         let heading_font_width = context.calculate_text_width_with_font("0000", 1.0, &heading_font, 36)?;
 
@@ -534,7 +534,7 @@ impl GnssPage {
         let half_angle_rad = self.pnp_mode.compass_indicator.visible_half_angle_deg().to_radians();
         let compass_bottom_y = cy - outer_r * half_angle_rad.cos();
 
-        let status_font = ui_style.get_string(COMPASS_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
+        let status_font = ui_style.get_string(StyleKey::CompassLabelFont);
         let status_box_height = context.get_line_height_with_font(1.0, &status_font, STATUS_LABEL_FONT_SIZE)? ;
         let status_box_y = (compass_bottom_y - status_box_height).min(h - status_box_height - 4.0);
 

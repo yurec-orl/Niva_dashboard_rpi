@@ -68,17 +68,17 @@ impl AlertManager {
             watchdogs: Vec::new(),
             alerts: Vec::new(),
             alert_style: AlertStyle {
-                font_path: ui_style.get_string(ALERT_FONT_PATH, DEFAULT_GLOBAL_FONT_PATH),
-                font_size: ui_style.get_float(ALERT_FONT_SIZE, 32.0),
-                warning_color: ui_style.get_color(ALERT_WARNING_COLOR, (1.0, 1.0, 0.0)),
-                critical_color: ui_style.get_color(ALERT_CRITICAL_COLOR, (1.0, 0.0, 0.0)),
-                border_color: ui_style.get_color(ALERT_BORDER_COLOR, (1.0, 1.0, 1.0)),
-                border_width: ui_style.get_float(ALERT_BORDER_WIDTH, 4.0),
-                margin: ui_style.get_float(ALERT_MARGIN, 8.0),
-                corner_radius: ui_style.get_float(ALERT_CORNER_RADIUS, 8.0),
-                background_color: ui_style.get_color(ALERT_BACKGROUND_COLOR, (0.0, 0.0, 0.0)),
+                font_path: ui_style.get_string(StyleKey::AlertFontPath),
+                font_size: ui_style.get_float(StyleKey::AlertFontSize),
+                warning_color: ui_style.get_color(StyleKey::AlertWarningColor),
+                critical_color: ui_style.get_color(StyleKey::AlertCriticalColor),
+                border_color: ui_style.get_color(StyleKey::AlertBorderColor),
+                border_width: ui_style.get_float(StyleKey::AlertBorderWidth),
+                margin: ui_style.get_float(StyleKey::AlertMargin),
+                corner_radius: ui_style.get_float(StyleKey::AlertCornerRadius),
+                background_color: ui_style.get_color(StyleKey::AlertBackgroundColor),
             },
-            sound_path: ui_style.get_string(ALERT_SOUND_PATH, ""),
+            sound_path: ui_style.get_string(StyleKey::AlertSoundPath),
         }
     }
 
@@ -319,7 +319,8 @@ mod tests {
 
     #[test]
     fn test_disabled_manager_does_not_raise_alerts() {
-        let ui_style = UIStyle::new();
+        let ui_style = UIStyle::from_file(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui_style.json"))
+            .expect("repo ui_style.json should load and validate");
         let mut manager = AlertManager::new(false, &ui_style);
         manager.add_watchdog(triggering_watchdog());
 
@@ -331,7 +332,8 @@ mod tests {
 
     #[test]
     fn test_check_watchdogs_raises_alert_for_triggering_condition() {
-        let ui_style = UIStyle::new();
+        let ui_style = UIStyle::from_file(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui_style.json"))
+            .expect("repo ui_style.json should load and validate");
         let mut manager = AlertManager::new(true, &ui_style);
         manager.add_watchdog(triggering_watchdog());
 
@@ -343,7 +345,8 @@ mod tests {
 
     #[test]
     fn test_check_watchdogs_does_not_raise_duplicate_while_alert_active() {
-        let ui_style = UIStyle::new();
+        let ui_style = UIStyle::from_file(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui_style.json"))
+            .expect("repo ui_style.json should load and validate");
         let mut manager = AlertManager::new(true, &ui_style);
         manager.add_watchdog(triggering_watchdog());
 
@@ -361,7 +364,8 @@ mod tests {
         // for an always-on "mode active" indicator: as long as the condition persists, a
         // just-expired alert must be replaced by a fresh (active) one within the same
         // check_watchdogs call, not a frame later (that gap would show as a blink).
-        let ui_style = UIStyle::new();
+        let ui_style = UIStyle::from_file(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui_style.json"))
+            .expect("repo ui_style.json should load and validate");
         let mut manager = AlertManager::new(true, &ui_style);
         // manager_with_fixed_value below only sets critical_high (no warning_high), so the
         // watchdog must be Critical severity for its condition to actually trigger — the
@@ -386,7 +390,8 @@ mod tests {
 
     #[test]
     fn test_check_watchdogs_is_noop_when_condition_not_met() {
-        let ui_style = UIStyle::new();
+        let ui_style = UIStyle::from_file(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui_style.json"))
+            .expect("repo ui_style.json should load and validate");
         let mut manager = AlertManager::new(true, &ui_style);
         manager.add_watchdog(triggering_watchdog());
 
@@ -398,7 +403,8 @@ mod tests {
 
     #[test]
     fn test_suppress_alerts_marks_every_queued_alert_inactive() {
-        let ui_style = UIStyle::new();
+        let ui_style = UIStyle::from_file(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui_style.json"))
+            .expect("repo ui_style.json should load and validate");
         let mut manager = AlertManager::new(true, &ui_style);
         manager.add_watchdog(triggering_watchdog());
 

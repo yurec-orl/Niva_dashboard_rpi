@@ -52,9 +52,9 @@ pub struct CompassIndicator {
     label_font_size: u32,
     /// Gap between the inner edge of the major marks and the outer edge of labels.
     label_gap: f32,
-    major_mark_color_key: &'static str,
-    minor_mark_color_key: &'static str,
-    label_color_key: &'static str,
+    major_mark_color_key: StyleKey,
+    minor_mark_color_key: StyleKey,
+    label_color_key: StyleKey,
     base: IndicatorBase,
 }
 
@@ -71,9 +71,9 @@ impl CompassIndicator {
             ring_margin: 6.0,
             label_font_size: 32,
             label_gap: 24.0,
-            major_mark_color_key: COMPASS_MAJOR_MARK_COLOR,
-            minor_mark_color_key: COMPASS_MINOR_MARK_COLOR,
-            label_color_key: COMPASS_LABEL_COLOR,
+            major_mark_color_key: StyleKey::CompassMajorMarkColor,
+            minor_mark_color_key: StyleKey::CompassMinorMarkColor,
+            label_color_key: StyleKey::CompassLabelColor,
             base: IndicatorBase::new(),
         }
     }
@@ -257,8 +257,8 @@ impl Indicator for CompassIndicator {
         let (cx, cy, radius) = Self::geometry(bounds, self.visible_half_angle_deg);
         let outer_r = radius - self.ring_margin;
 
-        let major_color = context.apply_brightness(style.get_color(self.major_mark_color_key, (0.9, 0.9, 1.0)));
-        let minor_color = context.apply_brightness(style.get_color(self.minor_mark_color_key, (0.5, 0.5, 0.6)));
+        let major_color = context.apply_brightness(style.get_color(self.major_mark_color_key));
+        let minor_color = context.apply_brightness(style.get_color(self.minor_mark_color_key));
 
         let minor_per_major = (self.major_mark_step_deg / self.minor_mark_step_deg).round().max(1.0) as i32;
         let steps = (360.0 / self.minor_mark_step_deg).round() as i32;
@@ -292,8 +292,8 @@ impl Indicator for CompassIndicator {
         }
 
         // Labels every label_step_deg, inboard of the major marks.
-        let label_color = style.get_color(self.label_color_key, (0.9, 0.9, 1.0));
-        let label_font = style.get_string(COMPASS_LABEL_FONT, DEFAULT_GLOBAL_FONT_PATH);
+        let label_color = style.get_color(self.label_color_key);
+        let label_font = style.get_string(StyleKey::CompassLabelFont);
         let label_radius = outer_r - self.major_mark_length - self.label_gap;
         let label_steps = (360.0 / self.label_step_deg).round() as i32;
         for i in 0..label_steps {
@@ -344,8 +344,8 @@ pub struct CompassHeadingMarkerDecorator {
     major_mark_length: f32,
     arrow_gap: f32,
     arrow_width: f32,
-    arrow_color_key: &'static str,
-    center_line_color_key: &'static str,
+    arrow_color_key: StyleKey,
+    center_line_color_key: StyleKey,
 }
 
 impl CompassHeadingMarkerDecorator {
@@ -356,8 +356,8 @@ impl CompassHeadingMarkerDecorator {
             major_mark_length,
             arrow_gap: 20.0,
             arrow_width: 3.0,
-            arrow_color_key: COMPASS_ARROW_COLOR,
-            center_line_color_key: COMPASS_CENTER_LINE_COLOR,
+            arrow_color_key: StyleKey::CompassArrowColor,
+            center_line_color_key: StyleKey::CompassCenterLineColor,
         }
     }
 
@@ -378,8 +378,8 @@ impl Decorator for CompassHeadingMarkerDecorator {
         let outer_r = radius - self.ring_margin;
         let marks_inner_r = outer_r - self.major_mark_length;
 
-        let arrow_color = style.get_color(self.arrow_color_key, (1.0, 0.5, 0.0));
-        let center_color = style.get_color(self.center_line_color_key, (1.0, 0.5, 0.0));
+        let arrow_color = style.get_color(self.arrow_color_key);
+        let center_color = style.get_color(self.center_line_color_key);
 
         let half_gap = self.arrow_gap / 2.0;
 
@@ -419,10 +419,10 @@ pub struct HdopIndicator {
     moderate_radius: f32,
     poor_radius: f32,
     thickness: f32,
-    excellent_color_key: &'static str,
-    good_color_key: &'static str,
-    moderate_color_key: &'static str,
-    poor_color_key: &'static str,
+    excellent_color_key: StyleKey,
+    good_color_key: StyleKey,
+    moderate_color_key: StyleKey,
+    poor_color_key: StyleKey,
 }
 
 impl HdopIndicator {
@@ -436,10 +436,10 @@ impl HdopIndicator {
             moderate_radius: 120.0,
             poor_radius: 224.0,
             thickness: 3.0,
-            excellent_color_key: COMPASS_HDOP_EXCELLENT_COLOR,
-            good_color_key: COMPASS_HDOP_GOOD_COLOR,
-            moderate_color_key: COMPASS_HDOP_MODERATE_COLOR,
-            poor_color_key: COMPASS_HDOP_POOR_COLOR,
+            excellent_color_key: StyleKey::CompassHdopExcellentColor,
+            good_color_key: StyleKey::CompassHdopGoodColor,
+            moderate_color_key: StyleKey::CompassHdopModerateColor,
+            poor_color_key: StyleKey::CompassHdopPoorColor,
         }
     }
 
@@ -459,7 +459,7 @@ impl HdopIndicator {
             (self.poor_radius, self.poor_color_key)
         };
 
-        let color = style.get_color(color_key, (1.0, 1.0, 1.0));
+        let color = style.get_color(color_key);
         context.render_circle_arc_outline(cx, cy, radius, self.thickness, color, 0.0, 2.0 * PI, 96)?;
 
         Ok(())

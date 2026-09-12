@@ -282,14 +282,14 @@ impl Page for DiagPage {
     }
 
     fn render(&self, context: &mut GraphicsContext, sensor_manager: &SensorManager, ui_style: &UIStyle) -> Result<(), String> {
-        let title_font = ui_style.get_string(TEXT_PRIMARY_FONT, DEFAULT_GLOBAL_FONT_PATH);
-        let title_font_size = ui_style.get_integer(TEXT_PRIMARY_FONT_SIZE, 24);
-        let title_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (1.0, 1.0, 1.0));
+        let title_font = ui_style.get_string(StyleKey::TextPrimaryFont);
+        let title_font_size = ui_style.get_integer(StyleKey::TextPrimaryFontSize);
+        let title_color = ui_style.get_color(StyleKey::TerminalTextColor);
         let header_color = title_color;
-        let text_color = ui_style.get_color(TERMINAL_TEXT_COLOR, (0.8, 0.8, 0.8));
+        let text_color = ui_style.get_color(StyleKey::TerminalTextColor);
 
-        let font = ui_style.get_string(TEXT_MONOSPACE_FONT, TERMINAL_FONT_PATH);
-        let font_size = ui_style.get_integer(TEXT_MONOSPACE_FONT_SIZE, 16);
+        let font = ui_style.get_string(StyleKey::TextMonospaceFont);
+        let font_size = ui_style.get_integer(StyleKey::TextMonospaceFontSize);
 
         let title = match self.calib_mode {
             CalibMode::Off => "ДИАГНОСТИКА",

@@ -1,6 +1,6 @@
 use crate::indicators::indicator::{Indicator, IndicatorBounds, IndicatorBase, render_fault_x};
 use crate::graphics::context::GraphicsContext;
-use crate::graphics::ui_style::UIStyle;
+use crate::graphics::ui_style::{UIStyle, StyleKey};
 use crate::hardware::sensor_value::{SensorValue, ValueData};
 use crate::indicators::decorator::Decorator;
 use crate::indicators::needle_shape::{NeedleShape, ArrowNeedleShape};
@@ -33,7 +33,7 @@ pub struct NeedleIndicator {
     /// Geometry generator for the rendered needle; defaults to a tapered blade.
     shape: Box<dyn NeedleShape>,
     /// Color of the needle (R, G, B)
-    needle_color_key: &'static str,
+    needle_color_key: StyleKey,
     /// Value range the dial face actually depicts (its printed marks/labels), used to
     /// place the needle. When `None`, the needle follows `SensorValue::as_normalized()`,
     /// which spans the sensor's full constraint range — wrong whenever the dial shows a
@@ -59,7 +59,7 @@ impl NeedleIndicator {
         needle_length: f32,
         needle_base_width: f32,
         needle_tip_width: f32,
-        needle_color_key: &'static str,
+        needle_color_key: StyleKey,
     ) -> Self {
         Self {
             start_angle,
@@ -242,7 +242,7 @@ impl Indicator for NeedleIndicator {
             let needle_angle = self.calculate_needle_angle(normalized_value);
             
             // Resolve needle color from style and apply brightness
-            let needle_color = context.apply_brightness(style.get_color(self.needle_color_key, (1.0, 0.0, 1.0)));
+            let needle_color = context.apply_brightness(style.get_color(self.needle_color_key));
 
             // Calculate actual needle length from the fraction and available radius
             let actual_needle_length = available_radius * self.needle_length;
@@ -271,7 +271,7 @@ pub struct NeedleGaugeMarksDecorator {
     num_marks: u32,
     mark_length: f32,
     mark_width: f32,
-    color_key: &'static str,
+    color_key: StyleKey,
     radius: f32,
     start_angle: f32,
     end_angle: f32,
@@ -282,7 +282,7 @@ impl NeedleGaugeMarksDecorator {
         num_marks: u32,
         mark_length: f32,
         mark_width: f32,
-        color_key: &'static str,
+        color_key: StyleKey,
         radius: f32,
         start_angle: f32,
         end_angle: f32,
@@ -442,7 +442,7 @@ impl Decorator for NeedleGaugeMarksDecorator {
         context: &mut GraphicsContext,
     ) -> Result<(), String> {
         // Resolve color from style and apply brightness
-        let color = context.apply_brightness(style.get_color(self.color_key, (1.0, 0.0, 1.0)));
+        let color = context.apply_brightness(style.get_color(self.color_key));
         unsafe {
             // Enable blending
             gl::Enable(gl::BLEND);
@@ -499,7 +499,7 @@ pub struct NeedleGaugeMarkLabelsDecorator {
     labels: Vec<String>,
     font_path: String,
     font_size: u32,
-    color_key: &'static str,
+    color_key: StyleKey,
     radius: f32,
     start_angle: f32,
     end_angle: f32,
@@ -510,7 +510,7 @@ impl NeedleGaugeMarkLabelsDecorator {
         labels: Vec<String>,
         font_path: String,
         font_size: u32,
-        color_key: &'static str,
+        color_key: StyleKey,
         radius: f32,
         start_angle: f32,
         end_angle: f32,
@@ -549,7 +549,7 @@ impl Decorator for NeedleGaugeMarkLabelsDecorator {
             return Ok(());
         }
 
-        let color = style.get_color(self.color_key, (1.0, 0.0, 1.0));
+        let color = style.get_color(self.color_key);
 
         // Calculate center position
         let center_x = bounds.x + bounds.width / 2.0;

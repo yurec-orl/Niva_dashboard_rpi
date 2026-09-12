@@ -26,8 +26,8 @@ pub fn build_speed_digital(
     let show_inactive_segments = true;
 
     // Text styling from UI configuration
-    let font_path = ui_style.get_string(TEXT_SECONDARY_FONT, DEFAULT_GLOBAL_FONT_PATH);
-    let unit_font_size = ui_style.get_integer(TEXT_SECONDARY_FONT_SIZE, 10) as u32;
+    let font_path = ui_style.get_string(StyleKey::TextSecondaryFont);
+    let unit_font_size = ui_style.get_integer(StyleKey::TextSecondaryFontSize) as u32;
 
     let speed_display = DigitalSegmentedIndicator::integer(digit_count)
         .with_inactive_segments(show_inactive_segments)
@@ -37,7 +37,7 @@ pub fn build_speed_digital(
                 "км/ч".into(),
                 font_path,
                 unit_font_size,
-                TEXT_SECONDARY_COLOR,
+                StyleKey::TextSecondaryColor,
                 DecoratorAlignmentH::Right,
                 DecoratorAlignmentV::Bottom,
             )),
@@ -53,7 +53,8 @@ mod tests {
 
     #[test]
     fn test_build_speed_digital_bounds_and_type() {
-        let ui_style = UIStyle::new();
+        let ui_style = UIStyle::from_file(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui_style.json"))
+            .expect("repo ui_style.json should load and validate");
         let (indicator, bounds) = build_speed_digital(50.0, 60.0, 208.0, 80.0, &ui_style);
 
         assert_eq!(bounds.x, 50.0);
