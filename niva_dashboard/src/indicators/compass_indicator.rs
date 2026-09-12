@@ -29,7 +29,7 @@ pub(crate) const UP_ANGLE: f32 = -PI / 2.0;
 /// instead of being part of this indicator's render path.
 ///
 /// Rendering re-generates the visible marks' vertices every frame (like every other indicator
-/// in this codebase — see NeedleGaugeMarksDecorator, GaugeIndicator). A precomputed "whole
+/// in this codebase — see NeedleGaugeMarksDecorator). A precomputed "whole
 /// circle, rotated via a shader uniform" version was considered, but at most ~48 marks are
 /// ever visible at once (240°/5°) — run_fuel_level_grid_test already demonstrates this GL
 /// path handling 50 full gauges (marks + needle + numbers each) per frame without measurable
