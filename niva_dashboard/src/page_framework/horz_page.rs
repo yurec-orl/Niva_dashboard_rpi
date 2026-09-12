@@ -209,7 +209,7 @@ impl Page for HorzPage {
 
         let heading_bounds = IndicatorBounds::new((screen_width - heading_font_width) / 2.0, 8.0, heading_font_width, heading_font_height);        
         let heading_value = match sensor_manager.get_sensor_value(&HWInput::HwHeading) {
-            Some(value) if value.value != crate::hardware::sensor_value::ValueData::Empty => value.clone(),
+            Some(value) if value.is_valid() => value.clone(),
             _ => SensorValue::analog(0.0, 0.0, 359.999, "\u{00B0}", "КУРС", "heading_fused"),
         };
         self.heading_indicator.render(&heading_value, heading_bounds, &ui_style, context)?;

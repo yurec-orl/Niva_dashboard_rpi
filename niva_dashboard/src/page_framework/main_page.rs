@@ -3,7 +3,10 @@ use crate::graphics::ui_style::*;
 use crate::page_framework::page_manager::{Page, PageBase, PageButton, ButtonPosition, DIAG_PAGE_ID, GNSS_PAGE_ID, HORZ_PAGE_ID, TEMP_PAGE_ID};
 use crate::page_framework::events::{EventReceiver, SmartEventSender};
 use crate::hardware::sensor_manager::SensorManager;
+use crate::hardware::sensor_value::{SensorValue, ValueData};
 use crate::hardware::hw_providers::{*};
+use std::cell::RefCell;
+use std::collections::HashMap;
 use crate::indicators::{Indicator, IndicatorBounds};
 use crate::indicators::text_indicator::TextIndicator;
 use crate::indicator_builders::{
@@ -32,6 +35,12 @@ pub struct MainPage {
     indicator_sets: Vec<IndicatorSet>,
     event_receiver: EventReceiver,
     smart_event_sender: SmartEventSender,
+    // Last known-good value per HWInput, kept across ticks so that when a chain read fails
+    // and the input drops out of sensor_values, the fault placeholder rendered in its place
+    // can still carry the real label/unit/constraints -- otherwise TextIndicator's "---"
+    // would be indistinguishable from every other missing reading (see issue #28). Render()
+    // takes &self, hence the RefCell.
+    last_known_values: RefCell<HashMap<HWInput, SensorValue>>,
 }
 
 impl MainPage {
@@ -46,6 +55,7 @@ impl MainPage {
             event_receiver,
             indicator_sets: vec![gauge_indicator_set, bar_indicator_set, test_indicator_set],
             current_indicator_set: 0,
+            last_known_values: RefCell::new(HashMap::new()),
         };
 
         // Set up default buttons for the main page
@@ -365,11 +375,25 @@ impl Page for MainPage {
         // Read sensor values and create SensorValue objects
         let sensor_values = sensor_manager.get_sensor_values();
 
-        // Render each indicator with the sensor value from its paired hardware input
+        // Render each indicator with the sensor value from its paired hardware input.
+        // A missing entry (chain read failed this tick, or hasn't produced one yet) still
+        // gets rendered, with an Empty value so the indicator shows its defined fault visual
+        // instead of vanishing (see issue #28) -- but carrying the last known-good
+        // metadata/constraints, so e.g. TextIndicator's "---" still shows which sensor it is
+        // rather than going blank.
+        let mut last_known = self.last_known_values.borrow_mut();
         for entry in &self.indicator_sets[self.current_indicator_set].entries {
-            if let Some(sensor_value) = sensor_values.get(&entry.input) {
-                entry.indicator.render(sensor_value, entry.bounds.clone(), ui_style, context)?;
-            }
+            let sensor_value = match sensor_values.get(&entry.input) {
+                Some(value) => {
+                    last_known.insert(entry.input, value.clone());
+                    value.clone()
+                }
+                None => match last_known.get(&entry.input) {
+                    Some(prev) => SensorValue::new(ValueData::Empty, prev.constraints.clone(), prev.metadata.clone()),
+                    None => SensorValue::empty(),
+                },
+            };
+            entry.indicator.render(&sensor_value, entry.bounds.clone(), ui_style, context)?;
         }
 
         Ok(())

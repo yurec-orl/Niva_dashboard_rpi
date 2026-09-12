@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
-use crate::indicators::indicator::{Indicator, IndicatorBounds};
+use crate::indicators::indicator::{Indicator, IndicatorBounds, render_fault_x};
 use crate::hardware::sensor_value::{SensorValue, ValueData};
 use std::sync::Once;
 
@@ -98,12 +98,18 @@ impl Indicator for GaugeIndicator {
                                       start_angle, end_angle, min_value, max_value, 
                                       num_marks, text_color, style)?;
             
-            self.render_triangular_needle(center_x, center_y, needle_length, 
-                                        start_angle, end_angle, min_value, max_value, 
-                                        current_value, needle_color, needle_glow,
-                                        context.width as f32, context.height as f32,
-                                        shader_program);
-            
+            if value.is_valid() {
+                self.render_triangular_needle(center_x, center_y, needle_length,
+                                            start_angle, end_angle, min_value, max_value,
+                                            current_value, needle_color, needle_glow,
+                                            context.width as f32, context.height as f32,
+                                            shader_program);
+            } else {
+                // No reading -- a blinking red X instead of a needle parked at the minimum,
+                // which would otherwise be indistinguishable from a real min reading (#28).
+                render_fault_x(context, center_x, center_y, radius * 0.25)?;
+            }
+
             // Render center circle
             self.render_gauge_center_circle(center_x, center_y, 8.0, (0.4, 0.4, 0.5), 
                                           context.width as f32, context.height as f32, shader_program);

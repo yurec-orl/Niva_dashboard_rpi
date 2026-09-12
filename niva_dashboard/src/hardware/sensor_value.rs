@@ -308,6 +308,13 @@ impl SensorValue {
         false
     }
     
+    /// True unless this holds no reading at all (ValueData::Empty) -- the sentinel a
+    /// sensor's value gets when it has never produced a reading, or (for external
+    /// producers like HeadingFusionSensor) currently has none available.
+    pub fn is_valid(&self) -> bool {
+        !matches!(self.value, ValueData::Empty)
+    }
+
     /// Check if value represents an "active" state
     pub fn is_active(&self) -> bool {
         match self.value {
@@ -470,6 +477,13 @@ mod tests {
         );
         assert!(!inactive.is_critical());
         assert!(!inactive.is_warning());
+    }
+
+    #[test]
+    fn test_is_valid_false_only_for_empty() {
+        assert!(!SensorValue::empty().is_valid());
+        assert!(SensorValue::digital(false, "l", "id").is_valid());
+        assert!(SensorValue::analog(0.0, 0.0, 100.0, "", "", "").is_valid());
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use crate::indicators::indicator::{Indicator, IndicatorBounds, IndicatorBase};
+use crate::indicators::indicator::{Indicator, IndicatorBounds, IndicatorBase, render_fault_x};
 use crate::indicators::decorator::{Decorator, DecoratorAlignmentH};
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
@@ -190,17 +190,9 @@ impl Indicator for VerticalBarIndicator {
         style: &UIStyle,
         context: &mut GraphicsContext,
     ) -> Result<(), String> {
-        // Extract numeric value
-        let numeric_value = match &value.value {
-            ValueData::Analog(v) => *v,
-            ValueData::Integer(i) => *i as f32,
-            ValueData::Percentage(p) => *p,
-            _ => return Ok(()), // Skip non-numeric values
-        };
-
         // Render decorators first, then the display itself over the decorators
         self.base.render_decorators(bounds, style, context)?;
-        
+
         let background_enabled = style.get_bool(BAR_BACKGROUND_ENABLED, true);
         let border_enabled = style.get_bool(BAR_BORDER_ENABLED, true);
         let border_width = style.get_float(BAR_BORDER_WIDTH, 4.0);
@@ -216,6 +208,19 @@ impl Indicator for VerticalBarIndicator {
                 border_color, false, border_width,
                 style.get_float(BAR_CORNER_RADIUS, 8.0))?;
         }
+
+        // Extract numeric value; anything else (ValueData::Empty -- no reading, see #28)
+        // still gets the background/border above, just with a blinking fault X instead of
+        // segments, so a missing reading can't be mistaken for an empty bar.
+        let numeric_value = match &value.value {
+            ValueData::Analog(v) => *v,
+            ValueData::Integer(i) => *i as f32,
+            ValueData::Percentage(p) => *p,
+            _ => {
+                let (cx, cy) = bounds.center();
+                return render_fault_x(context, cx, cy, bounds.width.min(bounds.height) * 0.25);
+            }
+        };
 
         // Normalize the value to 0.0-1.0 range
         let normalized_value = ((numeric_value - value.constraints.min_value) / 

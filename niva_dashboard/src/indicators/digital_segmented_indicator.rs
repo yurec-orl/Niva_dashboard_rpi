@@ -1,4 +1,4 @@
-use crate::indicators::indicator::{Indicator, IndicatorBounds, IndicatorBase};
+use crate::indicators::indicator::{Indicator, IndicatorBounds, IndicatorBase, fault_blink_on};
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;
 use crate::hardware::sensor_value::{SensorValue, ValueData};
@@ -67,7 +67,19 @@ impl DigitalSegmentedIndicator {
         
         digit_pattern
     }
-    
+
+    /// Dash pattern shown, blinking, in place of a value when the sensor has no reading
+    /// (see #28) -- same digit/decimal layout as a real reading so it lines up with the
+    /// inactive segments underneath.
+    fn fault_pattern(&self) -> String {
+        if self.decimals == 0 {
+            "-".repeat(self.digits)
+        } else {
+            let integer_digits = self.digits - self.decimals - 1; // -1 for decimal point
+            format!("{}.{}", "-".repeat(integer_digits), "-".repeat(self.decimals))
+        }
+    }
+
     /// Render inactive segments as background
     fn render_inactive_segments(
         &self,
@@ -127,11 +139,13 @@ impl Indicator for DigitalSegmentedIndicator {
         // Render decorators first, then the display itself over the decorators
         self.base.render_decorators(bounds, style, context)?;
 
-        // Extract numeric value
+        // Extract numeric value; ValueData::Empty (no reading, see #28) still renders the
+        // inactive-segment backdrop below, with a blinking dash pattern instead of digits.
         let numeric_value = match &value.value {
-            ValueData::Analog(v) => *v,
-            ValueData::Integer(i) => *i as f32,
-            ValueData::Percentage(p) => *p,
+            ValueData::Analog(v) => Some(*v),
+            ValueData::Integer(i) => Some(*i as f32),
+            ValueData::Percentage(p) => Some(*p),
+            ValueData::Empty => None,
             _ => { log::info!("Skipping non-numeric value: {:?}", value); return Ok(()); }, // Skip non-numeric values
         };
 
@@ -175,24 +189,30 @@ impl Indicator for DigitalSegmentedIndicator {
         // Render inactive segments as background
         let (inactive_width, inactive_x) = self.render_inactive_segments(bounds, style, context, &font_path, scale, font_size, inactive_color)?;
 
-        // Format and render the active value on top
-        let formatted_value = self.format_value(numeric_value);
+        // Format the active value, or a blinking fault dash pattern when there's no
+        // reading -- fixed red, not themeable, so a fault can't blend into a color scheme.
+        let text_to_render = match numeric_value {
+            Some(v) => Some((self.format_value(v), active_color)),
+            None if fault_blink_on() => Some((self.fault_pattern(), (1.0, 0.0, 0.0))),
+            None => None,
+        };
 
-        // Calculate text position (right-aligned within the inactive pattern)
-        let text_width = context.calculate_text_width_with_font(
-            &formatted_value, scale, &font_path, font_size
-        )?;
-        
-        let text_height = context.get_line_height_with_font(scale, &font_path, font_size)?;
-        
-        // Right-align the active text within the centered inactive pattern
-        let x = inactive_x + inactive_width - text_width;
-        let y = bounds.y + (bounds.height - text_height) / 2.0;
+        if let Some((formatted_value, text_color)) = text_to_render {
+            // Calculate text position (right-aligned within the inactive pattern)
+            let text_width = context.calculate_text_width_with_font(
+                &formatted_value, scale, &font_path, font_size
+            )?;
 
-        // Render the active digits
-        context.render_text_with_font(
-            &formatted_value, x, y, scale, active_color, &font_path, font_size
-        )?;
+            let text_height = context.get_line_height_with_font(scale, &font_path, font_size)?;
+
+            // Right-align the active text within the centered inactive pattern
+            let x = inactive_x + inactive_width - text_width;
+            let y = bounds.y + (bounds.height - text_height) / 2.0;
+
+            context.render_text_with_font(
+                &formatted_value, x, y, scale, text_color, &font_path, font_size
+            )?;
+        }
 
         Ok(())
     }

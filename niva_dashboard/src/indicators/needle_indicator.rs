@@ -1,4 +1,4 @@
-use crate::indicators::indicator::{Indicator, IndicatorBounds, IndicatorBase};
+use crate::indicators::indicator::{Indicator, IndicatorBounds, IndicatorBase, render_fault_x};
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::UIStyle;
 use crate::hardware::sensor_value::{SensorValue, ValueData};
@@ -222,7 +222,14 @@ impl Indicator for NeedleIndicator {
         
         // Render decorators before the needle so the needle draws on top
         self.base.render_decorators(bounds, style, context)?;
-        
+
+        if !value.is_valid() {
+            // No reading -- the dial face (marks/labels, rendered as decorators above)
+            // still shows, but a blinking red X replaces the needle instead of it parking
+            // at the minimum, which would otherwise look like a real min reading (#28).
+            return render_fault_x(context, center_x, center_y, available_radius * 0.25);
+        }
+
         unsafe {
             // Enable blending for smooth rendering
             gl::Enable(gl::BLEND);

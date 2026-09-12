@@ -484,7 +484,7 @@ impl GnssPage {
         // the same GnssFrame/Bno085Frame this page does, so it transparently picks up synthetic
         // test data too (see PageManager::toggle_gnss_test_mode) -- no test-mode bypass needed.
         let heading_value = match sensor_manager.get_sensor_value(&HWInput::HwHeading) {
-            Some(value) if value.value != crate::hardware::sensor_value::ValueData::Empty => value.clone(),
+            Some(value) if value.is_valid() => value.clone(),
             // No BNO085 or GNSS heading available -- park the compass at 0° rather than
             // feed NaN (SensorValue::empty().as_f32()) into CompassIndicator::render.
             _ => SensorValue::analog(0.0, 0.0, 359.999, "\u{00B0}", "КУРС", "heading_fused"),
