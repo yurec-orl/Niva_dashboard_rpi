@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::indicators::indicator::{Indicator, IndicatorBounds, IndicatorBase, fault_blink_on};
 use crate::graphics::context::GraphicsContext;
 use crate::graphics::ui_style::*;

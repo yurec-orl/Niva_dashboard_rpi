@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use rppal::gpio::{Gpio, InputPin, OutputPin, Level, Bias, Result as GpioResult};
 use std::fmt;
 
@@ -103,11 +104,6 @@ impl GpioInput {
     pub fn pin_number(&self) -> u8 {
         self.config.pin_number
     }
-    
-    /// Get the configuration
-    // pub fn config(&self) -> &GpioInputConfig {
-    //     &self.config
-    // }
     
     /// Check if the pin is configured as active low
     pub fn is_active_low(&self) -> bool {

@@ -60,10 +60,10 @@ impl OpenGLTextRenderer {
         let shader_program = Self::create_text_shader_program()?;
         
         // Cache uniform and attribute locations for performance
-        let projection_uniform = gl::GetUniformLocation(shader_program, b"projection\0".as_ptr());
-        let color_uniform = gl::GetUniformLocation(shader_program, b"text_color\0".as_ptr());
-        let texture_uniform = gl::GetUniformLocation(shader_program, b"text_texture\0".as_ptr());
-        let vertex_attr = gl::GetAttribLocation(shader_program, b"vertex\0".as_ptr());
+        let projection_uniform = gl::GetUniformLocation(shader_program, c"projection".as_ptr());
+        let color_uniform = gl::GetUniformLocation(shader_program, c"text_color".as_ptr());
+        let texture_uniform = gl::GetUniformLocation(shader_program, c"text_texture".as_ptr());
+        let vertex_attr = gl::GetAttribLocation(shader_program, c"vertex".as_ptr());
         
         // Create VAO and VBO for text quads
         let mut vao = 0u32;
@@ -551,8 +551,8 @@ unsafe fn render_gauge_circle_border(center_x: f32, center_y: f32, outer_radius:
     gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
     gl::BufferData(gl::ARRAY_BUFFER, (vertices.len() * 4) as isize, vertices.as_ptr() as *const _, gl::STATIC_DRAW);
     
-    let pos_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr());
-    let color_attr = gl::GetAttribLocation(shader_program, b"color\0".as_ptr());
+    let pos_attr = gl::GetAttribLocation(shader_program, c"position".as_ptr());
+    let color_attr = gl::GetAttribLocation(shader_program, c"color".as_ptr());
     
     gl::EnableVertexAttribArray(pos_attr as u32);
     gl::VertexAttribPointer(pos_attr as u32, 2, gl::FLOAT, gl::FALSE, 20, std::ptr::null());
@@ -600,8 +600,8 @@ unsafe fn render_gauge_marks(center_x: f32, center_y: f32, radius: f32, start_an
         gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
         gl::BufferData(gl::ARRAY_BUFFER, (vertices.len() * 4) as isize, vertices.as_ptr() as *const _, gl::STATIC_DRAW);
         
-        let pos_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr());
-        let color_attr = gl::GetAttribLocation(shader_program, b"color\0".as_ptr());
+        let pos_attr = gl::GetAttribLocation(shader_program, c"position".as_ptr());
+        let color_attr = gl::GetAttribLocation(shader_program, c"color".as_ptr());
         
         gl::EnableVertexAttribArray(pos_attr as u32);
         gl::VertexAttribPointer(pos_attr as u32, 2, gl::FLOAT, gl::FALSE, 20, std::ptr::null());
@@ -755,8 +755,8 @@ unsafe fn render_triangular_needle(center_x: f32, center_y: f32, length: f32, st
         gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
         gl::BufferData(gl::ARRAY_BUFFER, (vertices.len() * 4) as isize, vertices.as_ptr() as *const _, gl::STATIC_DRAW);
         
-        let pos_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr());
-        let color_attr = gl::GetAttribLocation(shader_program, b"color\0".as_ptr());
+        let pos_attr = gl::GetAttribLocation(shader_program, c"position".as_ptr());
+        let color_attr = gl::GetAttribLocation(shader_program, c"color".as_ptr());
         
         gl::EnableVertexAttribArray(pos_attr as u32);
         gl::VertexAttribPointer(pos_attr as u32, 2, gl::FLOAT, gl::FALSE, 20, std::ptr::null());
@@ -807,8 +807,8 @@ unsafe fn render_gauge_center_circle(center_x: f32, center_y: f32, radius: f32, 
     gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
     gl::BufferData(gl::ARRAY_BUFFER, (vertices.len() * 4) as isize, vertices.as_ptr() as *const _, gl::STATIC_DRAW);
     
-    let pos_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr());
-    let color_attr = gl::GetAttribLocation(shader_program, b"color\0".as_ptr());
+    let pos_attr = gl::GetAttribLocation(shader_program, c"position".as_ptr());
+    let color_attr = gl::GetAttribLocation(shader_program, c"color".as_ptr());
     
     gl::EnableVertexAttribArray(pos_attr as u32);
     gl::VertexAttribPointer(pos_attr as u32, 2, gl::FLOAT, gl::FALSE, 20, std::ptr::null());

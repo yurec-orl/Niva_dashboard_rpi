@@ -218,7 +218,7 @@ impl AlertManager {
                 self.alert_style.font_size as u32
             );
             if let Ok(w) = width {
-                if w - max_text_width > std::f32::EPSILON {
+                if w - max_text_width > f32::EPSILON {
                     max_text_width = w;
                 }
             }

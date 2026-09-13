@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::util::link_status::LinkStatus;
 use crate::util::nmea::{self, FixQuality, GnssFix};
 use crate::util::serial_reader::{LineSerialReader, SerialReader};

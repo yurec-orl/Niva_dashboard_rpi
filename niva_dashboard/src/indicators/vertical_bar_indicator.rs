@@ -157,8 +157,8 @@ void main() {
         );
 
         // Set up vertex attributes
-        let pos_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr());
-        let color_attr = gl::GetAttribLocation(shader_program, b"color\0".as_ptr());
+        let pos_attr = gl::GetAttribLocation(shader_program, c"position".as_ptr());
+        let color_attr = gl::GetAttribLocation(shader_program, c"color".as_ptr());
 
         gl::EnableVertexAttribArray(pos_attr as u32);
         gl::VertexAttribPointer(pos_attr as u32, 2, gl::FLOAT, gl::FALSE, 20, std::ptr::null());

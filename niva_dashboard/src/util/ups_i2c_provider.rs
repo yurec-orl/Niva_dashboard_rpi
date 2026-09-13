@@ -29,7 +29,7 @@ const REG_CALIBRATION: u8 = 0x05;
 const CAL_VALUE: u16 = 26868;
 /// BRNG=16V(0)<<13 | PGA=/2,80mV(1)<<11 | BADC=12bit,32samp(0x0D)<<7 |
 /// SADC=12bit,32samp(0x0D)<<3 | MODE=shunt+bus continuous(0x07)
-const CONFIG_VALUE: u16 = ((0x01 << 11)) | (0x0D << 7) | (0x0D << 3) | 0x07;
+const CONFIG_VALUE: u16 = (0x01 << 11) | (0x0D << 7) | (0x0D << 3) | 0x07;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 

@@ -208,17 +208,12 @@ impl Pages {
         self.pages.push(page);
     }
 
-    pub fn get_page(&self, id: u32) -> Option<&Box<dyn Page>> {
-        self.pages.iter().find(|&page| page.id() == id).map(|v| v as _)
+    pub fn get_page(&self, id: u32) -> Option<&dyn Page> {
+        self.pages.iter().find(|&page| page.id() == id).map(|b| b.as_ref())
     }
 
     pub fn get_page_mut(&mut self, id: u32) -> Option<&mut Box<dyn Page>> {
-        for page in &mut self.pages {
-            if page.id() == id {
-                return Some(page);
-            }
-        }
-        None
+        self.pages.iter_mut().find(|page| page.id() == id).map(|v| v as _)
     }
 
     pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, Box<dyn Page>> {
@@ -491,7 +486,7 @@ impl PageManager {
         self.sensor_config_tx.clone()
     }
 
-    fn get_page(&self, id: u32) -> Option<&Box<dyn Page>> {
+    fn get_page(&self, id: u32) -> Option<&dyn Page> {
         self.pages.get_page(id)
     }
 
@@ -499,7 +494,7 @@ impl PageManager {
         self.pages.get_page_mut(id)
     }
 
-    fn get_current_page(&self) -> Option<&Box<dyn Page>> {
+    fn get_current_page(&self) -> Option<&dyn Page> {
         if let Some(page_id) = self.current_page {
             self.get_page(page_id)
         } else {
@@ -661,7 +656,7 @@ impl PageManager {
                                                      self.get_event_receiver(),
                                                      frame,
                                                      self.bno_frame.clone(),
-                                                     GnssMode::PNP,
+                                                     GnssMode::Pnp,
                                                      &self.ui_style));
             self.add_page(gnss_page);
         }
@@ -1194,7 +1189,7 @@ impl PageManager {
         }
     }
 
-    fn get_button_position(&self, pos: &ButtonPosition, _orientation: &String) -> (f32, f32) {
+    fn get_button_position(&self, pos: &ButtonPosition, _orientation: &str) -> (f32, f32) {
         let screen_width = self.context.width as f32;
         let screen_height = self.context.height as f32 - STATUS_LINE_Y_MARGIN;
         let x_margin = 0.0;   // No horizontal margin
@@ -1224,7 +1219,7 @@ impl PageManager {
     
     fn render_button_at_position(&mut self, pos: &ButtonPosition, label: &str,
         label_font: &String, label_font_size: u32, label_color: (f32, f32, f32),
-        orientation: &String, is_pressed: bool
+        orientation: &str, is_pressed: bool
     ) -> Result<(), String> {
         let (x, mut y) = self.get_button_position(pos, orientation);
 

@@ -178,8 +178,8 @@ void main() {
         gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
         gl::BufferData(gl::ARRAY_BUFFER, (vertices.len() * std::mem::size_of::<f32>()) as isize, vertices.as_ptr() as *const _, gl::DYNAMIC_DRAW);
 
-        let pos_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr());
-        let color_attr = gl::GetAttribLocation(shader_program, b"color\0".as_ptr());
+        let pos_attr = gl::GetAttribLocation(shader_program, c"position".as_ptr());
+        let color_attr = gl::GetAttribLocation(shader_program, c"color".as_ptr());
 
         gl::EnableVertexAttribArray(pos_attr as u32);
         gl::VertexAttribPointer(pos_attr as u32, 2, gl::FLOAT, gl::FALSE, 20, std::ptr::null());
@@ -420,8 +420,8 @@ void main() {
         );
 
         // Set up vertex attributes
-        let pos_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr());
-        let color_attr = gl::GetAttribLocation(shader_program, b"color\0".as_ptr());
+        let pos_attr = gl::GetAttribLocation(shader_program, c"position".as_ptr());
+        let color_attr = gl::GetAttribLocation(shader_program, c"color".as_ptr());
 
         gl::EnableVertexAttribArray(pos_attr as u32);
         gl::VertexAttribPointer(pos_attr as u32, 2, gl::FLOAT, gl::FALSE, 20, std::ptr::null());

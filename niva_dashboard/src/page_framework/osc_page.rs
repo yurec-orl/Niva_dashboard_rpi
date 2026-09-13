@@ -476,8 +476,8 @@ void main() {
             gl::DYNAMIC_DRAW,
         );
 
-        let pos_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr()) as u32;
-        let color_attr = gl::GetAttribLocation(shader_program, b"color\0".as_ptr()) as u32;
+        let pos_attr = gl::GetAttribLocation(shader_program, c"position".as_ptr()) as u32;
+        let color_attr = gl::GetAttribLocation(shader_program, c"color".as_ptr()) as u32;
         gl::EnableVertexAttribArray(pos_attr);
         gl::VertexAttribPointer(pos_attr, 2, gl::FLOAT, gl::FALSE, 20, std::ptr::null());
         gl::EnableVertexAttribArray(color_attr);

@@ -1,12 +1,14 @@
 mod hardware;
 mod graphics;
 mod page_framework;
+#[cfg(feature = "cli_tests")]
 mod test;
 mod indicators;
 mod indicator_builders;
 mod alerts;
 mod util;
 
+#[cfg(feature = "cli_tests")]
 use crate::test::run_test::run_test;
 use crate::graphics::context::GraphicsContext;
 use crate::page_framework::page_manager::PageManager;
@@ -419,6 +421,7 @@ fn setup_bno085_data_provider() -> Result<Bno085DataProvider, String> {
     Ok(provider)
 }
 
+#[cfg(feature = "cli_tests")]
 fn show_help() {
     log::info!("Available test modes:");
     log::info!("1. Rotating needle gauge test (circular gauge with numbers)");
@@ -450,8 +453,14 @@ fn main() -> std::process::ExitCode {
         let parm = arg.split("=").collect::<Vec<&str>>();
         if parm.len() == 2 {
             match parm[0] {
+                #[cfg(feature = "cli_tests")]
                 "test" => {
                     run_test(parm[1]);
+                    return std::process::ExitCode::SUCCESS;
+                }
+                #[cfg(not(feature = "cli_tests"))]
+                "test" => {
+                    log::warn!("CLI test modes are excluded from this build (rebuild with --features cli_tests)");
                     return std::process::ExitCode::SUCCESS;
                 }
                 _ => {
@@ -460,6 +469,7 @@ fn main() -> std::process::ExitCode {
             }
         } else {
             match arg.as_str() {
+                #[cfg(feature = "cli_tests")]
                 "help" => {
                     show_help();
                     return std::process::ExitCode::SUCCESS;

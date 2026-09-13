@@ -1184,11 +1184,11 @@ impl GraphicsContext {
         
         // Set up projection matrix for 2D rendering
         let projection_matrix = self.create_2d_projection_matrix();
-        let projection_uniform = gl::GetUniformLocation(shader_program, b"projection\0".as_ptr());
+        let projection_uniform = gl::GetUniformLocation(shader_program, c"projection".as_ptr());
         gl::UniformMatrix4fv(projection_uniform, 1, gl::FALSE, projection_matrix.as_ptr());
         
         // Set color uniform
-        let color_uniform = gl::GetUniformLocation(shader_program, b"color\0".as_ptr());
+        let color_uniform = gl::GetUniformLocation(shader_program, c"color".as_ptr());
         gl::Uniform3f(color_uniform, color.0, color.1, color.2);
         
         // Define rectangle vertices (2 triangles)
@@ -1215,7 +1215,7 @@ impl GraphicsContext {
         );
         
         // Set up vertex attributes
-        let position_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr()) as u32;
+        let position_attr = gl::GetAttribLocation(shader_program, c"position".as_ptr()) as u32;
         gl::VertexAttribPointer(position_attr, 2, gl::FLOAT, gl::FALSE, 0, std::ptr::null());
         gl::EnableVertexAttribArray(position_attr);
         
@@ -1327,11 +1327,11 @@ impl GraphicsContext {
         
         // Set up projection matrix
         let projection_matrix = self.create_2d_projection_matrix();
-        let projection_uniform = gl::GetUniformLocation(shader_program, b"projection\0".as_ptr());
+        let projection_uniform = gl::GetUniformLocation(shader_program, c"projection".as_ptr());
         gl::UniformMatrix4fv(projection_uniform, 1, gl::FALSE, projection_matrix.as_ptr());
         
         // Set color uniform
-        let color_uniform = gl::GetUniformLocation(shader_program, b"color\0".as_ptr());
+        let color_uniform = gl::GetUniformLocation(shader_program, c"color".as_ptr());
         gl::Uniform3f(color_uniform, color.0, color.1, color.2);
         
         // Generate vertices for circle segment
@@ -1364,7 +1364,7 @@ impl GraphicsContext {
         );
         
         // Set up vertex attributes
-        let position_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr()) as u32;
+        let position_attr = gl::GetAttribLocation(shader_program, c"position".as_ptr()) as u32;
         gl::VertexAttribPointer(position_attr, 2, gl::FLOAT, gl::FALSE, 0, std::ptr::null());
         gl::EnableVertexAttribArray(position_attr);
         
@@ -1397,11 +1397,11 @@ impl GraphicsContext {
             
             // Set up projection matrix
             let projection_matrix = self.create_2d_projection_matrix();
-            let projection_uniform = gl::GetUniformLocation(shader_program, b"projection\0".as_ptr());
+            let projection_uniform = gl::GetUniformLocation(shader_program, c"projection".as_ptr());
             gl::UniformMatrix4fv(projection_uniform, 1, gl::FALSE, projection_matrix.as_ptr());
             
             // Set color uniform
-            let color_uniform = gl::GetUniformLocation(shader_program, b"color\0".as_ptr());
+            let color_uniform = gl::GetUniformLocation(shader_program, c"color".as_ptr());
             gl::Uniform3f(color_uniform, color.0, color.1, color.2);
             
             // Generate vertices for arc ring (triangle strip)
@@ -1436,7 +1436,7 @@ impl GraphicsContext {
             );
             
             // Set up vertex attributes
-            let position_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr()) as u32;
+            let position_attr = gl::GetAttribLocation(shader_program, c"position".as_ptr()) as u32;
             gl::VertexAttribPointer(position_attr, 2, gl::FLOAT, gl::FALSE, 0, std::ptr::null());
             gl::EnableVertexAttribArray(position_attr);
             
@@ -1475,10 +1475,10 @@ impl GraphicsContext {
         gl::UseProgram(shader_program);
 
         let projection_matrix = self.create_2d_projection_matrix();
-        let projection_uniform = gl::GetUniformLocation(shader_program, b"projection\0".as_ptr());
+        let projection_uniform = gl::GetUniformLocation(shader_program, c"projection".as_ptr());
         gl::UniformMatrix4fv(projection_uniform, 1, gl::FALSE, projection_matrix.as_ptr());
 
-        let color_uniform = gl::GetUniformLocation(shader_program, b"color\0".as_ptr());
+        let color_uniform = gl::GetUniformLocation(shader_program, c"color".as_ptr());
         gl::Uniform3f(color_uniform, color.0, color.1, color.2);
 
         let vertices: [f32; 6] = [
@@ -1496,7 +1496,7 @@ impl GraphicsContext {
             gl::DYNAMIC_DRAW,
         );
 
-        let position_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr()) as u32;
+        let position_attr = gl::GetAttribLocation(shader_program, c"position".as_ptr()) as u32;
         gl::VertexAttribPointer(position_attr, 2, gl::FLOAT, gl::FALSE, 0, std::ptr::null());
         gl::EnableVertexAttribArray(position_attr);
 
@@ -1532,10 +1532,10 @@ impl GraphicsContext {
         gl::UseProgram(shader_program);
 
         let projection_matrix = self.create_2d_projection_matrix();
-        let projection_uniform = gl::GetUniformLocation(shader_program, b"projection\0".as_ptr());
+        let projection_uniform = gl::GetUniformLocation(shader_program, c"projection".as_ptr());
         gl::UniformMatrix4fv(projection_uniform, 1, gl::FALSE, projection_matrix.as_ptr());
 
-        let color_uniform = gl::GetUniformLocation(shader_program, b"color\0".as_ptr());
+        let color_uniform = gl::GetUniformLocation(shader_program, c"color".as_ptr());
         gl::Uniform3f(color_uniform, color.0, color.1, color.2);
 
         let dx = p1.0 - p0.0;
@@ -1571,7 +1571,7 @@ impl GraphicsContext {
             gl::DYNAMIC_DRAW,
         );
 
-        let position_attr = gl::GetAttribLocation(shader_program, b"position\0".as_ptr()) as u32;
+        let position_attr = gl::GetAttribLocation(shader_program, c"position".as_ptr()) as u32;
         gl::VertexAttribPointer(position_attr, 2, gl::FLOAT, gl::FALSE, 0, std::ptr::null());
         gl::EnableVertexAttribArray(position_attr);
 
@@ -2188,9 +2188,9 @@ void main() {
                 gl::UseProgram(shader);
                 
                 // Set uniforms
-                let intensity_loc = gl::GetUniformLocation(shader, b"uIntensity\0".as_ptr());
-                let threshold_loc = gl::GetUniformLocation(shader, b"uThreshold\0".as_ptr());
-                let texture_loc = gl::GetUniformLocation(shader, b"uTexture\0".as_ptr());
+                let intensity_loc = gl::GetUniformLocation(shader, c"uIntensity".as_ptr());
+                let threshold_loc = gl::GetUniformLocation(shader, c"uThreshold".as_ptr());
+                let texture_loc = gl::GetUniformLocation(shader, c"uTexture".as_ptr());
                 
                 gl::Uniform1f(intensity_loc, self.bloom_intensity);
                 gl::Uniform1f(threshold_loc, self.bloom_threshold);
@@ -2294,11 +2294,11 @@ void main() {
                 // Bind bloom texture
                 gl::ActiveTexture(gl::TEXTURE0);
                 gl::BindTexture(gl::TEXTURE_2D, texture);
-                gl::Uniform1i(gl::GetUniformLocation(shader, b"uTexture\0".as_ptr()), 0);
+                gl::Uniform1i(gl::GetUniformLocation(shader, c"uTexture".as_ptr()), 0);
                 
                 // Set bloom parameters
-                gl::Uniform1f(gl::GetUniformLocation(shader, b"uIntensity\0".as_ptr()), self.bloom_intensity);
-                gl::Uniform1f(gl::GetUniformLocation(shader, b"uThreshold\0".as_ptr()), self.bloom_threshold);
+                gl::Uniform1f(gl::GetUniformLocation(shader, c"uIntensity".as_ptr()), self.bloom_intensity);
+                gl::Uniform1f(gl::GetUniformLocation(shader, c"uThreshold".as_ptr()), self.bloom_threshold);
                 
                 // Enable additive blending for bloom overlay
                 gl::Enable(gl::BLEND);
@@ -2477,10 +2477,10 @@ impl OpenGLTextRenderer {
         let shader_program = Self::create_text_shader_program()?;
         
         // Cache uniform and attribute locations for performance
-        let projection_uniform = gl::GetUniformLocation(shader_program, b"projection\0".as_ptr());
-        let color_uniform = gl::GetUniformLocation(shader_program, b"text_color\0".as_ptr());
-        let texture_uniform = gl::GetUniformLocation(shader_program, b"text_texture\0".as_ptr());
-        let vertex_attr = gl::GetAttribLocation(shader_program, b"vertex\0".as_ptr());
+        let projection_uniform = gl::GetUniformLocation(shader_program, c"projection".as_ptr());
+        let color_uniform = gl::GetUniformLocation(shader_program, c"text_color".as_ptr());
+        let texture_uniform = gl::GetUniformLocation(shader_program, c"text_texture".as_ptr());
+        let vertex_attr = gl::GetAttribLocation(shader_program, c"vertex".as_ptr());
         
         // Create VAO and VBO for text quads
         let mut vao = 0u32;

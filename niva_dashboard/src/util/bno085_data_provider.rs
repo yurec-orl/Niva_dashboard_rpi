@@ -3,6 +3,7 @@
 //! instantaneous acceleration via Bno085Frame. Mirrors GnssDataProvider's shape
 //! (gnss_data_provider.rs): a cloneable frame updated from one owned background thread, OS-
 //! level reconnect on I2C errors (no hardware reset line to fall back on, same as GNSS).
+#![allow(dead_code)]
 
 use crate::util::bno085_protocol::{
     Accuracy, Bno085, Bno085Error, Bno085Event, Bno085Report, GameRotationVectorReport,

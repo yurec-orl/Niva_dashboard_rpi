@@ -11,5 +11,3 @@ pub mod sensor_config;
 pub mod sensor_calibration;
 pub mod mock_sensor_config;
 pub mod heading_fusion_sensor;
-
-pub use gpio_input::GpioInput;

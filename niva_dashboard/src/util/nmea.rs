@@ -193,7 +193,7 @@ fn unicore_checksum_valid(sentence: &str) -> bool {
         return false;
     }
     let Ok(expected) = u32::from_str_radix(&checksum_hex[..8], 16) else { return false };
-    let computed = unicore_crc32(sentence[1..star_pos].as_bytes());
+    let computed = unicore_crc32(&sentence.as_bytes()[1..star_pos]);
     computed == expected
 }
 

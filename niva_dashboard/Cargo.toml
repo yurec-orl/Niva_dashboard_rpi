@@ -3,6 +3,12 @@ name = "niva_dashboard"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+# Command-line `test=<name>` diagnostics (src/test/run_test.rs + the opengl_test.rs
+# helpers it exclusively uses). Off by default to keep normal builds lean; enable with
+# `cargo build --features cli_tests` to bring them back.
+cli_tests = []
+
 [dependencies]
 crossterm = "0.27"
 crossbeam-channel = "0.5"

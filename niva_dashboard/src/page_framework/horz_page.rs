@@ -129,7 +129,7 @@ impl HorzPage {
         ]
     }
 
-    fn render_info_lines(&self, lines: &Vec<(String, bool, bool)>, position: (f32, f32), context: &mut GraphicsContext, colors: &[(f32, f32, f32)], font: &String, font_size: u32) -> Result<(), String> {
+    fn render_info_lines(&self, lines: &Vec<(String, bool, bool)>, position: (f32, f32), context: &mut GraphicsContext, colors: &[(f32, f32, f32)], font: &str, font_size: u32) -> Result<(), String> {
         let mut y = position.1;
         let line_height = context.get_line_height_with_font(1.0, font, font_size)?;
 
