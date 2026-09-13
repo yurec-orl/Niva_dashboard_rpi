@@ -98,7 +98,7 @@ impl MainPage {
         };
 
         let indicator_font = ui_style.get_string(StyleKey::TextSecondaryFont);
-        let indicator_font_size = ui_style.get_integer(StyleKey::TextSecondaryFontSize) as u32;
+        let indicator_font_size = ui_style.get_integer(StyleKey::TextSecondaryFontSize);
         let indicator_color = ui_style.get_color(StyleKey::TextSecondaryColor);
         let indicator_warning_color = ui_style.get_color(StyleKey::TextWarningColor);
         let indicator_error_color = ui_style.get_color(StyleKey::TextErrorColor);
@@ -393,7 +393,7 @@ impl Page for MainPage {
                     None => SensorValue::empty(),
                 },
             };
-            entry.indicator.render(&sensor_value, entry.bounds.clone(), ui_style, context)?;
+            entry.indicator.render(&sensor_value, entry.bounds, ui_style, context)?;
         }
 
         Ok(())

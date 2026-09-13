@@ -27,9 +27,9 @@ pub fn build_fuel_level_bar(
 
     // Text styling from UI configuration
     let font_path = ui_style.get_string(StyleKey::TextSecondaryFont);
-    let title_font_size = ui_style.get_integer(StyleKey::TextPrimaryFontSize) as u32;
-    let unit_font_size = ui_style.get_integer(StyleKey::TextSecondaryFontSize) as u32;
-    let scale_font_size = ui_style.get_integer(StyleKey::TextSecondaryFontSize) as u32;
+    let title_font_size = ui_style.get_integer(StyleKey::TextPrimaryFontSize);
+    let unit_font_size = ui_style.get_integer(StyleKey::TextSecondaryFontSize);
+    let scale_font_size = ui_style.get_integer(StyleKey::TextSecondaryFontSize);
     let text_color = StyleKey::BarMarkLabelsColor;
     
     // Scale marks styling

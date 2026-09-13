@@ -222,7 +222,7 @@ void main() {
         gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
         gl::BufferData(
             gl::ARRAY_BUFFER,
-            (vertices.len() * std::mem::size_of::<f32>()) as isize,
+            std::mem::size_of_val(vertices) as isize,
             vertices.as_ptr() as *const _,
             gl::DYNAMIC_DRAW,
         );

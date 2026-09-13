@@ -520,7 +520,7 @@ impl I2CProvider {
 
 impl HWAnalogProvider for I2CProvider {
     fn input(&self) -> HWInput {
-        self.input.clone()
+        self.input
     }
     fn read_analog(&self, _input: HWInput) -> Result<u16, String> {
         // Implementation for reading analog value from external ADC via I2C
@@ -530,7 +530,7 @@ impl HWAnalogProvider for I2CProvider {
 
 impl HWDigitalProvider for I2CProvider {
     fn input(&self) -> HWInput {
-        self.input.clone()
+        self.input
     }
     fn read_digital(&self, _input: HWInput) -> Result<Level, String> {
         // Implementation for reading digital value from external controller via I2C
@@ -608,7 +608,7 @@ impl TestDigitalDataProvider {
 
 impl HWDigitalProvider for TestDigitalDataProvider {
     fn input(&self) -> HWInput {
-        self.input.clone()
+        self.input
     }
 
     fn read_digital(&self, _input: HWInput) -> Result<Level, String> {
@@ -667,7 +667,7 @@ impl TestAnalogDataProvider {
 
 impl HWAnalogProvider for TestAnalogDataProvider {
     fn input(&self) -> HWInput {
-        self.input.clone()
+        self.input
     }
     fn read_analog(&self, _input: HWInput) -> Result<u16, String> {
         let elapsed = self.start_time.elapsed();
@@ -804,7 +804,7 @@ impl TestPulseDataProvider {
 
 impl HWDigitalProvider for TestPulseDataProvider {
     fn input(&self) -> HWInput {
-        self.input.clone()
+        self.input
     }
     fn read_digital(&self, _input: HWInput) -> Result<Level, String> {
         let current_frequency = self.get_current_frequency();

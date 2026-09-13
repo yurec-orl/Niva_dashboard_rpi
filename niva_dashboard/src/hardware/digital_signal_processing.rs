@@ -36,9 +36,7 @@ impl DigitalSignalProcessor for DigitalSignalDebouncer {
 
         if current_state == self.last_stable_state {
             // State is same as what we're tracking
-            if self.stable_count < u8::MAX {
-                self.stable_count += 1;
-            }
+            self.stable_count = self.stable_count.saturating_add(1);
             
             // If state has been stable for required duration, confirm it
             if self.stable_count >= self.required_stable_count 

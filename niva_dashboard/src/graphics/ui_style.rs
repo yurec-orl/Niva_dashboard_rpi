@@ -428,9 +428,8 @@ impl UIStyle {
 
 /// Parse color string to RGB values (0.0-1.0)
 fn parse_color(color_str: &str) -> Result<(f32, f32, f32), String> {
-    if color_str.starts_with('#') {
+    if let Some(hex) = color_str.strip_prefix('#') {
         // Hex color: #RRGGBB or #RGB
-        let hex = &color_str[1..];
         match hex.len() {
             3 => {
                 // #RGB -> #RRGGBB

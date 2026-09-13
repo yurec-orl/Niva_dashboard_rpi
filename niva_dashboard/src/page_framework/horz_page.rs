@@ -131,12 +131,12 @@ impl HorzPage {
 
     fn render_info_lines(&self, lines: &Vec<(String, bool, bool)>, position: (f32, f32), context: &mut GraphicsContext, colors: &[(f32, f32, f32)], font: &String, font_size: u32) -> Result<(), String> {
         let mut y = position.1;
-        let line_height = context.get_line_height_with_font(1.0, &font, font_size)?;
+        let line_height = context.get_line_height_with_font(1.0, font, font_size)?;
 
         for (text, is_header, is_warning) in lines {
             if !text.is_empty() {
                 let color = if *is_header { colors[2] } else if *is_warning { colors[1] } else { colors[0] };
-                context.render_text_with_font(text, position.0, y, 1.0, color, &font, font_size)?;
+                context.render_text_with_font(text, position.0, y, 1.0, color, font, font_size)?;
             }
             y += line_height;
         }
@@ -212,7 +212,7 @@ impl Page for HorzPage {
             Some(value) if value.is_valid() => value.clone(),
             _ => SensorValue::analog(0.0, 0.0, 359.999, "\u{00B0}", "КУРС", "heading_fused"),
         };
-        self.heading_indicator.render(&heading_value, heading_bounds, &ui_style, context)?;
+        self.heading_indicator.render(&heading_value, heading_bounds, ui_style, context)?;
 
         Ok(())
     }

@@ -151,7 +151,7 @@ impl Indicator for DigitalSegmentedIndicator {
 
         // Use DSEG font for 7-segment look
         let font_path = style.get_string(StyleKey::DigitalDisplayFont);
-        let font_size = style.get_integer(StyleKey::DigitalDisplayFontSize) as u32;
+        let font_size = style.get_integer(StyleKey::DigitalDisplayFontSize);
         let scale = style.get_float(StyleKey::DigitalDisplayScale);
         
         // Render border and background if enabled

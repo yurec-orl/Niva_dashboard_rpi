@@ -137,13 +137,10 @@ impl InputSource for KeyboardInput {
         // Integrate crossterm events.
         if event::poll(Duration::from_millis(0)).unwrap() {
             if let Event::Key(key) = event::read().unwrap() {
-                match key.code {
-                    KeyCode::Char(c) => {
-                        // Linux terminal does not support separate key released events,
-                        // so we generate a released event when the key is pressed.
-                        return Some(ButtonState::Released(c));
-                    }
-                    _ => {}
+                if let KeyCode::Char(c) = key.code {
+                    // Linux terminal does not support separate key released events,
+                    // so we generate a released event when the key is pressed.
+                    return Some(ButtonState::Released(c));
                 }
             }
         }

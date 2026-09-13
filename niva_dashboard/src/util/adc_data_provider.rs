@@ -485,7 +485,7 @@ impl ADCDataProvider {
             }
 
             if !version_frame.is_known()
-                && version_last_request.map_or(true, |t| t.elapsed() >= VERSION_REQUEST_INTERVAL)
+                && version_last_request.is_none_or(|t| t.elapsed() >= VERSION_REQUEST_INTERVAL)
             {
                 if let Some(reader) = conn.reader.as_mut() {
                     let _ = reader.write_line("$VER\n");

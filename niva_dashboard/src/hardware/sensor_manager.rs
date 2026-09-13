@@ -194,7 +194,7 @@ impl SensorManager {
                 continue;
             }
             // Read raw input from hardware provider
-            let mut level = chain.hw_provider.read_digital(input.clone())?;
+            let mut level = chain.hw_provider.read_digital(input)?;
             
             // Process through signal processors
             for processor in &mut chain.signal_processors {
@@ -213,7 +213,7 @@ impl SensorManager {
                 continue;
             }
             // Read raw input from hardware provider
-            let mut value = chain.hw_provider.read_analog(input.clone())?;
+            let mut value = chain.hw_provider.read_analog(input)?;
             
             // Process through signal processors
             for processor in &mut chain.signal_processors {

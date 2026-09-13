@@ -146,7 +146,7 @@ impl PageBase {
 
     pub fn set_buttons(&mut self, mut buttons: Vec<PageButton<Box<dyn FnMut()>>>) {
         // Sort buttons by position to ensure correct order
-        buttons.sort_by_key(|button| button.position().clone());
+        buttons.sort_by_key(|button| *button.position());
         self.buttons = buttons;
     }
 
@@ -209,12 +209,7 @@ impl Pages {
     }
 
     pub fn get_page(&self, id: u32) -> Option<&Box<dyn Page>> {
-        for page in &self.pages {
-            if page.id() == id {
-                return Some(page);
-            }
-        }
-        None
+        self.pages.iter().find(|&page| page.id() == id).map(|v| v as _)
     }
 
     pub fn get_page_mut(&mut self, id: u32) -> Option<&mut Box<dyn Page>> {
@@ -1248,7 +1243,7 @@ impl PageManager {
         if orientation == "vertical" {
             // Special case for vertical orientation: adjust y position
             // so that label y center point alingns with button position
-            y = y - (text_height / 2.0);
+            y -= text_height / 2.0;
             // Adjust if out of bounds
             if y < 0.0 {
                 y = 0.0;

@@ -27,7 +27,7 @@ pub fn build_speed_digital(
 
     // Text styling from UI configuration
     let font_path = ui_style.get_string(StyleKey::TextSecondaryFont);
-    let unit_font_size = ui_style.get_integer(StyleKey::TextSecondaryFontSize) as u32;
+    let unit_font_size = ui_style.get_integer(StyleKey::TextSecondaryFontSize);
 
     let speed_display = DigitalSegmentedIndicator::integer(digit_count)
         .with_inactive_segments(show_inactive_segments)

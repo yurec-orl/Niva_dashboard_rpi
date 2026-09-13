@@ -50,14 +50,14 @@ impl SerialReader for LineSerialReader {
         match self.reader.read_line(&mut line) {
             Ok(0) => Some(String::new()),          // true EOF (rare for a serial port)
             Ok(_) => {
-                return Some(line.trim().to_string());
+                Some(line.trim().to_string())
             }
             // A read timeout is routine (no data within the port's configured timeout) —
             // it is NOT an error condition and must not be treated as a fatal read failure.
             Err(e) if e.kind() == std::io::ErrorKind::TimedOut => Some(String::new()),
             Err(e) => {
                 log::error!("Serial read error: {} (kind: {:?})", e, e.kind());
-                return None;
+                None
             }
         }
     }

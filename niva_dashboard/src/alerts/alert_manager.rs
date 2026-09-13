@@ -212,7 +212,7 @@ impl AlertManager {
         let mut max_text_width = 0.0;
         for alert in active_alerts.iter() {
             let width = context.calculate_text_width_with_font(
-                &alert.1.message(),
+                alert.1.message(),
                 1.0,
                 &self.alert_style.font_path,
                 self.alert_style.font_size as u32

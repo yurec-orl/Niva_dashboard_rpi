@@ -216,7 +216,7 @@ void main() {
         }
         
         // Load character glyph
-        if ft::FT_Load_Char(self.ft_face, ch as u64, ft::FT_LOAD_RENDER as i32) != 0 {
+        if ft::FT_Load_Char(self.ft_face, ch as u64, ft::FT_LOAD_RENDER) != 0 {
             return Err(format!("Failed to load character: {}", ch));
         }
         
@@ -235,8 +235,8 @@ void main() {
             gl::TEXTURE_2D,
             0,
             gl::RED as i32,
-            (*glyph).bitmap.width as i32,
-            (*glyph).bitmap.rows as i32,
+            (*glyph).bitmap.width,
+            (*glyph).bitmap.rows,
             0,
             gl::RED,
             gl::UNSIGNED_BYTE,

@@ -32,7 +32,7 @@ pub fn build_speedometer_gauge(
 
     // Label styling from UI configuration
     let gauge_labels_font = ui_style.get_string(StyleKey::GaugeLabelFont);
-    let gauge_labels_font_size = ui_style.get_integer(StyleKey::GaugeLabelFontSize) as u32;
+    let gauge_labels_font_size = ui_style.get_integer(StyleKey::GaugeLabelFontSize);
     let gauge_labels_offset = ui_style.get_float(StyleKey::GaugeLabelOffset);
 
     // Mark styling

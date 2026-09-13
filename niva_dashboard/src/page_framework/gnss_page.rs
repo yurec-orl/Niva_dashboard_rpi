@@ -400,12 +400,12 @@ impl GnssPage {
 
     fn render_info_lines(&self, lines: &Vec<(String, bool, bool)>, position: (f32, f32), context: &mut GraphicsContext, colors: &[(f32, f32, f32)], font: &String, font_size: u32) -> Result<(), String> {
         let mut y = position.1;
-        let line_height = context.get_line_height_with_font(1.0, &font, font_size)?;
+        let line_height = context.get_line_height_with_font(1.0, font, font_size)?;
 
         for (text, is_header, is_warning) in lines {
             if !text.is_empty() {
                 let color = if *is_header { colors[2] } else if *is_warning { colors[1] } else { colors[0] };
-                context.render_text_with_font(text, position.0, y, 1.0, color, &font, font_size)?;
+                context.render_text_with_font(text, position.0, y, 1.0, color, font, font_size)?;
             }
             y += line_height;
         }
@@ -503,9 +503,9 @@ impl GnssPage {
         let compass_top_y = cy - outer_r;
         let heading_bounds = IndicatorBounds::new((w - heading_font_width) / 2.0, (compass_top_y - heading_font_height - 20.0).max(0.0), heading_font_width, heading_font_height);
 
-        self.pnp_mode.heading_indicator.render(&heading_value, heading_bounds, &ui_style, context)?;
-        self.pnp_mode.compass_indicator.render(&heading_value, bounds, &ui_style, context)?;
-        self.pnp_mode.hdop_indicator.render(cx, cy, fix.hdop, &ui_style, context)?;
+        self.pnp_mode.heading_indicator.render(&heading_value, heading_bounds, ui_style, context)?;
+        self.pnp_mode.compass_indicator.render(&heading_value, bounds, ui_style, context)?;
+        self.pnp_mode.hdop_indicator.render(cx, cy, fix.hdop, ui_style, context)?;
 
         // Two small marks flanking the lubber line at heading_deg ± heading_std_dev_deg/2,
         // visualizing fused heading sensor uncertainty. Skipped (not shown at 0 spread) when no std
@@ -524,8 +524,8 @@ impl GnssPage {
                 let minus_value = SensorValue::analog(
                     -half_dev_deg, -HEADING_ACCURACY_MAX_HALF_SPREAD_DEG, HEADING_ACCURACY_MAX_HALF_SPREAD_DEG,
                     "\u{00B0}", "", "heading_accuracy_minus");
-                self.pnp_mode.heading_accuracy_needle.render(&plus_value, accuracy_bounds, &ui_style, context)?;
-                self.pnp_mode.heading_accuracy_needle.render(&minus_value, accuracy_bounds, &ui_style, context)?;
+                self.pnp_mode.heading_accuracy_needle.render(&plus_value, accuracy_bounds, ui_style, context)?;
+                self.pnp_mode.heading_accuracy_needle.render(&minus_value, accuracy_bounds, ui_style, context)?;
             }
         }
 
@@ -555,12 +555,12 @@ impl GnssPage {
             ins_problem, ValueConstraints::digital_critical(), ValueMetadata::new("", "ИНС", "ins_link"));
         // Red for either "no serial link" (frame stale) or "link up but no fix yet"
         // (fix_quality Invalid or never seen) — both mean the heading/position aren't trustworthy.
-        let gnss_problem = self.frame.status() == LinkStatus::NoData || fix.fix_quality.map_or(true, |q| q == FixQuality::Invalid);
+        let gnss_problem = self.frame.status() == LinkStatus::NoData || fix.fix_quality.is_none_or(|q| q == FixQuality::Invalid);
         let gnss_value = SensorValue::digital_with_constraints_and_metadata(
             gnss_problem, ValueConstraints::digital_critical(), ValueMetadata::new("", "ГНСС", "gnss_link"));
 
-        self.pnp_mode.ins_link_indicator.render(&ins_value, ins_bounds, &ui_style, context)?;
-        self.pnp_mode.gnss_link_indicator.render(&gnss_value, gnss_bounds, &ui_style, context)?;
+        self.pnp_mode.ins_link_indicator.render(&ins_value, ins_bounds, ui_style, context)?;
+        self.pnp_mode.gnss_link_indicator.render(&gnss_value, gnss_bounds, ui_style, context)?;
 
         // "ТЕСТ" label under either box, shown independently per source -- a rig with only
         // one of GNSS/BNO085 in test mode (or connected at all) still gets an accurate label.
@@ -571,14 +571,14 @@ impl GnssPage {
                 gnss_bounds.x, gnss_bounds.y + status_box_height,
                 gnss_box_width, status_box_height,
             );
-            self.pnp_mode.test_mode_indicator.render(&test_value, test_bounds, &ui_style, context)?;
+            self.pnp_mode.test_mode_indicator.render(&test_value, test_bounds, ui_style, context)?;
         }
         if self.bno_frame.as_ref().map(|f| f.status()) == Some(LinkStatus::Test) {
             let test_bounds = IndicatorBounds::new(
                 ins_bounds.x, ins_bounds.y + status_box_height,
                 ins_box_width, status_box_height,
             );
-            self.pnp_mode.test_mode_indicator.render(&test_value, test_bounds, &ui_style, context)?;
+            self.pnp_mode.test_mode_indicator.render(&test_value, test_bounds, ui_style, context)?;
         }
 
         Ok(())
