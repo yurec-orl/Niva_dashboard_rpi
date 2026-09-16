@@ -95,7 +95,7 @@ const OSC_DIVIDER_R2_OHM: f32 = 10_000.0;
 /// physical circuit, converted here instead of through VoltageDividerSensor. A guard test
 /// (osc_v12_trim_matches_sensor_config) fails if the two drift apart; removing the
 /// duplication entirely is tracked as GitHub issue #12.
-const OSC_V12_TRIM: f32 = 1.036;
+const OSC_V12_TRIM: f32 = 1.0307;
 
 /// Converts a raw ADC code to real 12V-system volts: ADC pin voltage scaled back up through
 /// the PA3 divider (see OSC_DIVIDER_* doc comment above) and the OSC_V12_TRIM calibration.

@@ -787,7 +787,7 @@ const SELF_TEST_COOLANT_OHM_SPAN: (f32, f32) = (702.5, 58.0);
 /// ДАВЛ МАСЛА / УРОВ ТОПЛ / ТЕМП. SELF_TEST_V12_TRIM mirrors sensor_config.json's Hw12v `trim`.
 const SELF_TEST_SUPPLY_MIN_V: f32 = 10.0;
 const SELF_TEST_SUPPLY_MAX_V: f32 = 16.0;
-const SELF_TEST_V12_TRIM: f32 = 1.036;
+const SELF_TEST_V12_TRIM: f32 = 1.0307;
 
 /// Fallback bench-settle targets used by settle mode (see `Mode::Settle` below) when
 /// `mock_sensor_values.json` doesn't specify a channel — picked to read as a plausible
@@ -1331,5 +1331,37 @@ mod tests {
             assert!(first_seen.unwrap() < 1.0, "channel {idx} started at {:.2}, expected ~0", first_seen.unwrap());
             assert!(last_seen < 5.0, "channel {idx} ended at {last_seen:.2}, expected ~0");
         }
+    }
+
+    /// SELF_TEST_V12_TRIM duplicates `sensor_config.json`'s `Hw12v` `trim` (see the constant's
+    /// doc comment) -- same duplication osc_page.rs's OSC_V12_TRIM has, guarded there by
+    /// osc_v12_trim_matches_sensor_config. This is the same guard for this copy.
+    #[test]
+    fn self_test_v12_trim_matches_sensor_config() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("sensor_config.json");
+        let json: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&path).expect("repo sensor_config.json should be readable"),
+        )
+        .expect("sensor_config.json should be valid JSON");
+
+        let hw12v = json
+            .as_array()
+            .expect("sensor_config.json is a JSON array")
+            .iter()
+            .find(|entry| {
+                entry.pointer("/sensor/id").and_then(|v| v.as_str()) == Some("Hw12v")
+            })
+            .expect("an Hw12v sensor entry in sensor_config.json");
+        let trim = hw12v
+            .pointer("/sensor/trim")
+            .expect("the Hw12v entry has a `trim` field")
+            .as_f64()
+            .expect("`trim` is a number") as f32;
+
+        assert!(
+            (trim - SELF_TEST_V12_TRIM).abs() < 1e-6,
+            "sensor_config.json Hw12v trim ({trim}) != SELF_TEST_V12_TRIM ({SELF_TEST_V12_TRIM}) -- \
+             update the constant in adc_data_provider.rs to match",
+        );
     }
 }
