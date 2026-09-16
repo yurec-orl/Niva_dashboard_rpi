@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use crate::indicators::{Indicator, IndicatorBounds};
 use crate::indicators::text_indicator::TextIndicator;
 use crate::indicator_builders::{
-    build_speedometer_gauge, build_fuel_level_gauge, build_oil_pressure_gauge, build_temperature_gauge, build_voltage_gauge,
+    build_tachometer_gauge, build_fuel_level_gauge, build_oil_pressure_gauge, build_temperature_gauge, build_voltage_gauge,
     build_oil_pressure_bar, build_fuel_level_bar, build_temperature_bar, build_voltage_bar,
     build_speed_digital
 };
@@ -157,24 +157,24 @@ impl MainPage {
         let mut entries: Vec<IndicatorEntry> = Vec::new();
 
         // Main indicator set layout:
-        // 1. Large central speedometer (gauge)
+        // 1. Large central tachometer (gauge)
         // 2. Smaller fuel level and oil pressure gauges on the left
         // 3. Smaller temperature and battery voltage gauges on the right
 
         let screen_width = context.width as f32;
         let _screen_height = context.height as f32;
-        
+
         // Layout parameters
         let button_margin = 60.0; // Space for buttons on left/right
         let top_margin = 8.0;
 
-        // Central speedometer - large gauge (RPM/Speed)
+        // Central tachometer - large gauge (RPM)
         let center_gauge_radius = 150.0;
         let center_x = screen_width / 2.0;
         let center_y = top_margin + center_gauge_radius;
-        
-        let (speedometer, speedometer_bounds) = build_speedometer_gauge(center_x, center_y, center_gauge_radius, ui_style);
-        entries.push(IndicatorEntry { input: HWInput::HwSpeed, indicator: speedometer, bounds: speedometer_bounds });
+
+        let (tachometer, tachometer_bounds) = build_tachometer_gauge(center_x, center_y, center_gauge_radius, ui_style);
+        entries.push(IndicatorEntry { input: HWInput::HwTacho, indicator: tachometer, bounds: tachometer_bounds });
 
         // Left side gauges - smaller gauges
         let side_gauge_radius = 90.0;

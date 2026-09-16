@@ -723,7 +723,7 @@ const SELF_TEST_TICK: Duration = Duration::from_millis(20);
 /// km/h max (see hardware::sensors::SpeedSensor) so the sweep visibly reaches and clamps at
 /// the top of the gauge rather than falling just short of it.
 const SELF_TEST_SPEED_PEAK_KMH: f32 = 200.0;
-/// Peak target rpm for the HwTacho channel's sweep -- comfortably below TachoSensor's 6000
+/// Peak target rpm for the HwTacho channel's sweep -- comfortably below TachoSensor's 8000
 /// rpm gauge max (unlike SELF_TEST_SPEED_PEAK_KMH, doesn't need to overshoot it: the point
 /// here is just to exercise a realistic idle-to-redline sweep, not to test gauge clamping).
 const SELF_TEST_TACHO_PEAK_RPM: f32 = 6000.0;

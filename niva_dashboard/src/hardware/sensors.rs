@@ -755,7 +755,7 @@ impl TachoSensor {
     pub fn new() -> Self {
         TachoSensor {
             value: SensorValue::empty(),
-            constraints: ValueConstraints::analog(0.0, 6000.0),
+            constraints: ValueConstraints::analog(0.0, 8000.0),
             metadata: ValueMetadata::new("об/мин", "ТАХОМЕТР", "tacho_sensor"),
         }
     }
@@ -920,9 +920,9 @@ mod tests {
     fn test_tacho_sensor_clamps_to_gauge_max() {
         let mut sensor = TachoSensor::new();
         // raw=1 is the shortest non-idle period the format allows -- far beyond the gauge's
-        // 6000 rpm max, so this exercises the clamp.
+        // 8000 rpm max, so this exercises the clamp.
         let rpm = sensor.read(1).unwrap().as_f32();
-        assert_eq!(rpm, 6000.0);
+        assert_eq!(rpm, 8000.0);
     }
 
     #[test]
