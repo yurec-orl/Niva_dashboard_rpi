@@ -1,4 +1,5 @@
 use crate::hardware::hw_providers::HWInput;
+use crate::util::config::Config;
 use crate::util::serial_reader::{LineSerialReader, SerialReader};
 
 use std::collections::HashMap;
@@ -45,6 +46,18 @@ const ADC_USB_HUB_LOCATION: &str = "1-1";
 /// ADC_LINK_MAX_AGE (the UI-alert threshold) and RECONNECT_INTERVAL, so a routine
 /// disconnect/reconnect never triggers a physical power cycle.
 const HARD_RESET_STALE_THRESHOLD: Duration = Duration::from_secs(5);
+
+/// config.json key toggling periodic debug logging of the raw ADC frame (digital/analog
+/// channels only — the DS18B20 `$T` line has its own frame and its own cadence, so it's
+/// never included here). Off unless the section is present and `true`; Config reads the
+/// file fresh on every call, so flipping this on/off in config.json takes effect on the
+/// next check below without a restart.
+const ADC_FRAME_DEBUG_LOG_CONFIG_KEY: &str = "adc_frame_debug_log";
+/// How often the raw frame is logged when `adc_frame_debug_log` is enabled — sparse enough
+/// to be useful over a long run without flooding the rotated log file. Also bounds how
+/// often config.json is re-read for the toggle (the read only happens once this elapses),
+/// so leaving the feature off costs nothing but this one check per interval.
+const ADC_FRAME_DEBUG_LOG_INTERVAL: Duration = Duration::from_secs(10);
 
 /// How often the background thread re-sends `$VER` while the STM32 hasn't answered with its
 /// firmware commit hash. One request per connection would suffice if replies were
@@ -477,6 +490,10 @@ impl ADCDataProvider {
         // Last time a `$VER` request went out; None re-arms an immediate request (on start
         // and after every reconnect). Stops once version_frame has an answer.
         let mut version_last_request: Option<Instant> = None;
+        // Backs the adc_frame_debug_log toggle below. Config::load() just holds a path (no
+        // I/O until section() is called), so it's cheap to keep around for the thread's life.
+        let debug_log_config = Config::load();
+        let mut frame_debug_log_last = Instant::now() - ADC_FRAME_DEBUG_LOG_INTERVAL;
 
         while !should_stop.load(Ordering::Relaxed) {
             if !conn.ensure_connected(port, baud) {
@@ -535,6 +552,12 @@ impl ADCDataProvider {
                             .filter_map(|s| s.trim().parse().ok())
                             .collect();
                         if !values.is_empty() {
+                            if frame_debug_log_last.elapsed() >= ADC_FRAME_DEBUG_LOG_INTERVAL {
+                                if debug_log_config.section(ADC_FRAME_DEBUG_LOG_CONFIG_KEY).as_bool().unwrap_or(false) {
+                                    log::info!("ADC frame (digital/analog): {:?}", values);
+                                }
+                                frame_debug_log_last = Instant::now();
+                            }
                             frame.update(values);
                             reset_attempted = false;
                         }
