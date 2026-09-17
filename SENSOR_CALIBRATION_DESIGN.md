@@ -25,30 +25,49 @@ instrument-cluster wiring**, in parallel with the OEM gauge — the sensor-wire
 voltage this divider measures is therefore set by the sender's resistance
 dividing against *whatever is on the OEM side*.
 
-**OEM side identified: these are cross-coil (ratiometric) gauges, fed
-directly off +12V, no separate regulator.** Confirmed by inspection: each
-gauge is two coils sharing one supply node — one coil returns straight to
-ground (fixed reference field), the other returns through the sender's
-resistance to ground (variable field); needle angle follows the ratio between
-the two coils' magnetic fields. No stabilizer relay, no additional circuitry.
-This resolves what "the OEM side" is: **`R_series` is the variable coil's DC
-winding resistance** — a fixed, physical, directly-measurable quantity (not
-an unknowable black box), and there is no thermal/pulsed stabilizer in this
-circuit for the earlier caveat below to appeal to.
+**OEM side identified, and corrected (2026-09-17) against fresh 3-point bench
+measurements: these are two-coil gauges fed directly off +12V, no separate
+regulator, but the two coils are in *series*, not each independently
+straight-to-ground.** Topology, in order from +12V to ground:
+
+```
++12V --- coilA (r_series_ohm) --- SENSOR PIN (external wire out to the real sender) --- coilB (r_gauge_coil_ohm) --- GND
+```
+
+`coilA` and `coilB` share the sensor pin as their junction — that's also
+where the sensor wire taps out to the real sender and back to ground. So the
+external sender is wired **in parallel with `coilB`**, not alone, at the
+exact node our ADC divider measures. No stabilizer relay, no additional
+circuitry — this is still a two-coil ratiometric gauge (needle angle follows
+the ratio of the two coils' currents), it's just that `coilB` is the "fixed
+reference" leg and it happens to land on the shared sensor node rather than
+bypassing it.
+
+An earlier version of this doc had the topology backwards — it described
+`coilA` as the *only* thing between +12V and the sensor node, with `coilB`
+(if it existed at all) assumed to run straight to ground independently of
+the sensor pin, and the external sender as the sensor node's sole path to
+ground. That version was checked by measuring each gauge's `12V→sensor` pin
+resistance alone (matches `coilA`) but never `12V→gnd` on the isolated gauge
+(which would have caught the series relationship: `12V→gnd` ≈ `12V→sensor` +
+`sensor→gnd`, confirmed almost exactly on both the fuel and oil gauges — see
+R_series and R_gauge_coil measured below).
 
 **Consequence — two separate ones:**
-- **Good news:** `R_series` is measurable, not merely inferable. With the
-  sender disconnected and the circuit unpowered, a multimeter across the
-  sender-wire connector pin and the shared +12V supply pin reads the variable
-  coil's resistance directly — no need to solve for it indirectly from a live
-  anchor point (see Conversion pipeline below).
+- **Good news:** both `coilA` (`r_series_ohm`) and `coilB`
+  (`r_gauge_coil_ohm`) are measurable, not merely inferable. With the gauge
+  pulled and its sensor-wire lead left unattached (bench, gauge alone), a
+  multimeter across its own three pins reads `12V→sensor` = `coilA` and
+  `12V→gnd` = `coilA + coilB` directly (`sensor→gnd` on the isolated gauge is
+  unreliable to probe directly — see measurement procedure below). No need to
+  solve for either indirectly from a live anchor point.
 - **Bad news, and this is the important one:** a ratiometric cross-coil gauge
   is itself insensitive to supply voltage — both coils' currents scale
   together with `V_supply`, so their *ratio* (and thus the needle) doesn't
   move when the alternator kicks in. **Our ADC tap doesn't get that
-  cancellation.** It reads the absolute voltage at one node (between the
-  variable coil and the sender), which is exactly the plain two-resistor
-  divider modeled below — full supply-voltage sensitivity, none of the
+  cancellation.** It reads the absolute voltage at one node (between `coilA`
+  and the parallel combination of `coilB` and the sender), which is exactly
+  the divider modeled below — full supply-voltage sensitivity, none of the
   ratiometric gauge's immunity. The cross-coil design explains why the
   *needle* doesn't care about supply voltage; it does nothing to protect our
   single-point voltage tap. See Problem: floating supply voltage below —
@@ -163,21 +182,23 @@ case the sender is ever swapped and this needs revisiting.)
     "insert/adjust one point" — the datasheet tolerance bands (15–40% wide)
     already dwarf whatever smoothness a fitted curve would add.
 
-## Conversion pipeline and R_series
+## Conversion pipeline, R_series, and R_gauge_coil
 
 Full path between sender resistance and raw ADC count, per the PA0/PA1/PA2
 divider in `stm32_adc_module/WIRING.md` — invertible in either direction:
 
 ```
 R_sender (Ω)
-  ⇄ V_sensor_wire = V_supply × R_sender / (R_series + R_sender)
+  ⇄ R_parallel    = R_gauge_coil × R_sender / (R_gauge_coil + R_sender)   [OEM gauge's coilB, parallel at the sensor node]
+  ⇄ V_sensor_wire = V_supply × R_parallel / (R_series + R_parallel)
   ⇄ V_adc_pin     = V_sensor_wire × R2/(R1+R2)      [10/49, fixed, known]
   ⇄ raw           = V_adc_pin / V_ref_adc × 4095     [12-bit, V_ref_adc ≈ 3.3V]
 ```
 
-`R1`/`R2` (39kΩ/10kΩ) are known. `R_series` is the cross-coil gauge's variable
-coil winding resistance (see Circuit context above) — fixed and physical.
-`V_supply` is not fixed at all — see Problem: floating supply voltage below.
+`R1`/`R2` (39kΩ/10kΩ) are known. `R_series` is `coilA`'s DC winding
+resistance, `R_gauge_coil` is `coilB`'s (see Circuit context above) — both
+fixed and physical. `V_supply` is not fixed at all — see Problem: floating
+supply voltage below.
 
 Since curves are now stored in Ω, **this pipeline is only needed at runtime,
 in the raw→Ω direction** (Runtime conversion section below) — building the
@@ -187,36 +208,67 @@ bring-up sanity checks and for `TestADCDataProvider`'s self-test simulation
 to synthesize a plausible raw value for a given simulated physical value —
 but it's no longer on the critical path for producing a calibration curve.
 
-**`R_series` measured directly, per gauge** (multimeter across the shared
-+12V supply pin and each gauge's own sender-wire pin, on a spare cluster
-pulled from the car):
+**`R_series` and `R_gauge_coil` measured directly, per gauge, on the
+actually-installed cluster** (gauge pulled from the dash, sensor-wire lead
+left unattached, multimeter across the gauge's own three pins):
 
-| Gauge | R_series (Ω) |
-|---|---|
-| Fuel level | 124.4 |
-| Coolant temp | 110.4 |
-| Oil pressure | 130.8 |
+| Gauge | 12V→sensor (`R_series`, Ω) | 12V→gnd (Ω) | R_gauge_coil = 12V→gnd − R_series (Ω) |
+|---|---|---|---|
+| Fuel level | 129.0 | 312 | 183.0 |
+| Oil pressure | 123.0 | 294 | 171.0 |
+| Coolant temp | 123.0 | 303 | 180.0 |
 
-Measured on a **spare cluster, not the one actually installed** — treat these
-as accurate for the installed unit only insofar as OEM coil-winding tolerance
-between two units of the same part is tight, which is a reasonable assumption
-but not a verified one. Cheap to re-check against the installed cluster later
-if a computed curve turns out to disagree with a field calibration point.
-This is now a **runtime constant consumed on every `read()` call** (Runtime
-conversion below), not a one-time curve-generation input — a real advantage
-if it later needs correcting: fix one number, and every reading improves,
-rather than needing to regenerate a whole lookup table.
+Superseded (2026-09-17) an earlier `R_series`-only table measured on a
+**spare cluster, not the one actually installed** (124.4 / 130.8 / 110.4 for
+fuel/oil/temp) — that table also predates the `R_gauge_coil` term entirely
+(see Circuit context above for why the old topology missed it). The fresh
+values above are both for the installed unit and complete.
+
+Coolant temp's `12V→gnd` was itself revised once more (2026-09-17, same day):
+an initial 330 Ω reading — taken as two separate probe sessions (`12V→sensor`
+then `sensor→gnd`) added together — implied `R_gauge_coil` = 207 Ω. A
+follow-up **single, direct** `12V→gnd` reading (one continuous multimeter
+placement across both poles, not a subtraction of two separately-recorded
+numbers) came back 303 Ω instead, giving `R_gauge_coil` = 180 Ω — a 27 Ω
+difference the amplification below turns into several degrees of reported
+temperature. The table above already reflects the corrected 303/180 values.
+
+`R_gauge_coil`'s precision matters most for coolant temp: its correction
+(deconvolving `R_parallel` back to `R_sender`, see Runtime conversion below)
+amplifies error by roughly `(R_parallel / (R_gauge_coil − R_parallel))²`,
+which is large exactly when `R_parallel` sits close to `R_gauge_coil` — true
+for the sender's mid-range on coolant temp, where 180 Ω and a few-hundred-Ω
+`R_parallel` aren't far apart. Fuel and oil don't have this problem to nearly
+the same degree — their `R_gauge_coil` values sit well clear of the sender's
+working range — so a direct, single-placement `12V→gnd` reading (rather than
+a subtraction of two separate ones) is worth prioritizing for coolant temp
+specifically if field behavior still looks off after this update.
+
+Both constants are now a **pair of runtime constants consumed on every
+`read()` call** (Runtime conversion below), not one-time curve-generation
+inputs — fix a number, and every reading improves, rather than needing to
+regenerate a whole lookup table.
 
 Measurement procedure (multimeter, battery disconnected, ignition off):
 1. Pull the cluster, expose its harness connector.
 2. Identify the shared +12V gauge-supply pin — continuity-check across the
    *cluster-side* connector (harness unplugged) to find the pin common to all
    three gauges' coils, or trace it to a known ignition-switched +12V wire.
-3. Identify each gauge's sender-wire pin — same wire the STM32 module's
-   PA0/PA1/PA2 divider already taps for that sensor.
-4. Ω mode, one probe on the shared +12V pin, one on the sender-wire pin, per
-   gauge. Battery must be disconnected — a resistance reading on a powered
+3. Identify each gauge's sensor pin — same wire the STM32 module's
+   PA0/PA1/PA2 divider already taps for that sensor. Leave this lead
+   unattached to anything else (real sender included) for this measurement —
+   attaching it pulls in the sender's resistance and no longer isolates the
+   gauge alone.
+4. Ω mode, one probe on the shared +12V pin: read `12V→sensor` (= `R_series`)
+   and `12V→gnd` (= `R_series + R_gauge_coil`) against the gauge's other two
+   pins. Battery must be disconnected — a resistance reading on a powered
    circuit is meaningless (and risks the meter).
+
+Separately, to verify a sender is connected and reading a sane resistance —
+not part of `R_series`/`R_gauge_coil` at all — disconnect the sensor wire at
+the *gauge* end only (leave it attached to the real sender) and read
+sensor-wire→ground directly. This is `R_sender`, the same quantity the
+datasheet curves above are tabulated in.
 
 ## Problem: floating supply voltage
 
@@ -256,10 +308,12 @@ percentage, converting that back into an apparent resistance
 (`R_apparent = R_series · f_apparent/(1 − f_apparent)`) amplifies the error,
 by an amount that depends on `R_series`.
 
-Worked example using the **measured** `R_series` values, showing what a
-naive fixed-12.2V assumption would infer if the real supply were 14.5V
-(still a representative-point illustration — one sample resistance per
-sensor, not a full curve):
+Worked example using the original spare-cluster `R_series` values (since
+superseded, see R_series and R_gauge_coil measured above — the phenomenon and
+its rough magnitude are unaffected by that update), showing what a naive
+fixed-12.2V assumption would infer if the real supply were 14.5V (still a
+representative-point illustration — one sample resistance per sensor, not a
+full curve, and ignoring `R_gauge_coil` for the same reason):
 
 | Sensor | True point | True Ω | R_series (measured) | Apparent Ω if V assumed 12.2V | Apparent reading | Error |
 |---|---|---|---|---|---|---|
@@ -294,10 +348,25 @@ voltage rather than an assumed one:
 ```
 V_adc_pin     = raw / 4095 × V_ref_adc                    [V_ref_adc ≈ 3.3V]
 V_sensor_wire = V_adc_pin × (R1+R2)/R2                     [4.9, fixed, known]
-R_sender      = R_series × V_sensor_wire / (V_supply_now − V_sensor_wire)
+R_parallel    = R_series × V_sensor_wire / (V_supply_now − V_sensor_wire)
+R_sender      = R_gauge_coil × R_parallel / (R_gauge_coil − R_parallel)     [only if R_gauge_coil is configured]
 ```
 
-then linearly interpolate `value` from the sensor's `(ohm, value)` curve
+`R_parallel` is `R_gauge_coil ‖ R_sender` — the OEM gauge's `coilB` stays
+wired to the sensor node in parallel with the real sender (Circuit context
+above), so that's what the divider math up to `V_sensor_wire` actually
+recovers, not `R_sender` alone. The last step deconvolves it back out. When
+`R_parallel ≥ R_gauge_coil` — the sender itself reading open, `R_sender →
+∞` — `R_sender` is treated as `+∞` rather than computed (the formula would
+otherwise divide by zero or go negative); this isn't a fault, since it means
+exactly what a stock gauge sees on an open sender (Failure modes' Mode 1,
+below). A sensor with no `r_gauge_coil_ohm` configured skips this step
+entirely and uses `R_parallel` as `R_sender` directly — the original
+single-resistor-divider behavior, kept as the default (see Sensor-side
+representation below) since only fuel/oil/coolant currently have a measured
+`R_gauge_coil`.
+
+Then linearly interpolate `value` from the sensor's `(ohm, value)` curve
 using `R_sender`, clamping past either end (same spirit as `ValueConstraints`
 min/max clamping elsewhere) rather than extrapolating past datasheet-covered
 territory.
@@ -306,7 +375,8 @@ territory.
   runtime constants — following the precedent already set by `osc_page.rs`'s
   `OSC_DIVIDER_R1_OHM`/`OSC_DIVIDER_R2_OHM` and its own inverse-divider
   helper for the PA3 voltage channel, not a new pattern for this codebase.
-- `R_series` is the per-sensor measured constant from the previous section.
+- `R_series` and `R_gauge_coil` are the per-sensor measured constants from the
+  previous section.
 - `V_supply_now` comes from the live `Hw12v` reading — see Cross-sensor
   dependency below for how it reaches `read()`. No new hardware needed
   (`HWInput::Hw12v` / `AdcChannel::Voltage12V`, per
@@ -314,17 +384,18 @@ territory.
   separate "correction factor" step — supplying the right `V_supply_now` is
   simply what makes the raw→Ω conversion correct in the first place, rather
   than a compensation bolted on afterward.
-- **Fault handling: `read()` returns `Err`.** As `R_sender` (from the
-  datasheet) approaches or exceeds `R_series`, `V_sensor_wire` approaches
-  `V_supply_now` and the denominator shrinks — normal within these three
-  sensors' real ranges, but a disconnected sender or ADC noise pushing
-  `V_sensor_wire` at or above `V_supply_now` would blow the computed
-  `R_sender` up to a huge or negative value. Rather than compute and clamp a
-  nonsensical resistance, `read()` treats `(V_supply_now − V_sensor_wire)`
-  falling at or below a small margin (a few mV, to absorb ADC noise near the
-  boundary rather than triggering only on exact equality) as a fault and
-  returns `Err(...)` — no signature change needed, since `AnalogSensor::read`
-  already returns `Result<&SensorValue, String>`.
+- **Fault handling: `read()` returns `Err`.** As `R_parallel` (bounded above
+  by `R_gauge_coil` once the sender's contribution vanishes) approaches or
+  exceeds `R_series`, `V_sensor_wire` approaches `V_supply_now` and the
+  denominator shrinks — normal within these three sensors' real ranges, but a
+  disconnected sender or ADC noise pushing `V_sensor_wire` at or above
+  `V_supply_now` would blow the computed `R_parallel` up to a huge or
+  negative value. Rather than compute and clamp a nonsensical resistance,
+  `read()` treats `(V_supply_now − V_sensor_wire)` falling at or below a
+  small margin (a few mV, to absorb ADC noise near the boundary rather than
+  triggering only on exact equality) as a fault and returns `Err(...)` — no
+  signature change needed, since `AnalogSensor::read` already returns
+  `Result<&SensorValue, String>`.
 
   This also means no new plumbing in `SensorManager`: `read_analog_sensor`
   already propagates a chain's `Err` without touching `sensor_values` for
@@ -353,7 +424,7 @@ territory.
 
 | # | What's disconnected | ADC pin sits at | Decoded `R_sender` | Result |
 |---|---|---|---|---|
-| 1 | Sender itself (open sender / broken sender wire), gauge coil still fed | ≈ +12 V (via `R_series` coil, ~110–130 Ω, against the weak 49 kΩ tap divider) | huge | **Clamp to the high-Ω curve end → reads minimum**, matching a stock cross-coil gauge with an open sender. Not a fault. |
+| 1 | Sender itself (open sender / broken sender wire), gauge coil still fed | `R_parallel` settles at `R_gauge_coil` (~170–210 Ω) via `coilA`/`coilB` alone, against the weak 49 kΩ tap divider | `R_sender → +∞` (deconvolution's `R_parallel ≥ R_gauge_coil` branch) | **Clamp to the high-Ω curve end → reads minimum**, matching a stock cross-coil gauge with an open sender. Not a fault. |
 | 2 | Gauge +12 V feed | ≈ 0 V (node pulled down through `R_sender`) | ~0 | Fault. Caught by the high-side headroom check when losing that feed also drags `Hw12v` down (`headroom` goes negative); otherwise it looks like mode 3 and the low-side fault catches it. |
 | 3 | The divider's input wire (tap to the cluster) | ≈ 0 V (R2 pulls the ADC pin down; nothing pulls it up) | ~0 | **Low-side fault → `Err`**, so the value drops to "no data" instead of pegging full-scale. |
 
@@ -380,7 +451,13 @@ software relationship derived above.
 New `AnalogSensor` impl, `CalibratedVariableResistanceAnalogSensor` (alongside
 `GenericAnalogSensor`'s linear scale), holding:
 - `curve: Vec<(f32, f32)>` — `(ohm, value)`, sorted ascending by `ohm`.
-- `r_series_ohm: f32` — the measured constant from Conversion pipeline above.
+- `r_series_ohm: f32` — the measured `coilA` constant from Conversion
+  pipeline above.
+- `r_gauge_coil_ohm: f32` — the measured `coilB` constant from the same
+  section, permanently in parallel with the real sender at the tapped node.
+  `f32::INFINITY` (the config loader's default when the field is omitted)
+  means "no second coil" and skips the deconvolution, falling back to the
+  original single-resistor-divider behavior.
 - a handle to the live supply voltage (Cross-sensor dependency, below).
 - `value_offset: f32` — a scalar added to the interpolated curve output, from
   the field calibration file (Calibration overlay file below). Defaults to
@@ -414,7 +491,7 @@ the borrow checker allows).
   `Send`.
 - Created once during chain setup (`main.rs`/`sensor_config.rs`); cloned into
   the writer and into each `CalibratedVariableResistanceAnalogSensor::new(..., v_supply:
-  Arc<AtomicU32>, r_series_ohm: f32, curve: Vec<(f32, f32)>, ...)`.
+  Arc<AtomicU32>, r_series_ohm: f32, r_gauge_coil_ohm: f32, curve: Vec<(f32, f32)>, ...)`.
 - **Writer:** a thin decorator wrapping the `Hw12v` chain's sensor (same
   pattern as the existing `decorator.rs`), publishing into the `Arc` as a
   side effect of its own `read()` — not `SensorManager` itself, so the
@@ -455,7 +532,8 @@ really is arithmetic, not a lookup, so they stay hardcoded as that doc says.
     "id": "HwCoolantTemp",
     "name": "ТЕМП ОХЛ",
     "units": "°C",
-    "r_series_ohm": 110.4,
+    "r_series_ohm": 123.0,
+    "r_gauge_coil_ohm": 180.0,
     "curve": [
       { "ohm": 1615.0, "value": 30.0 },
       { "ohm": 1050.0, "value": 40.0 },
@@ -479,7 +557,10 @@ averaged) — the direct transcription this design was meant to enable, not a
 placeholder. `curve` needs at least 2 points; load fails otherwise, matching
 the existing config loader's fail-fast stance
 (`DATA_DRIVEN_SENSOR_CONFIG_DESIGN.md`'s "bad config is a build-time-equivalent
-mistake" precedent).
+mistake" precedent). `r_gauge_coil_ohm` is optional — omitting it defaults to
+"no second coil" (see Sensor-side representation above), which only makes
+sense for a sensor kind whose OEM gauge genuinely has no such coil; all three
+resistive senders currently in `sensor_config.json` do have one and set it.
 
 ## Calibration overlay file (for the field UI)
 
@@ -663,6 +744,28 @@ Still deferred: the distinct "sender disconnected" indicator (see Failure
 modes) and the two-point/multi-point overlay (see Calibration overlay file
 above) if real-sensor testing shows a single offset isn't enough.
 
+**OEM gauge's second coil (fix, 2026-09-17).** Field measurement (oil
+pressure reading ~4.25 kgf/cm² with the engine off, coolant temp reading
+~90 °C cold) traced to the topology fix in Circuit context above: the
+original model treated `R_series` as the only thing between `V_supply` and
+the sensor node, and everything past that node as the sender alone. It's
+actually the sender in parallel with the OEM gauge's own second coil,
+`R_gauge_coil` — see Conversion pipeline and Runtime conversion above for the
+corrected math. `r_gauge_coil_ohm` (optional, default "none" — skips the
+deconvolution) is now a `CalibratedAnalog` config field and a
+`CalibratedVariableResistanceAnalogSensor` constructor parameter, set for all
+three of fuel/oil/coolant in `sensor_config.json`. `R_series` was refreshed
+to the same-session bench measurement of the actually-installed cluster
+(previously a spare-cluster value; see R_series and R_gauge_coil measured
+above). Coolant temp's `R_gauge_coil` carries more uncertainty than
+fuel/oil's — see the note under that table — and was already revised once,
+same day, from a subtraction-derived 207 Ω to a direct-measurement 180 Ω
+(field readings were still ~5–7 °C off stock with 207 Ω; the 180 Ω figure
+narrows but doesn't necessarily close that gap on its own — worth rechecking
+against the stock gauge again after this update, and `R_series` (123 Ω) is
+the next thing to re-verify with a similarly direct measurement if a gap
+remains).
+
 **Self-test sweep (revised).** `TestADCDataProvider::generate_channels` now
 synthesizes each calibrated channel's raw count instead of sharing one 0–4095
 ramp: it sweeps that sender's datasheet curve end to end in the Ω domain and
@@ -674,11 +777,12 @@ inference stays exact — a moving supply would smear it through the `Hw12v`
 moving-average. The Ω→raw inverse (`calibrated_sender_raw_from_ohm`) and the
 `Hw12v` volts→raw inverse (`v12_raw_from_volts`) are `pub` in
 `hardware/sensors.rs`, exposed for the self-test the same way
-`speed_period_raw_from_kmh` already is; the sweep's per-sender curve endpoints
-and `r_series` mirror `sensor_config.json` (a curve edit there must be mirrored
-in the `SELF_TEST_*_OHM_SPAN` constants). The `hardware/sensors.rs` tests reuse
-the same `calibrated_sender_raw_from_ohm` to drive a sensor from a known
-resistance.
+`speed_period_raw_from_kmh` already is; the sweep's per-sender curve
+endpoints, `r_series`, and (since the fix above) `r_gauge_coil` mirror
+`sensor_config.json` (a curve edit there must be mirrored in the
+`SELF_TEST_*_OHM_SPAN`/`SELF_TEST_*_R_SERIES_OHM`/`SELF_TEST_*_GAUGE_COIL_OHM`
+constants). The `hardware/sensors.rs` tests reuse the same
+`calibrated_sender_raw_from_ohm` to drive a sensor from a known resistance.
 
 ---
 *Created: September 6, 2026*
@@ -702,3 +806,12 @@ resolution); see Implementation status.*
 *Revised: September 12, 2026 — `sensor_calibration.json`, the value-offset
 overlay, and the field calibration UI (DiagPage) implemented, closing out
 GitHub issue #26; see Implementation status.*
+
+*Revised: September 17, 2026 — corrected the OEM gauge topology: `coilA` and
+`coilB` are in series (not each independently straight-to-ground), so the
+real sender is in parallel with `coilB` at the sensor node, not alone. Added
+`R_gauge_coil`/`r_gauge_coil_ohm` and the raw→Ω deconvolution step; refreshed
+`R_series` to the installed cluster. Fixes oil pressure reading ~4.25 kgf/cm²
+with the engine off and coolant temp reading ~90 °C cold. See Circuit
+context, Conversion pipeline and R_series, Runtime conversion, and
+Implementation status.*

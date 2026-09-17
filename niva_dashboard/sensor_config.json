@@ -180,7 +180,8 @@
       "id": "HwFuelLvl",
       "name": "УРОВ ТОПЛ",
       "units": "%",
-      "r_series_ohm": 124.4,
+      "r_series_ohm": 129.0,
+      "r_gauge_coil_ohm": 183.0,
       "curve": [
         { "ohm": 20.0,  "value": 100.0 },
         { "ohm": 66.0,  "value": 50.0 },
@@ -204,7 +205,8 @@
       "id": "HwOilPress",
       "name": "ДАВЛ МАСЛА",
       "units": "кгс/см²",
-      "r_series_ohm": 130.8,
+      "r_series_ohm": 123.0,
+      "r_gauge_coil_ohm": 171.0,
       "curve": [
         { "ohm": 7.5,   "value": 8.0 },
         { "ohm": 67.5,  "value": 6.0 },
@@ -229,7 +231,8 @@
       "id": "HwEngineCoolantTemp",
       "name": "ТЕМП",
       "units": "°C",
-      "r_series_ohm": 110.4,
+      "r_series_ohm": 123.0,
+      "r_gauge_coil_ohm": 180.0,
       "curve": [
         { "ohm": 58.0,   "value": 130.0 },
         { "ohm": 75.0,   "value": 120.0 },
