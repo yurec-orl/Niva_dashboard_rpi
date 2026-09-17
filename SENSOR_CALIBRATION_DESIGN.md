@@ -216,7 +216,7 @@ left unattached, multimeter across the gauge's own three pins):
 |---|---|---|---|
 | Fuel level | 129.0 | 312 | 183.0 |
 | Oil pressure | 123.0 | 294 | 171.0 |
-| Coolant temp | 123.0 | 330 | 207.0 |
+| Coolant temp | 123.0 | 303 | 180.0 |
 
 Superseded (2026-09-17) an earlier `R_series`-only table measured on a
 **spare cluster, not the one actually installed** (124.4 / 130.8 / 110.4 for
@@ -224,18 +224,25 @@ fuel/oil/temp) — that table also predates the `R_gauge_coil` term entirely
 (see Circuit context above for why the old topology missed it). The fresh
 values above are both for the installed unit and complete.
 
+Coolant temp's `12V→gnd` was itself revised once more (2026-09-17, same day):
+an initial 330 Ω reading — taken as two separate probe sessions (`12V→sensor`
+then `sensor→gnd`) added together — implied `R_gauge_coil` = 207 Ω. A
+follow-up **single, direct** `12V→gnd` reading (one continuous multimeter
+placement across both poles, not a subtraction of two separately-recorded
+numbers) came back 303 Ω instead, giving `R_gauge_coil` = 180 Ω — a 27 Ω
+difference the amplification below turns into several degrees of reported
+temperature. The table above already reflects the corrected 303/180 values.
+
 `R_gauge_coil`'s precision matters most for coolant temp: its correction
 (deconvolving `R_parallel` back to `R_sender`, see Runtime conversion below)
 amplifies error by roughly `(R_parallel / (R_gauge_coil − R_parallel))²`,
 which is large exactly when `R_parallel` sits close to `R_gauge_coil` — true
-for the sender's mid-range on coolant temp, where 207 Ω and a few-hundred-Ω
-`R_parallel` aren't far apart. A `12V→gnd − R_series` value derived from two
-1 Ω-resolution bench readings (as above) carries several Ω of uncertainty
-that this amplification can turn into tens of degrees of error; a direct
-`12V→gnd` reading on a good multimeter (rather than the subtraction) is worth
-redoing for coolant temp specifically if field behavior still looks off after
-this fix. Fuel and oil don't have this problem to nearly the same degree —
-their `R_gauge_coil` values sit well clear of the sender's working range.
+for the sender's mid-range on coolant temp, where 180 Ω and a few-hundred-Ω
+`R_parallel` aren't far apart. Fuel and oil don't have this problem to nearly
+the same degree — their `R_gauge_coil` values sit well clear of the sender's
+working range — so a direct, single-placement `12V→gnd` reading (rather than
+a subtraction of two separate ones) is worth prioritizing for coolant temp
+specifically if field behavior still looks off after this update.
 
 Both constants are now a **pair of runtime constants consumed on every
 `read()` call** (Runtime conversion below), not one-time curve-generation
@@ -526,7 +533,7 @@ really is arithmetic, not a lookup, so they stay hardcoded as that doc says.
     "name": "ТЕМП ОХЛ",
     "units": "°C",
     "r_series_ohm": 123.0,
-    "r_gauge_coil_ohm": 207.0,
+    "r_gauge_coil_ohm": 180.0,
     "curve": [
       { "ohm": 1615.0, "value": 30.0 },
       { "ohm": 1050.0, "value": 40.0 },
@@ -750,9 +757,14 @@ deconvolution) is now a `CalibratedAnalog` config field and a
 three of fuel/oil/coolant in `sensor_config.json`. `R_series` was refreshed
 to the same-session bench measurement of the actually-installed cluster
 (previously a spare-cluster value; see R_series and R_gauge_coil measured
-above). Coolant temp's `R_gauge_coil` (207 Ω) carries more uncertainty than
-fuel/oil's — see the note under that table — and may need a direct
-re-measurement if field behavior still looks off.
+above). Coolant temp's `R_gauge_coil` carries more uncertainty than
+fuel/oil's — see the note under that table — and was already revised once,
+same day, from a subtraction-derived 207 Ω to a direct-measurement 180 Ω
+(field readings were still ~5–7 °C off stock with 207 Ω; the 180 Ω figure
+narrows but doesn't necessarily close that gap on its own — worth rechecking
+against the stock gauge again after this update, and `R_series` (123 Ω) is
+the next thing to re-verify with a similarly direct measurement if a gap
+remains).
 
 **Self-test sweep (revised).** `TestADCDataProvider::generate_channels` now
 synthesizes each calibrated channel's raw count instead of sharing one 0–4095

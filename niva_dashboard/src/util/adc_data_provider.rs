@@ -783,7 +783,7 @@ const SELF_TEST_FUEL_R_SERIES_OHM: f32 = 129.0;
 const SELF_TEST_FUEL_GAUGE_COIL_OHM: f32 = 183.0;
 const SELF_TEST_FUEL_OHM_SPAN: (f32, f32) = (250.0, 20.0);
 const SELF_TEST_COOLANT_R_SERIES_OHM: f32 = 123.0;
-const SELF_TEST_COOLANT_GAUGE_COIL_OHM: f32 = 207.0;
+const SELF_TEST_COOLANT_GAUGE_COIL_OHM: f32 = 180.0;
 const SELF_TEST_COOLANT_OHM_SPAN: (f32, f32) = (702.5, 58.0);
 /// System-voltage band Hw12v sweeps on the envelope (0→1→0), spanning the 10–16 V voltage
 /// gauge face so БОРТ СЕТЬ visibly travels end to end. `supply_v()` returns the

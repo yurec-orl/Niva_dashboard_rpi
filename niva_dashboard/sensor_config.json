@@ -232,7 +232,7 @@
       "name": "ТЕМП",
       "units": "°C",
       "r_series_ohm": 123.0,
-      "r_gauge_coil_ohm": 207.0,
+      "r_gauge_coil_ohm": 180.0,
       "curve": [
         { "ohm": 58.0,   "value": 130.0 },
         { "ohm": 75.0,   "value": 120.0 },
