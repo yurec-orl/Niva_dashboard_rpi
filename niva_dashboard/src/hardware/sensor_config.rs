@@ -127,12 +127,16 @@ enum SensorConfig {
     /// CalibratedVariableResistanceAnalogSensor and SENSOR_CALIBRATION_DESIGN.md. Paired
     /// with `provider: "adc"`. `curve` is `(ohm, value)` points (>= 2, sorted by `ohm` on
     /// load); `value_offset` (optional, default 0.0) is reserved for the field-calibration
-    /// overlay that doesn't exist yet.
+    /// overlay that doesn't exist yet. `r_gauge_coil_ohm` (optional, default "none") is the
+    /// OEM gauge's own second coil (sensor pin to ground pin), permanently in parallel with
+    /// the real sender -- see SENSOR_CALIBRATION_DESIGN.md, "OEM gauge's second coil".
     CalibratedAnalog {
         id: String,
         name: String,
         units: String,
         r_series_ohm: f32,
+        #[serde(default = "default_gauge_coil_ohm")]
+        r_gauge_coil_ohm: f32,
         curve: Vec<CurvePointConfig>,
         #[serde(default)]
         value_offset: f32,
@@ -148,6 +152,12 @@ struct CurvePointConfig {
 
 fn default_trim() -> f32 {
     1.0
+}
+
+/// "No OEM gauge coil configured" -- `CalibratedVariableResistanceAnalogSensor` treats this
+/// as "skip the parallel-coil deconvolution", the old single-resistor-divider behavior.
+fn default_gauge_coil_ohm() -> f32 {
+    f32::INFINITY
 }
 
 #[derive(Deserialize)]
@@ -376,7 +386,7 @@ fn build_adc_chain(
             );
             mgr.add_analog_sensor_chain(chain);
         }
-        SensorConfig::CalibratedAnalog { id, name, units, r_series_ohm, curve, value_offset, constraints } => {
+        SensorConfig::CalibratedAnalog { id, name, units, r_series_ohm, r_gauge_coil_ohm, curve, value_offset, constraints } => {
             if !entry.digital_processors.is_empty() {
                 return Err(format!(
                     "sensor config: hw_input '{}' is an analog sensor but lists digital_processors",
@@ -407,7 +417,7 @@ fn build_adc_chain(
                 Box::new(ADCChannelProvider::new(input, frame)),
                 analog_processors(),
                 Box::new(CalibratedVariableResistanceAnalogSensor::new(
-                    id.clone(), name.clone(), units.clone(), *r_series_ohm,
+                    id.clone(), name.clone(), units.clone(), *r_series_ohm, *r_gauge_coil_ohm,
                     points, offset_cell, constraints.build(&entry.hw_input)?,
                     v_supply.clone(),
                 )),

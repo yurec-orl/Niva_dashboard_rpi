@@ -772,11 +772,18 @@ const SELF_TEST_TEMP_PEAK_C: f32 = 70.0;
 /// falling — resistance drops as the measured quantity rises (sensor_config.json: 305 Ω→0
 /// kgf vs 7.5 Ω→8 kgf, 250 Ω→0 % vs 20 Ω→100 %, 1615 Ω→30 °C vs 58 Ω→130 °C) — so the
 /// high-Ω end is listed first, letting the 0→1 envelope drive the *displayed* value 0→full.
-const SELF_TEST_OIL_R_SERIES_OHM: f32 = 130.8;
+/// OEM gauge's own second ("reference") coil, sensor pin to ground pin -- permanently in
+/// parallel with the sender at the tapped node (see SENSOR_CALIBRATION_DESIGN.md, "OEM
+/// gauge's second coil"). Mirrors sensor_config.json's `r_gauge_coil_ohm` per sensor; a curve
+/// edit there must be mirrored here, same as R_series above.
+const SELF_TEST_OIL_R_SERIES_OHM: f32 = 123.0;
+const SELF_TEST_OIL_GAUGE_COIL_OHM: f32 = 171.0;
 const SELF_TEST_OIL_OHM_SPAN: (f32, f32) = (305.0, 7.5);
-const SELF_TEST_FUEL_R_SERIES_OHM: f32 = 124.4;
+const SELF_TEST_FUEL_R_SERIES_OHM: f32 = 129.0;
+const SELF_TEST_FUEL_GAUGE_COIL_OHM: f32 = 183.0;
 const SELF_TEST_FUEL_OHM_SPAN: (f32, f32) = (250.0, 20.0);
-const SELF_TEST_COOLANT_R_SERIES_OHM: f32 = 110.4;
+const SELF_TEST_COOLANT_R_SERIES_OHM: f32 = 123.0;
+const SELF_TEST_COOLANT_GAUGE_COIL_OHM: f32 = 207.0;
 const SELF_TEST_COOLANT_OHM_SPAN: (f32, f32) = (702.5, 58.0);
 /// System-voltage band Hw12v sweeps on the envelope (0→1→0), spanning the 10–16 V voltage
 /// gauge face so БОРТ СЕТЬ visibly travels end to end. `supply_v()` returns the
@@ -1005,8 +1012,8 @@ impl TestADCDataProvider {
         // 0→full→0, not full→0→full.
         let sweep_ohm = |(ohm_at_zero, ohm_at_full): (f32, f32)|
             ohm_at_zero + (ohm_at_full - ohm_at_zero) * level;
-        let sender_raw = |span, r_series| crate::hardware::sensors::calibrated_sender_raw_from_ohm(
-            sweep_ohm(span), r_series, supply_v,
+        let sender_raw = |span, r_series, r_gauge_coil| crate::hardware::sensors::calibrated_sender_raw_from_ohm(
+            sweep_ohm(span), r_series, r_gauge_coil, supply_v,
         );
         // HwSpeed reports an inter-pulse period, not a count (see
         // SPEED_TACHO_PULSE_PERIOD_DESIGN.md) — encoded directly from the envelope's target
@@ -1022,9 +1029,9 @@ impl TestADCDataProvider {
         let tacho_raw = crate::hardware::sensors::tacho_period_raw_from_rpm(level * SELF_TEST_TACHO_PEAK_RPM);
 
         let mut channels = vec![0u16; 16];
-        channels[AdcChannel::OilPressure.index()] = sender_raw(SELF_TEST_OIL_OHM_SPAN, SELF_TEST_OIL_R_SERIES_OHM);  // HwOilPress
-        channels[AdcChannel::FuelLevel.index()] = sender_raw(SELF_TEST_FUEL_OHM_SPAN, SELF_TEST_FUEL_R_SERIES_OHM);  // HwFuelLvl
-        channels[AdcChannel::EngineTemp.index()] = sender_raw(SELF_TEST_COOLANT_OHM_SPAN, SELF_TEST_COOLANT_R_SERIES_OHM);  // HwEngineCoolantTemp
+        channels[AdcChannel::OilPressure.index()] = sender_raw(SELF_TEST_OIL_OHM_SPAN, SELF_TEST_OIL_R_SERIES_OHM, SELF_TEST_OIL_GAUGE_COIL_OHM);  // HwOilPress
+        channels[AdcChannel::FuelLevel.index()] = sender_raw(SELF_TEST_FUEL_OHM_SPAN, SELF_TEST_FUEL_R_SERIES_OHM, SELF_TEST_FUEL_GAUGE_COIL_OHM);  // HwFuelLvl
+        channels[AdcChannel::EngineTemp.index()] = sender_raw(SELF_TEST_COOLANT_OHM_SPAN, SELF_TEST_COOLANT_R_SERIES_OHM, SELF_TEST_COOLANT_GAUGE_COIL_OHM);  // HwEngineCoolantTemp
         channels[AdcChannel::Voltage12V.index()] = crate::hardware::sensors::v12_raw_from_volts(supply_v, SELF_TEST_V12_TRIM);  // Hw12v
         channels[AdcChannel::Tacho.index()] = tacho_raw;   // HwTacho (raw inter-pulse period)
         channels[AdcChannel::Speed.index()] = speed_raw;   // HwSpeed (raw inter-pulse period)
@@ -1069,9 +1076,9 @@ impl TestADCDataProvider {
         let tacho_rpm = Self::settle_toward(current, targets, HWInput::HwTacho, SETTLE_DEFAULT_TACHO_RPM);
 
         let mut channels = vec![0u16; 16];
-        channels[AdcChannel::OilPressure.index()] = crate::hardware::sensors::calibrated_sender_raw_from_ohm(oil_ohm, SELF_TEST_OIL_R_SERIES_OHM, supply_v);
-        channels[AdcChannel::FuelLevel.index()] = crate::hardware::sensors::calibrated_sender_raw_from_ohm(fuel_ohm, SELF_TEST_FUEL_R_SERIES_OHM, supply_v);
-        channels[AdcChannel::EngineTemp.index()] = crate::hardware::sensors::calibrated_sender_raw_from_ohm(coolant_ohm, SELF_TEST_COOLANT_R_SERIES_OHM, supply_v);
+        channels[AdcChannel::OilPressure.index()] = crate::hardware::sensors::calibrated_sender_raw_from_ohm(oil_ohm, SELF_TEST_OIL_R_SERIES_OHM, SELF_TEST_OIL_GAUGE_COIL_OHM, supply_v);
+        channels[AdcChannel::FuelLevel.index()] = crate::hardware::sensors::calibrated_sender_raw_from_ohm(fuel_ohm, SELF_TEST_FUEL_R_SERIES_OHM, SELF_TEST_FUEL_GAUGE_COIL_OHM, supply_v);
+        channels[AdcChannel::EngineTemp.index()] = crate::hardware::sensors::calibrated_sender_raw_from_ohm(coolant_ohm, SELF_TEST_COOLANT_R_SERIES_OHM, SELF_TEST_COOLANT_GAUGE_COIL_OHM, supply_v);
         channels[AdcChannel::Voltage12V.index()] = crate::hardware::sensors::v12_raw_from_volts(supply_v, SELF_TEST_V12_TRIM);
         channels[AdcChannel::Tacho.index()] = crate::hardware::sensors::tacho_period_raw_from_rpm(tacho_rpm);
         channels[AdcChannel::Speed.index()] = crate::hardware::sensors::speed_period_raw_from_kmh(speed_kmh);
@@ -1286,18 +1293,18 @@ mod tests {
         use std::sync::Arc;
         use std::sync::atomic::AtomicU32; // Ordering comes from `use super::*`
 
-        let cases: [(usize, (f32, f32), f32); 3] = [
-            (AdcChannel::OilPressure.index(), SELF_TEST_OIL_OHM_SPAN, SELF_TEST_OIL_R_SERIES_OHM),
-            (AdcChannel::FuelLevel.index(), SELF_TEST_FUEL_OHM_SPAN, SELF_TEST_FUEL_R_SERIES_OHM),
-            (AdcChannel::EngineTemp.index(), SELF_TEST_COOLANT_OHM_SPAN, SELF_TEST_COOLANT_R_SERIES_OHM),
+        let cases: [(usize, (f32, f32), f32, f32); 3] = [
+            (AdcChannel::OilPressure.index(), SELF_TEST_OIL_OHM_SPAN, SELF_TEST_OIL_R_SERIES_OHM, SELF_TEST_OIL_GAUGE_COIL_OHM),
+            (AdcChannel::FuelLevel.index(), SELF_TEST_FUEL_OHM_SPAN, SELF_TEST_FUEL_R_SERIES_OHM, SELF_TEST_FUEL_GAUGE_COIL_OHM),
+            (AdcChannel::EngineTemp.index(), SELF_TEST_COOLANT_OHM_SPAN, SELF_TEST_COOLANT_R_SERIES_OHM, SELF_TEST_COOLANT_GAUGE_COIL_OHM),
         ];
 
-        for (idx, (ohm_at_zero, ohm_at_full), r_series) in cases {
+        for (idx, (ohm_at_zero, ohm_at_full), r_series, r_gauge_coil) in cases {
             let v_supply = Arc::new(AtomicU32::new(TestADCDataProvider::supply_v(Duration::ZERO).to_bits()));
             // Ascending-in-Ω curve (interpolate_curve requires it): the full-scale end is the
             // low-Ω end for all three senders, so it carries value 100 and the zero end 0.
             let mut sensor = CalibratedVariableResistanceAnalogSensor::new(
-                "x".to_string(), "x".to_string(), "u".to_string(), r_series,
+                "x".to_string(), "x".to_string(), "u".to_string(), r_series, r_gauge_coil,
                 vec![(ohm_at_full, 100.0), (ohm_at_zero, 0.0)], Arc::new(AtomicU32::new(0.0f32.to_bits())),
                 ValueConstraints::analog(0.0, 100.0), v_supply.clone(),
             );

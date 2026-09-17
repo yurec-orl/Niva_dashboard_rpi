@@ -286,9 +286,8 @@ fn interpolate_curve(curve: &[(f32, f32)], ohm: f32) -> f32 {
 
 /// Converts a raw ADC count from a PA0/PA1/PA2 resistive sender to a physical value through
 /// a datasheet resistance curve, using the *live* 12 V supply reading rather than an assumed
-/// nominal. The sender forms a plain two-resistor divider with the OEM gauge coil, so the
-/// tapped node voltage (and hence the raw count) scales directly with supply voltage -- see
-/// SENSOR_CALIBRATION_DESIGN.md for the full derivation.
+/// nominal. The sender's node also carries the OEM gauge's own second ("reference") coil in
+/// parallel -- see SENSOR_CALIBRATION_DESIGN.md for the full derivation.
 ///
 /// `read()` returns `Err` when the divider headroom collapses (disconnected sender / ADC
 /// noise). `SensorManager::read_all_sensors` already drops one chain's `Err` for that tick
@@ -302,6 +301,12 @@ pub struct CalibratedVariableResistanceAnalogSensor {
     /// Variable-coil winding resistance of the OEM gauge this sender shares its divider with
     /// (measured per gauge; SENSOR_CALIBRATION_DESIGN.md).
     r_series_ohm: f32,
+    /// OEM gauge's second ("reference") coil, sensor pin to ground pin -- wired permanently
+    /// in parallel with the real sender at the tapped node, since the stock gauge stays
+    /// connected alongside our ADC tap. `f32::INFINITY` (the default when unconfigured) means
+    /// "no second coil" and skips the deconvolution below, preserving the old single-resistor
+    /// divider behavior. See SENSOR_CALIBRATION_DESIGN.md, "OEM gauge's second coil".
+    r_gauge_coil_ohm: f32,
     /// Field-calibration offset added to the interpolated curve output (bits of an `f32`),
     /// from the sensor_calibration.json overlay -- see SENSOR_CALIBRATION_DESIGN.md,
     /// "Calibration overlay file". A shared cell rather than a plain `f32`, same rationale as
@@ -313,7 +318,7 @@ pub struct CalibratedVariableResistanceAnalogSensor {
 }
 
 impl CalibratedVariableResistanceAnalogSensor {
-    pub fn new(id: String, name: String, units: String, r_series_ohm: f32,
+    pub fn new(id: String, name: String, units: String, r_series_ohm: f32, r_gauge_coil_ohm: f32,
                curve: Vec<(f32, f32)>, value_offset: Arc<AtomicU32>,
                constraints: ValueConstraints, v_supply: Arc<AtomicU32>) -> Self {
         CalibratedVariableResistanceAnalogSensor {
@@ -322,6 +327,7 @@ impl CalibratedVariableResistanceAnalogSensor {
             metadata: ValueMetadata::new(units, name, id),
             curve,
             r_series_ohm,
+            r_gauge_coil_ohm,
             value_offset,
             v_supply,
         }
@@ -351,7 +357,23 @@ impl AnalogSensor for CalibratedVariableResistanceAnalogSensor {
                 self.metadata.sensor_id, v_sensor_wire, v_supply
             ));
         }
-        let r_sender = self.r_series_ohm * v_sensor_wire / headroom;
+        let r_parallel = self.r_series_ohm * v_sensor_wire / headroom;
+        // The OEM gauge's own reference coil stays wired from the sensor node to ground in
+        // parallel with the real sender, so `r_parallel` above is that parallel combination,
+        // not the sender alone. Deconvolve it back out -- see SENSOR_CALIBRATION_DESIGN.md,
+        // "OEM gauge's second coil". `r_parallel` approaching or exceeding `r_gauge_coil_ohm`
+        // means the sender itself is open (R_ext -> infinity), which clamps to the curve's
+        // high-Ω end below rather than faulting, matching a stock gauge's own behavior on an
+        // open sender.
+        let r_sender = if self.r_gauge_coil_ohm.is_finite() {
+            if r_parallel < self.r_gauge_coil_ohm {
+                self.r_gauge_coil_ohm * r_parallel / (self.r_gauge_coil_ohm - r_parallel)
+            } else {
+                f32::INFINITY
+            }
+        } else {
+            r_parallel
+        };
         let short_fault_ohm = (self.curve[0].0 * SENDER_SHORT_FAULT_CURVE_FRACTION)
             .max(SENDER_SHORT_FAULT_MIN_OHM);
         if r_sender < short_fault_ohm {
@@ -376,9 +398,15 @@ impl AnalogSensor for CalibratedVariableResistanceAnalogSensor {
 /// counts come from the same PA0/PA1/PA2 divider math the real conversion inverts rather than
 /// a separately maintained copy (same rationale as `speed_period_raw_from_kmh`). `v_supply`
 /// is the supply voltage the synthetic frame presents on `Hw12v` at the same instant.
-/// Clamped to the 12-bit ADC range.
-pub fn calibrated_sender_raw_from_ohm(r_sender: f32, r_series_ohm: f32, v_supply: f32) -> u16 {
-    let frac = r_sender / (r_series_ohm + r_sender);
+/// `r_gauge_coil_ohm` mirrors the sensor's own field -- `f32::INFINITY` for "no second coil"
+/// reduces this to the plain single-resistor divider. Clamped to the 12-bit ADC range.
+pub fn calibrated_sender_raw_from_ohm(r_sender: f32, r_series_ohm: f32, r_gauge_coil_ohm: f32, v_supply: f32) -> u16 {
+    let r_parallel = if r_gauge_coil_ohm.is_finite() {
+        (r_gauge_coil_ohm * r_sender) / (r_gauge_coil_ohm + r_sender)
+    } else {
+        r_sender
+    };
+    let frac = r_parallel / (r_series_ohm + r_parallel);
     let v_sensor_wire = v_supply * frac;
     let v_adc_pin = v_sensor_wire * SENDER_DIVIDER_R2_OHM
         / (SENDER_DIVIDER_R1_OHM + SENDER_DIVIDER_R2_OHM);
@@ -1088,11 +1116,12 @@ mod tests {
         assert_eq!(sensor.read(4095).unwrap().as_f32(), 20.0);
     }
 
-    /// Ω→raw, for driving CalibratedVariableResistanceAnalogSensor from a known resistance.
-    /// Thin alias over the production `calibrated_sender_raw_from_ohm` (also used by the
-    /// self-test sweep) so these tests exercise the same inverse.
+    /// Ω→raw, for driving CalibratedVariableResistanceAnalogSensor from a known resistance,
+    /// with no OEM gauge coil in parallel (matches the sensor-side default). Thin alias over
+    /// the production `calibrated_sender_raw_from_ohm` (also used by the self-test sweep) so
+    /// these tests exercise the same inverse.
     fn raw_for_resistance(r_sender: f32, r_series: f32, v_supply: f32) -> u16 {
-        super::calibrated_sender_raw_from_ohm(r_sender, r_series, v_supply)
+        super::calibrated_sender_raw_from_ohm(r_sender, r_series, f32::INFINITY, v_supply)
     }
 
     /// ТМ106 coolant curve (datasheet-band midpoints), abbreviated to the points these
@@ -1113,7 +1142,7 @@ mod tests {
         let raw = raw_for_resistance(175.5, 110.4, 13.5); // -> 90 °C
         let mut sensor = CalibratedVariableResistanceAnalogSensor::new(
             "HwEngineCoolantTemp".to_string(), "ТЕМП".to_string(), "°C".to_string(),
-            110.4, coolant_curve(), offset_cell(0.0),
+            110.4, f32::INFINITY, coolant_curve(), offset_cell(0.0),
             ValueConstraints::analog(0.0, 120.0), v_supply,
         );
         let t = sensor.read(raw).unwrap().as_f32();
@@ -1129,7 +1158,7 @@ mod tests {
         let raw = raw_for_resistance(175.5, 110.4, 12.2);
         let mut sensor = CalibratedVariableResistanceAnalogSensor::new(
             "c".to_string(), "c".to_string(), "°C".to_string(),
-            110.4, coolant_curve(), offset_cell(0.0),
+            110.4, f32::INFINITY, coolant_curve(), offset_cell(0.0),
             ValueConstraints::analog(0.0, 120.0), cell.clone(),
         );
         let at_12v = sensor.read(raw).unwrap().as_f32();
@@ -1144,7 +1173,7 @@ mod tests {
         let v_supply = Arc::new(AtomicU32::new(12.2f32.to_bits()));
         let mut sensor = CalibratedVariableResistanceAnalogSensor::new(
             "c".to_string(), "c".to_string(), "°C".to_string(),
-            110.4, coolant_curve(), offset_cell(0.0),
+            110.4, f32::INFINITY, coolant_curve(), offset_cell(0.0),
             ValueConstraints::analog(0.0, 120.0), v_supply,
         );
         // Full-scale raw -> V_sensor_wire ~16 V, well above the 12.2 V supply.
@@ -1156,7 +1185,7 @@ mod tests {
         let v_supply = Arc::new(AtomicU32::new(13.5f32.to_bits()));
         let mut sensor = CalibratedVariableResistanceAnalogSensor::new(
             "c".to_string(), "c".to_string(), "°C".to_string(),
-            110.4, coolant_curve(), offset_cell(0.0),
+            110.4, f32::INFINITY, coolant_curve(), offset_cell(0.0),
             ValueConstraints::analog(0.0, 200.0), v_supply, // wide clamp so the curve ends show
         );
         // 35 Ω is below the curve's lowest point (58 Ω) but above the low-side short-fault
@@ -1174,7 +1203,7 @@ mod tests {
         let v_supply = Arc::new(AtomicU32::new(13.5f32.to_bits()));
         let mut sensor = CalibratedVariableResistanceAnalogSensor::new(
             "c".to_string(), "c".to_string(), "°C".to_string(),
-            110.4, coolant_curve(), offset_cell(0.0),
+            110.4, f32::INFINITY, coolant_curve(), offset_cell(0.0),
             ValueConstraints::analog(0.0, 120.0), v_supply,
         );
         assert!(sensor.read(0).is_err(), "raw 0 (floating divider input) should fault");
@@ -1189,17 +1218,51 @@ mod tests {
         let raw = raw_for_resistance(175.5, 110.4, 13.5);
         let mut base = CalibratedVariableResistanceAnalogSensor::new(
             "c".to_string(), "c".to_string(), "°C".to_string(),
-            110.4, coolant_curve(), offset_cell(0.0),
+            110.4, f32::INFINITY, coolant_curve(), offset_cell(0.0),
             ValueConstraints::analog(0.0, 200.0), v_supply.clone(),
         );
         let mut offset = CalibratedVariableResistanceAnalogSensor::new(
             "c".to_string(), "c".to_string(), "°C".to_string(),
-            110.4, coolant_curve(), offset_cell(5.0),
+            110.4, f32::INFINITY, coolant_curve(), offset_cell(5.0),
             ValueConstraints::analog(0.0, 200.0), v_supply,
         );
         let b = base.read(raw).unwrap().as_f32();
         let o = offset.read(raw).unwrap().as_f32();
         assert!((o - b - 5.0).abs() < 0.01, "offset should shift by +5, {b} vs {o}");
+    }
+
+    #[test]
+    fn test_calibrated_vr_sensor_deconvolves_oem_gauge_coil() {
+        // r_gauge_coil_ohm=207 mirrors the coolant gauge's own bench-measured second coil
+        // (SENSOR_CALIBRATION_DESIGN.md). A raw count built from a *true* 335 Ω sender through
+        // the gauge-coil-inclusive inverse must decode back to the same 335 Ω (70 °C) -- not
+        // to the lower "R_ext ‖ 207" value a sensor with no r_gauge_coil_ohm would see.
+        let v_supply = Arc::new(AtomicU32::new(13.5f32.to_bits()));
+        let raw = super::calibrated_sender_raw_from_ohm(335.0, 110.4, 207.0, 13.5); // -> 70 °C
+        let mut sensor = CalibratedVariableResistanceAnalogSensor::new(
+            "c".to_string(), "c".to_string(), "°C".to_string(),
+            110.4, 207.0, coolant_curve(), offset_cell(0.0),
+            ValueConstraints::analog(0.0, 120.0), v_supply,
+        );
+        let t = sensor.read(raw).unwrap().as_f32();
+        assert!((t - 70.0).abs() < 0.5, "expected ~70 °C, got {t}");
+    }
+
+    #[test]
+    fn test_calibrated_vr_sensor_open_sender_clamps_not_faults() {
+        // r_parallel approaching r_gauge_coil_ohm means the real sender is open (R_ext ->
+        // infinity) -- the stock gauge's own reference coil is still there holding the node
+        // down, so this must clamp to the curve's high-Ω end (like a stock gauge with an open
+        // sender), not fault the way an actual short/disconnected-wire condition does.
+        let v_supply = Arc::new(AtomicU32::new(13.5f32.to_bits()));
+        let raw = super::calibrated_sender_raw_from_ohm(1_000_000.0, 110.4, 207.0, 13.5);
+        let mut sensor = CalibratedVariableResistanceAnalogSensor::new(
+            "c".to_string(), "c".to_string(), "°C".to_string(),
+            110.4, 207.0, coolant_curve(), offset_cell(0.0),
+            ValueConstraints::analog(0.0, 120.0), v_supply,
+        );
+        let t = sensor.read(raw).unwrap().as_f32();
+        assert!((t - 30.0).abs() < 0.001, "open sender should clamp to 30 °C, got {t}");
     }
 
     #[test]
@@ -1363,7 +1426,7 @@ mod tests {
         // Test CalibratedVariableResistanceAnalogSensor implements AnalogSensor trait
         let mut temp_sensor = CalibratedVariableResistanceAnalogSensor::new(
             "c".to_string(), "c".to_string(), "°C".to_string(),
-            110.4, coolant_curve(), offset_cell(0.0),
+            110.4, f32::INFINITY, coolant_curve(), offset_cell(0.0),
             ValueConstraints::analog(0.0, 120.0),
             Arc::new(AtomicU32::new(13.5f32.to_bits())),
         );
