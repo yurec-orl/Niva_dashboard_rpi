@@ -152,6 +152,13 @@ Raw `gl::` calls (`GetUniformLocation`, `GetAttribLocation`, `ShaderSource`, etc
 ## Boot Time
 Boot reduced from ~16.8s to ~5.1s by disabling unused systemd services (`NetworkManager-wait-online`, `e2scrub_reap`, `ModemManager`, `rpi-eeprom-update`, `bluetooth`, `hciuart` — see `/home/user/boot-optimizations.md`). `avahi-daemon` stays enabled for `.local` SSH access. These are OS-level `systemctl disable` calls, not part of this repo — a fresh SD flash needs them reapplied. Remaining ~18s gap is pre-kernel firmware/bootloader stage, invisible to OS tools; further profiling would need a `BOOT_UART=1` serial capture.
 
+## Docs Repository
+Design docs, implementation plans, research notes, and diagnostic write-ups live under `docs/`, not the repo root:
+- `docs/design/` — design docs (e.g. `SENSOR_CALIBRATION_DESIGN.md`, `HEADING_FUSION_DESIGN.md`)
+- `docs/impl/` — implementation plans (e.g. `DEPLOYMENT_PLAN.md`)
+- `docs/research/` — research notes and vendor reference material (e.g. `BNO085_SHTP_PROTOCOL_RESEARCH.md`)
+- `docs/diagnostics/` — resolved bug-diagnosis session logs (e.g. `OSCILLOSCOPE_FIRMWARE_DIAGNOSIS.md`)
+
 ## TODO
 Tracked in [GitHub Issues](https://github.com/yurec-orl/Niva_dashboard_rpi/issues).
 
