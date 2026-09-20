@@ -181,29 +181,39 @@ Pulse sensor ── R1 ──┬── PA8/PA9 (TIM1 input)
 
 ---
 
-## Digital inputs, active-low via divider (12V→3.3V, INPUT_PULLUP)
+## Digital inputs, active-low via series blocking diode (INPUT_PULLUP)
 
-These sensors idle at 12V (open) and short to GND when active.
-The STM32 internal pull-up holds the pin high when the sensor side
-is open-circuit (wire disconnected). The divider scales 12V down to 3.3V.
+These sensors idle open (sender at rest) and short to GND when active.
+
+Originally used a 12V→3.3V resistive divider tapped from the car's warning-lamp-fed
+line, same shape as the active-high group below. That design made the pin's logic-high
+state depend on the line actually reaching ~12V through the OEM lamp filament — a
+burned-out lamp left only the STM32's weak internal pull-up fighting the divider's R2,
+producing an ambiguous ~270mV floor that read as a false active state
+([#37](https://github.com/yurec-orl/Niva_dashboard_rpi/issues/37)). Redesigned to a
+series blocking diode, which decouples the pin's high state from the line's voltage
+entirely — the internal pull-up alone defines "idle", regardless of lamp condition.
 
 ```
-Car 12V line ── R1 ──┬── PB_x (GPIO input, pull-up enabled)
-                     │
-                    R2      D1 (3.6V Zener)
-                     │        │
-                    GND      GND
+Sensor line ── D1 (BAT85, cathode toward line) ── R1 (1kΩ) ──┬── PB_x (GPIO input, pull-up enabled)
+                                                                │
+                                                               D2 (3.6V Zener)
+                                                                │
+                                                               GND
 ```
 
-| Component   | Value                         | Notes                                                                                    |
-|-------------|-------------------------------|------------------------------------------------------------------------------------------|
-| R1 (top)    | 10 kΩ                         | 1/4W through-hole axial; current-limiting, also forms divider with R2                    |
-| R2 (bottom) | 3.9 kΩ                        | 1/4W through-hole axial; Vout = 12V × 3.9k/(10k+3.9k) = 3.37V → clamped to 3.6V by Zener |
-| D1          | BZX55C3V6 (3.6V Zener, DO-35) | Overvoltage clamp                                                                        |
+| Component | Value / Part                  | Notes                                                                                                                                    |
+|-----------|--------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------|
+| D1        | BAT85 Schottky, cathode toward sensor line | Blocks the line's voltage from ever reaching the pin when the line is open/high; conducts only when the line is grounded, pulling the pin low through R1 |
+| R1        | 1 kΩ                            | Current-limiting; with D1's ~0.25–0.3V forward drop and the STM32's internal pull-up, pin settles to ~0.3–0.4V when the sender is grounded |
+| D2        | BZX55C3V6 (3.6V Zener, DO-35)  | Fault-condition backstop, unchanged from the original divider design                                                                      |
 
 No filter cap needed — digital signals, read in software with debouncing.
-When sensor shorts to GND: pin sees 0V (logic low, active state).
-When sensor open: 12V through divider → ~3.3V (logic high, idle state).
+No firmware changes from the original divider design — pins remain INPUT_PULLUP, active-low.
+Each channel is fully self-contained (its own D1+R1+D2) — no shared node or pull-up rail across pins.
+
+When sensor shorts to GND: D1 conducts, pin pulled to ~0.3–0.4V (logic low, active state).
+When sensor open: D1 blocks the line, pin held at 3.3V by internal pull-up alone (logic high, idle state).
 
 | Pin  | Signal                   |
 |------|--------------------------|
@@ -324,12 +334,14 @@ Planned wiring notes (see main sketch file for pin rationale):
 
 ## Bill of Materials — Protection/Divider Components
 
-| Component                      | Package              | Quantity | Used for                                              |
-|--------------------------------|----------------------|----------|-------------------------------------------------------|
-| 39 kΩ resistor, 1/4W           | Axial through-hole   | 3        | Analog sensor divider R1 (PA0, PA1, PA2)              |
-| 51 kΩ resistor, 1/4W           | Axial through-hole   | 1        | 12V voltage divider R1 (PA3)                          |
-| 10 kΩ resistor, 1/4W           | Axial through-hole   | 16       | Analog R2 (×4), pulse R1 (×2), digital R1 (×10)       |
-| 3.9 kΩ resistor, 1/4W          | Axial through-hole   | 12       | Pulse R2 (×2), digital R2 (×10)                       |
-| BZX55C3V6 Zener 3.6V, 500mW    | DO-35 through-hole   | 16       | All divider outputs (4 analog + 2 pulse + 10 digital) |
-| 1 nF ceramic capacitor         | Radial, 2.54mm pitch | 2        | Pulse input ringing suppression (PB0, PB1)            |
-| 1N4148 signal diode (optional) | DO-35 through-hole   | 8        | ESD protection for button pins                        |
+| Component                      | Package              | Quantity | Used for                                                                              |
+|--------------------------------|----------------------|----------|----------------------------------------------------------------------------------------|
+| 39 kΩ resistor, 1/4W           | Axial through-hole   | 3        | Analog sensor divider R1 (PA0, PA1, PA2)                                              |
+| 51 kΩ resistor, 1/4W           | Axial through-hole   | 1        | 12V voltage divider R1 (PA3)                                                          |
+| 10 kΩ resistor, 1/4W           | Axial through-hole   | 11       | Analog R2 (×4), pulse R1 (×2), active-high digital R1 (×5)                            |
+| 3.9 kΩ resistor, 1/4W          | Axial through-hole   | 7        | Pulse R2 (×2), active-high digital R2 (×5)                                            |
+| 1 kΩ resistor, 1/4W            | Axial through-hole   | 5        | Active-low digital R1 (PA8, PA9, PB3, PB9, PA15) — blocking-diode redesign            |
+| BAT85 Schottky diode           | DO-35 through-hole   | 5        | Active-low digital series blocking diode (PA8, PA9, PB3, PB9, PA15)                   |
+| BZX55C3V6 Zener 3.6V, 500mW    | DO-35 through-hole   | 16       | All divider/protection outputs (4 analog + 2 pulse + 5 active-high + 5 active-low)    |
+| 1 nF ceramic capacitor         | Radial, 2.54mm pitch | 2        | Pulse input ringing suppression (PB0, PB1)                                            |
+| 1N4148 signal diode (optional) | DO-35 through-hole   | 8        | ESD protection for button pins                                                        |

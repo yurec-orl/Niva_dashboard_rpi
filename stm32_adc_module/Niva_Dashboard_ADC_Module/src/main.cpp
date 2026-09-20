@@ -164,21 +164,21 @@
 //   PA5   | Button 4                | GPIO IN PU  | Active-low, 3.3V direct
 //   PA6   | Button 6                | GPIO IN PU  | Active-low, 3.3V direct
 //   PA7   | Button 7                | GPIO IN PU  | Active-low, 3.3V direct
-//   PA8   | Oil pressure warning    | GPIO IN PU  | Active-low, level shifted
-//   PA9   | Fuel low warning        | GPIO IN PU  | Active-low, level shifted
+//   PA8   | Oil pressure warning    | GPIO IN PU  | Active-low, series blocking diode
+//   PA9   | Fuel low warning        | GPIO IN PU  | Active-low, series blocking diode
 //   PA10  | DS18B20 1-Wire bus      | 1-Wire OD    | DS18B20 temp sensors, 4.7k pull-up to 3.3V (ds18b20_bus.cpp)
 //   PA11  | USB D-                  | USB         | To Raspberry Pi
 //   PA12  | USB D+                  | USB         | To Raspberry Pi
-//   PA15  | Diff lock indicator     | GPIO IN PU  | Active-low, level shifted
+//   PA15  | Diff lock indicator     | GPIO IN PU  | Active-low, series blocking diode
 //   PB0   | Tachometer pulse        | EXTI0       | Divider + 1nF cap, level shifted
 //   PB1   | Speed sensor pulse      | EXTI1       | Divider + 1nF cap, level shifted
-//   PB3   | Charging indicator      | GPIO IN PU  | Active-low, level shifted
+//   PB3   | Charging indicator      | GPIO IN PU  | Active-low, series blocking diode
 //   PB4   | Exterior lights         | GPIO IN     | Active-high, level shifted
 //   PB5   | Brake fluid low         | GPIO IN     | Active-high, level shifted
 //   PB6   | Headlights on           | GPIO IN     | Active-high, level shifted
 //   PB7   | Turn signal on          | GPIO IN     | Active-high, level shifted
 //   PB8   | High beams on           | GPIO IN     | Active-high, level shifted
-//   PB9   | Parking brake on        | GPIO IN PU  | Active-low, level shifted
+//   PB9   | Parking brake on        | GPIO IN PU  | Active-low, series blocking diode
 //   PB10  | K-Line TX (USART3_TX)   | UART TX     | Via L9637D + BSS138 shifter
 //   PB11  | K-Line RX (USART3_RX)   | UART RX     | Via L9637D + BSS138 shifter
 //   PB12  | Button 3                | GPIO IN PU  | Active-low, 3.3V direct
@@ -641,7 +641,8 @@ void setup() {
     attachInterrupt(digitalPinToInterrupt(PIN_TACHO), tacho_isr, RISING);
     attachInterrupt(digitalPinToInterrupt(PIN_SPEED), speed_isr, RISING);
 
-    // Digital indicators — active-low (external divider idles at ~3.3V = HIGH)
+    // Digital indicators — active-low (series blocking diode; pin idles HIGH on the
+    // internal pull-up alone, since the diode blocks the sensor line when open — see WIRING.md)
     pinMode(PIN_D_OIL_WARN,    INPUT_PULLUP);
     pinMode(PIN_D_FUEL_WARN,   INPUT_PULLUP);
     pinMode(PIN_D_CHARGING,    INPUT_PULLUP);
