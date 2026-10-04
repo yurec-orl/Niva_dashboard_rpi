@@ -16,7 +16,7 @@
 //              TACHO_TIMEOUT_US (stalled, or below the ~46 rpm floor this encoding can
 //              represent). NOT a pulse count — see "Tachometer timing" below for why.
 //   - SPEED:   average period between speed-sensor pulses since last report, in units of
-//              SPEED_PERIOD_UNIT_US (speed sensor, 6 PPR). 0 = no pulse for over
+//              SPEED_PERIOD_UNIT_US (speed sensor, 6 pulses/meter). 0 = no pulse for over
 //              SPEED_TIMEOUT_US (stopped, or below the ~2 km/h floor this encoding can
 //              represent). NOT a pulse count — see "Speed sensor timing" below for why.
 //   - D0..D9:  digital indicator states (0/1)
@@ -66,9 +66,8 @@
 // === Pulse/Counter Inputs (interrupt-capable) ===
 //
 //   PB0  (EXTI0) — Tachometer signal, 2 pulses per revolution
-//   PB1  (EXTI1) — Speed sensor signal, 6 pulses per revolution (previously mistaken for
-//                  a 4 PPR sensor — see "Speed sensor timing" below for the consequence
-//                  this had on the reported value, independent of the PPR mixup itself)
+//   PB1  (EXTI1) — Speed sensor signal, 6 pulses per meter travelled (not per revolution —
+//                  wheel/tire size does not enter the speed conversion)
 //
 //   Using external interrupts (EXTI) for pulse counting.
 //   12V sensor signals go through voltage divider + 1nF filter cap to 3.3V.
@@ -250,7 +249,7 @@
 
 // Pulse inputs (EXTI interrupt-based counting)
 #define PIN_TACHO           PB0   // Tachometer, 2 PPR
-#define PIN_SPEED           PB1   // Speed sensor, 6 PPR
+#define PIN_SPEED           PB1   // Speed sensor, 6 pulses/meter
 
 // Digital indicators — active-low (INPUT_PULLUP)
 #define PIN_D_OIL_WARN      PA8   // D0
@@ -310,18 +309,18 @@ HardwareSerial KLine(PB11, PB10);
 // ------------------------------------------------------------
 // Speed sensor timing
 // ------------------------------------------------------------
-// At TICK_HZ=50 (20 ms/frame) a 6 PPR sensor does not produce an integer pulse count per
-// frame across the realistic speed range (up to 150 km/h ~= 108 Hz ~= one pulse every
-// 9.2 ms): below ~69 km/h most frames see 0 or 1 new pulses, and which frame a given pulse
-// lands in shifts over time relative to the 20 ms grid. Reporting a per-frame pulse *count*
+// At TICK_HZ=50 (20 ms/frame) a 6 pulses/meter sensor does not produce an integer pulse
+// count per frame across the realistic speed range (up to 150 km/h ~= 250 Hz ~= one pulse
+// every 4.0 ms): below ~30 km/h most frames see 0 or 1 new pulses, and which frame a given
+// pulse lands in shifts over time relative to the 20 ms grid. Reporting a per-frame *count*
 // therefore aliases into a jittery reading even at constant speed. Timing the gap between
 // pulses (in the ISR, independent of the frame boundary) and reporting that period instead
 // removes the aliasing: the period is a direct, frame-rate-independent measurement of
 // instantaneous speed.
 //
 // SPEED_PERIOD_UNIT_US sets the wire encoding's resolution/range trade-off in a 16-bit
-// field: at 10 us/unit, periods up to 65535*10us = 655.35 ms fit (down to a ~2.1 km/h
-// floor), while resolving ~0.16 km/h steps at the 150 km/h / 9.2 ms end. Below the floor
+// field: at 10 us/unit, periods up to 65535*10us = 655.35 ms fit (down to a ~0.92 km/h
+// floor), while resolving ~0.37 km/h steps at the 150 km/h / 4.0 ms end. Below the floor
 // (or when stopped), SPEED_TIMEOUT_US of silence makes the frame report 0 rather than
 // hanging onto a stale reading.
 #define SPEED_PERIOD_UNIT_US 10UL        // wire units for the SPEED field (10 us/unit)
@@ -746,7 +745,7 @@ void loop() {
 
     // Speed field: average of whatever inter-pulse periods completed this frame (see
     // "Speed sensor timing" above for why period, not count, is sent). At the realistic
-    // top speed (~150 km/h, ~9.2 ms/pulse) at most 2 periods complete per 20 ms frame, so a
+    // top speed (~150 km/h, ~4.0 ms/pulse) at most 5 periods complete per 20 ms frame, so a
     // plain average is enough — no weighting needed.
     static uint16_t speed_period_last = 0; // last reported SPEED field value, held across
                                             // frames with no new pulse (see below)

@@ -650,16 +650,14 @@ impl AnalogSensor for UpsChargeSensor {
 // (see SPEED_TACHO_PULSE_PERIOD_DESIGN.md). STM32 firmware now sends inter-pulse periods
 // (SPEED_PERIOD_UNIT_US = 10us/unit, same encoding as HwTacho below).
 
-/// Wheel-speed sensor pulses/revolution (WIRING.md).
-const SPEED_PULSES_PER_REV: f32 = 6.0;
-/// 235/75/15 tire circumference, meters. Width 235mm, aspect ratio 75%, rim 15in ->
-/// diameter = 15in (381mm) + 2*(235mm*0.75) = 733.5mm -> circumference = pi*733.5mm.
-const SPEED_WHEEL_CIRCUMFERENCE_M: f32 = 2.304;
+/// Speed sensor pulses per meter travelled -- not per wheel revolution, so tire size does
+/// not enter the conversion.
+const SPEED_PULSES_PER_METER: f32 = 6.0;
 /// Timer tick rate for the raw period channel: firmware's SPEED_PERIOD_UNIT_US = 10us/unit,
 /// i.e. 1/10us = 100_000 ticks/sec. A u16 raw period doesn't wrap before speed drops to a
-/// "may as well be stopped" ~0.55 km/h (65535 ticks / 100_000 Hz = 0.655s period), while
-/// still giving sub-km/h resolution at highway speed (100 km/h's 13.82ms inter-pulse period
-/// is ~1382 ticks at this rate).
+/// "may as well be stopped" ~0.92 km/h (65535 ticks / 100_000 Hz = 0.655s period), while
+/// still giving sub-km/h resolution at highway speed (100 km/h's 6.0ms inter-pulse period
+/// is ~600 ticks at this rate).
 const SPEED_PERIOD_TIMER_HZ: f32 = 100_000.0;
 /// Raw period value reserved to mean "no pulse observed" (stationary, or no pulse seen yet
 /// since startup) -- distinct from a real, merely long period, which the wire format needs
@@ -692,7 +690,7 @@ impl SpeedSensor {
     /// excluding SPEED_PERIOD_IDLE_RAW before calling this (division by it isn't meaningful).
     fn speed_kmh_from_period_raw(raw: u16) -> f32 {
         let period_s = raw as f32 / SPEED_PERIOD_TIMER_HZ;
-        SPEED_WHEEL_CIRCUMFERENCE_M / (period_s * SPEED_PULSES_PER_REV) * 3.6
+        3.6 / (period_s * SPEED_PULSES_PER_METER)
     }
 }
 
@@ -706,7 +704,7 @@ pub fn speed_period_raw_from_kmh(speed_kmh: f32) -> u16 {
     if speed_kmh <= 0.0 {
         return SPEED_PERIOD_IDLE_RAW;
     }
-    let period_s = SPEED_WHEEL_CIRCUMFERENCE_M / ((speed_kmh / 3.6) * SPEED_PULSES_PER_REV);
+    let period_s = 3.6 / (speed_kmh * SPEED_PULSES_PER_METER);
     (period_s * SPEED_PERIOD_TIMER_HZ).round().clamp(1.0, u16::MAX as f32) as u16
 }
 
@@ -861,8 +859,7 @@ mod tests {
     /// Raw period (in SPEED_PERIOD_TIMER_HZ ticks) that a steady 100 km/h implies, used by
     /// several tests below as a known-good reference point.
     fn raw_period_for_100_kmh() -> u16 {
-        let period_s = SPEED_WHEEL_CIRCUMFERENCE_M / ((100.0 / 3.6) * SPEED_PULSES_PER_REV);
-        (period_s * SPEED_PERIOD_TIMER_HZ).round() as u16
+        speed_period_raw_from_kmh(100.0)
     }
 
     #[test]

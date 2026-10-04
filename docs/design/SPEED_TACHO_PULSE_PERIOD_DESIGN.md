@@ -2,6 +2,12 @@
 
 ## Problem
 
+> **Correction (2026-10-05):** the sensor emits **6 pulses per meter travelled**, not 6 per
+> wheel revolution. The quantization figures in this section were computed under the old
+> per-revolution reading and are left as written; the real count granularity is 30 km/h per
+> raw count, and wheel circumference does not enter the conversion at all. The argument for
+> replacing count-based measurement with period-based measurement is unaffected.
+
 `HwSpeed` (and `HwTacho`, though it doesn't need numeric precision — see Scope below) is
 currently measured by having the STM32 ADC module count wheel-sensor pulses in a fixed 20ms
 window (`TICK_HZ = 50`, hardware-timer-driven — see `stm32_adc_module/.../main.cpp`) and report
@@ -78,7 +84,7 @@ firmware design session, not dictated here:
 ### Rust-side processing (period-based)
 - Same `HWAnalogProvider`/`read_analog()` shape as today, just a different channel payload
   (period instead of count) — `ADCChannelProvider` itself shouldn't need to change.
-- New conversion: `speed = (1 / period_seconds) / PULSES_PER_REV * WHEEL_CIRCUMFERENCE_M * 3.6`
+- New conversion: `speed = 3.6 / (period_seconds * PULSES_PER_METER)`
   — inverting a period into a rate, instead of dividing an accumulated count by a fixed window.
   Needs explicit handling for "no recent pulse" (report 0, not a huge/infinite rate from a
   large period) — a staleness threshold, analogous to `ADCFrame::is_stale()` elsewhere in this

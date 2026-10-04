@@ -174,10 +174,10 @@ Pulse sensor ── R1 ──┬── PA8/PA9 (TIM1 input)
 | C1          | 1 nF ceramic                  | Radial, 2.54mm pitch; suppresses ringing, preserves pulse edges |
 | D1          | BZX55C3V6 (3.6V Zener, DO-35) | Clamps spikes from ignition noise                               |
 
-| Pin | Signal               |
-|-----|----------------------|
-| PB0 | Tachometer (2 PPR)   |
-| PB1 | Speed sensor (6 PPR) |
+| Pin | Signal                             |
+|-----|------------------------------------|
+| PB0 | Tachometer (2 pulses/revolution)   |
+| PB1 | Speed sensor (6 pulses/meter)      |
 
 ---
 
