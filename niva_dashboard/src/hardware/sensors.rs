@@ -650,8 +650,13 @@ impl AnalogSensor for UpsChargeSensor {
 // (see SPEED_TACHO_PULSE_PERIOD_DESIGN.md). STM32 firmware now sends inter-pulse periods
 // (SPEED_PERIOD_UNIT_US = 10us/unit, same encoding as HwTacho below).
 
-/// Speed sensor pulses per meter travelled -- not per wheel revolution, so tire size does
-/// not enter the conversion.
+/// Speed sensor pulses per meter travelled. The sensor itself outputs a fixed count per
+/// revolution of the gearbox speedo-drive gear (it sits where the cable used to); 6
+/// pulses/meter is VAZ's calibrated figure for that gear matched to a particular tire
+/// rolling circumference + final-drive ratio, not a distance measurement independent of
+/// tire size. If the installed tires differ from what the fitted drive gear was selected
+/// for, this constant is wrong and needs re-deriving (e.g. GPS-logged speed vs. raw period
+/// over a drive, via the UM982 receiver already in this project) rather than assumed.
 const SPEED_PULSES_PER_METER: f32 = 6.0;
 /// Timer tick rate for the raw period channel: firmware's SPEED_PERIOD_UNIT_US = 10us/unit,
 /// i.e. 1/10us = 100_000 ticks/sec. A u16 raw period doesn't wrap before speed drops to a

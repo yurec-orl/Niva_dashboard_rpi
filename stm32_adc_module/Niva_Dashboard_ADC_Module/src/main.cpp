@@ -66,8 +66,9 @@
 // === Pulse/Counter Inputs (interrupt-capable) ===
 //
 //   PB0  (EXTI0) — Tachometer signal, 2 pulses per revolution
-//   PB1  (EXTI1) — Speed sensor signal, 6 pulses per meter travelled (not per revolution —
-//                  wheel/tire size does not enter the speed conversion)
+//   PB1  (EXTI1) — Speed sensor signal, nominally 6 pulses/meter (gearbox speedo-drive gear
+//                  output, calibrated by VAZ for a specific tire size -- verify, don't assume,
+//                  if tires differ from what that gear was selected for)
 //
 //   Using external interrupts (EXTI) for pulse counting.
 //   12V sensor signals go through voltage divider + 1nF filter cap to 3.3V.
