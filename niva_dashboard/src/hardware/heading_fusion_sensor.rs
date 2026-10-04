@@ -23,9 +23,18 @@ use std::time::{Duration, Instant};
 /// against a real moving trial, just a starting point pending field data.
 const MIN_SPEED_FOR_COURSE_KMH: f32 = 10.0;
 
-/// GNSS heading_deg is only fed into the sustained-agreement check when its own reported
-/// std-dev is at least this tight. Provisional.
-const HEADING_STD_DEV_MAX_DEG: f32 = 30.0;
+/// GNSS heading_deg is always fed into the sustained-agreement check when its own reported
+/// std-dev is at least this tight -- field observation: a genuinely good UM982 heading fix
+/// reports sub-1-degree std-dev, while anything looser has been seen off by a large margin, so
+/// this is trusted unconditionally regardless of how good the current INS-tracked accuracy is.
+const HEADING_DEV_TIGHT_DEG: f32 = 1.5;
+
+/// Above HEADING_DEV_TIGHT_DEG but below this, heading_deg is only fed into the
+/// sustained-agreement check if the currently accumulated INS accuracy (`accuracy_deg`) is
+/// already worse than the fix's own std-dev -- i.e. only when accepting it would tighten, not
+/// loosen, the fused estimate. Above this ceiling, never eligible regardless of accumulated INS
+/// error. Provisional.
+const HEADING_DEV_LOOSE_DEG: f32 = 10.0;
 
 /// Sustained-agreement window: a GNSS candidate is only validated once at least
 /// AGREEMENT_MIN_SAMPLES readings taken within this trailing window all agree with each other
@@ -559,6 +568,23 @@ impl HeadingFusionSensor {
         self.pending_persisted_accuracy_deg = None;
     }
 
+    /// Eligibility gate for a single heading_deg reading's reported std-dev: always eligible
+    /// under HEADING_DEV_TIGHT_DEG, never eligible at or above HEADING_DEV_LOOSE_DEG, and in
+    /// between only when the current fused estimate has already degraded past the fix's own
+    /// std-dev -- so a mediocre fix can't drag down an anchor that's still tighter than it is,
+    /// but is still accepted once dead-reckoning drift has grown worse than it. A `None`
+    /// `accuracy_deg` (no anchor established yet) is treated as "worse than any fix", since
+    /// there's nothing tighter yet to protect.
+    fn heading_dev_eligible(&self, heading_std_dev_deg: f32) -> bool {
+        if heading_std_dev_deg < HEADING_DEV_TIGHT_DEG {
+            return true;
+        }
+        if heading_std_dev_deg < HEADING_DEV_LOOSE_DEG {
+            return self.accuracy_deg.is_none_or(|acc| acc > heading_std_dev_deg);
+        }
+        false
+    }
+
     /// Reads one atomic GNSS fix snapshot and runs both sources through their own
     /// eligibility gate plus the shared sustained-agreement check. Prefers course_deg (the
     /// moving-car case) over heading_deg (the stationary case) when both happen to validate
@@ -577,15 +603,14 @@ impl HeadingFusionSensor {
         };
 
         let heading_eligible = fix.heading_deg
-            .filter(|_| fix.heading_std_dev_deg.unwrap_or(f32::MAX) <= HEADING_STD_DEV_MAX_DEG);
+            .filter(|_| fix.heading_std_dev_deg.is_some_and(|dev| self.heading_dev_eligible(dev)));
         let validated_heading = match heading_eligible {
             Some(h) => self.heading_agreement.push(now, h).map(|heading_deg| GnssAnchor {
                 heading_deg,
-                // heading_eligible only passes above when heading_std_dev_deg itself was
-                // Some(x) <= HEADING_STD_DEV_MAX_DEG (the None case unwraps to f32::MAX,
-                // which always fails that filter) -- so this unwrap_or fallback is dead in
-                // practice, kept only as a defensive default.
-                accuracy_deg: fix.heading_std_dev_deg.unwrap_or(HEADING_STD_DEV_MAX_DEG),
+                // heading_eligible only passes above when heading_std_dev_deg was Some(x) --
+                // the None case always fails that filter -- so this unwrap_or fallback is dead
+                // in practice, kept only as a defensive default.
+                accuracy_deg: fix.heading_std_dev_deg.unwrap_or(HEADING_DEV_LOOSE_DEG),
             }),
             None => { self.heading_agreement.reset(); None }
         };
@@ -804,11 +829,82 @@ mod tests {
         bno.set_game_heading_for_test(0.0);
 
         for _ in 0..(AGREEMENT_MIN_SAMPLES + 2) {
-            gnss.set_fix_for_test(fix_with(None, Some(270.0), Some(50.0), None)); // above HEADING_STD_DEV_MAX_DEG
+            gnss.set_fix_for_test(fix_with(None, Some(270.0), Some(50.0), None)); // above HEADING_DEV_LOOSE_DEG
             sensor.tick();
         }
         let heading = sensor.tick().heading;
         assert_eq!(heading.value, ValueData::Empty, "heading_deg with a wide std-dev must never validate");
+    }
+
+    #[test]
+    fn test_heading_deg_under_tight_threshold_anchors_without_an_existing_accuracy_to_beat() {
+        // No anchor established yet (accuracy_deg is None) -- a sub-HEADING_DEV_TIGHT_DEG fix
+        // must still anchor unconditionally.
+        let (mut sensor, gnss, bno) = new_sensor();
+        bno.set_game_heading_for_test(0.0);
+
+        for _ in 0..AGREEMENT_MIN_SAMPLES {
+            gnss.set_fix_for_test(fix_with(None, Some(90.0), Some(1.0), None));
+            sensor.tick();
+        }
+        let HeadingFusionOutput { heading, confidence, .. } = sensor.tick();
+        assert!((heading.as_f32() - 90.0).abs() < 0.5, "expected ~90 deg, got {}", heading.as_f32());
+        assert_eq!(confidence.as_f32() as i32, HeadingConfidence::GnssCorrected.code());
+    }
+
+    #[test]
+    fn test_heading_deg_in_loose_band_rejected_while_tighter_anchor_holds() {
+        // A fix at HEADING_DEV_TIGHT_DEG..HEADING_DEV_LOOSE_DEG must not be allowed to override
+        // an anchor that's already tighter than it is -- accepting it would loosen the fused
+        // estimate, not improve it.
+        let (mut sensor, gnss, bno) = new_sensor();
+        bno.set_game_heading_for_test(0.0);
+
+        for _ in 0..AGREEMENT_MIN_SAMPLES {
+            gnss.set_fix_for_test(fix_with(None, Some(90.0), Some(0.5), None));
+            sensor.tick();
+        }
+        sensor.tick(); // anchor settles at ~90 with accuracy_deg ~0.5
+
+        for _ in 0..(AGREEMENT_MIN_SAMPLES + 2) {
+            gnss.set_fix_for_test(fix_with(None, Some(200.0), Some(5.0), None)); // in the loose band, but looser than the current 0.5 anchor
+            sensor.tick();
+        }
+        let HeadingFusionOutput { heading, confidence, .. } = sensor.tick();
+        assert!((heading.as_f32() - 90.0).abs() < 0.5,
+                "a looser fix must not override a tighter anchor, got {}", heading.as_f32());
+        assert_eq!(confidence.as_f32() as i32, HeadingConfidence::DeadReckoning.code());
+    }
+
+    #[test]
+    fn test_heading_deg_in_loose_band_accepted_once_accumulated_drift_exceeds_it() {
+        // Same loose-band fix as above, but only once dead-reckoning drift has pushed the
+        // current accuracy_deg worse than the fix's own std-dev -- it should now be accepted.
+        let (mut sensor, gnss, bno) = new_sensor();
+        bno.set_game_heading_for_test(0.0);
+
+        for _ in 0..AGREEMENT_MIN_SAMPLES {
+            gnss.set_fix_for_test(fix_with(None, Some(90.0), Some(0.5), None));
+            sensor.tick();
+        }
+        sensor.tick(); // anchor settles at ~90 with accuracy_deg ~0.5
+
+        // GNSS goes quiet for long enough that pure-inertial drift pushes accuracy_deg past 5.0.
+        gnss.set_fix_for_test(fix_with(None, None, None, None));
+        bno.set_game_heading_for_test(10.0);
+        let mut t = Instant::now() + Duration::from_secs(600); // far more than enough to exceed 5.0 deg of drift
+        let accuracy_after_drift = sensor.tick_at(t).accuracy.as_f32();
+        assert!(accuracy_after_drift > 5.0, "expected accumulated drift past 5.0, got {}", accuracy_after_drift);
+
+        for _ in 0..(AGREEMENT_MIN_SAMPLES + 2) {
+            t += Duration::from_millis(100);
+            gnss.set_fix_for_test(fix_with(None, Some(200.0), Some(5.0), None));
+            sensor.tick_at(t);
+        }
+        let HeadingFusionOutput { heading, confidence, .. } = sensor.tick_at(t + Duration::from_millis(100));
+        assert!((heading.as_f32() - 200.0).abs() < 0.5,
+                "a loose-band fix should be accepted once it's tighter than accumulated drift, got {}", heading.as_f32());
+        assert_eq!(confidence.as_f32() as i32, HeadingConfidence::GnssCorrected.code());
     }
 
     #[test]
