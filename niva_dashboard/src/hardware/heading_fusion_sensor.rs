@@ -570,17 +570,22 @@ impl HeadingFusionSensor {
 
     /// Eligibility gate for a single heading_deg reading's reported std-dev: always eligible
     /// under HEADING_DEV_TIGHT_DEG, never eligible at or above HEADING_DEV_LOOSE_DEG, and in
-    /// between only when the current fused estimate has already degraded past the fix's own
+    /// between only when the current fused estimate has degraded to at least the fix's own
     /// std-dev -- so a mediocre fix can't drag down an anchor that's still tighter than it is,
-    /// but is still accepted once dead-reckoning drift has grown worse than it. A `None`
-    /// `accuracy_deg` (no anchor established yet) is treated as "worse than any fix", since
-    /// there's nothing tighter yet to protect.
+    /// but is still accepted once dead-reckoning drift has grown at least as bad as it. Uses
+    /// >= rather than > deliberately: apply_correction resets accuracy_deg to exactly the
+    /// anchor's own std-dev, so a strict > would make the very next tick's re-check of that
+    /// same fix fail on the resulting equality, flicking confidence back to DeadReckoning until
+    /// drift climbs past it again (and getting stuck there indefinitely if the vehicle is
+    /// stationary, since accuracy_deg then never grows). A `None` `accuracy_deg` (no anchor
+    /// established yet) is treated as "worse than any fix", since there's nothing tighter yet
+    /// to protect.
     fn heading_dev_eligible(&self, heading_std_dev_deg: f32) -> bool {
         if heading_std_dev_deg < HEADING_DEV_TIGHT_DEG {
             return true;
         }
         if heading_std_dev_deg < HEADING_DEV_LOOSE_DEG {
-            return self.accuracy_deg.is_none_or(|acc| acc > heading_std_dev_deg);
+            return self.accuracy_deg.is_none_or(|acc| acc >= heading_std_dev_deg);
         }
         false
     }
@@ -896,15 +901,56 @@ mod tests {
         let accuracy_after_drift = sensor.tick_at(t).accuracy.as_f32();
         assert!(accuracy_after_drift > 5.0, "expected accumulated drift past 5.0, got {}", accuracy_after_drift);
 
-        for _ in 0..(AGREEMENT_MIN_SAMPLES + 2) {
+        // Exactly AGREEMENT_MIN_SAMPLES ticks of the same loose-band fix validate it -- check
+        // state right on that tick, via the instant-update correction_offset_deg/confidence
+        // fields rather than the displayed (slew-limited) heading, which would take several
+        // more seconds at SLEW_RATE_DEG_PER_SEC to visually catch up to the new anchor.
+        for _ in 0..AGREEMENT_MIN_SAMPLES {
             t += Duration::from_millis(100);
             gnss.set_fix_for_test(fix_with(None, Some(200.0), Some(5.0), None));
             sensor.tick_at(t);
         }
-        let HeadingFusionOutput { heading, confidence, .. } = sensor.tick_at(t + Duration::from_millis(100));
-        assert!((heading.as_f32() - 200.0).abs() < 0.5,
-                "a loose-band fix should be accepted once it's tighter than accumulated drift, got {}", heading.as_f32());
-        assert_eq!(confidence.as_f32() as i32, HeadingConfidence::GnssCorrected.code());
+        assert_eq!(sensor.confidence, HeadingConfidence::GnssCorrected,
+                   "a loose-band fix should be accepted once it's tighter than accumulated drift");
+        let corrected_heading = (sensor.correction_offset_deg.unwrap() + sensor.game_rv_deg.unwrap()).rem_euclid(360.0);
+        assert!((corrected_heading - 200.0).abs() < 0.5,
+                "expected the anchor to move to ~200 deg, got {}", corrected_heading);
+    }
+
+    #[test]
+    fn test_heading_deg_loose_band_anchor_does_not_flicker_on_re_check() {
+        // apply_correction resets accuracy_deg to exactly the anchor's own std-dev, so the
+        // tick right after a loose-band anchor lands re-checks that same fix's eligibility
+        // against an equal accuracy_deg -- heading_dev_eligible must use >= here, not >, or
+        // this equality would fail and immediately flick confidence back to DeadReckoning
+        // (and get stuck there while stationary, since accuracy_deg would never grow again).
+        let (mut sensor, gnss, bno) = new_sensor();
+        bno.set_game_heading_for_test(0.0);
+
+        for _ in 0..AGREEMENT_MIN_SAMPLES {
+            gnss.set_fix_for_test(fix_with(None, Some(90.0), Some(0.5), None));
+            sensor.tick();
+        }
+        sensor.tick(); // anchor settles at ~90 with accuracy_deg ~0.5
+
+        gnss.set_fix_for_test(fix_with(None, None, None, None));
+        bno.set_game_heading_for_test(10.0);
+        let mut t = Instant::now() + Duration::from_secs(600);
+        sensor.tick_at(t); // drift pushes accuracy_deg well past 5.0
+
+        for _ in 0..AGREEMENT_MIN_SAMPLES {
+            t += Duration::from_millis(100);
+            gnss.set_fix_for_test(fix_with(None, Some(200.0), Some(5.0), None));
+            sensor.tick_at(t);
+        }
+        assert_eq!(sensor.confidence, HeadingConfidence::GnssCorrected); // anchor just landed, accuracy_deg == 5.0 now
+
+        // Stationary (bno heading unchanged) -- without >=, this tick's re-check of the same
+        // 5.0 std-dev fix against the now-equal accuracy_deg would fail and drop confidence.
+        t += Duration::from_millis(100);
+        sensor.tick_at(t);
+        assert_eq!(sensor.confidence, HeadingConfidence::GnssCorrected,
+                   "a loose-band anchor must not flicker back to DeadReckoning on its own re-check");
     }
 
     #[test]
