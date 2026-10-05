@@ -12,3 +12,4 @@ pub mod shutdown;
 pub mod ups_monitor;
 pub mod ups_i2c_provider;
 pub mod config;
+pub mod nav_validation_log;

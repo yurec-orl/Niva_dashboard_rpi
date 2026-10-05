@@ -11,6 +11,7 @@ use crate::page_framework::horz_page::HorzPage;
 use crate::page_framework::osc_page::OscPage;
 use crate::page_framework::temp_page::TempPage;
 use crate::hardware::sensor_manager::SensorManager;
+use crate::hardware::sensor_value::ValueData;
 use crate::hardware::hw_providers::HWInput;
 use crate::hardware::heading_fusion_sensor::{HeadingFusionSensor, HeadingAnchorSnapshot};
 use crate::hardware::gpio_input::GpioOutput;
@@ -21,6 +22,7 @@ use crate::util::gnss_data_provider::{GnssFrame, GnssDataProvider, TestGnssDataP
 use crate::util::bno085_data_provider::{Bno085Frame, Bno085DataProvider, TestBno085DataProvider};
 use crate::util::ups_monitor::UpsMonitor;
 use crate::util::config::Config;
+use crate::util::nav_validation_log::NavValidationLog;
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime};
@@ -364,6 +366,11 @@ pub struct PageManager {
     // start (see main.rs::setup_sensors).
     heading_fusion: Option<HeadingFusionSensor>,
 
+    // Separate CSV time series (heading/position/speed) for offline route validation -- see
+    // util::nav_validation_log. Independent of heading_fusion/gnss_frame/bno_frame above:
+    // those exist whether or not this is ever read back.
+    nav_validation_log: NavValidationLog,
+
     fps_counter: FpsCounter,
     start_time: Instant,
 
@@ -451,6 +458,7 @@ impl PageManager {
             bench_test_mode,
             bench_config_mtime: None,
             heading_fusion,
+            nav_validation_log: NavValidationLog::new(),
             fps_counter: FpsCounter::new(),
             start_time: Instant::now(),
             last_cpu_stat: None,
@@ -860,13 +868,34 @@ impl PageManager {
             // hardware::heading_fusion_sensor's module doc for why -- and independent of
             // sensor_manager's self-test/real handoff, so its state (anchor, confidence,
             // persistence timer) isn't disturbed by that swap.
+            let mut fused_heading_deg = None;
             if let Some(heading_fusion) = &mut self.heading_fusion {
                 let fusion_output = heading_fusion.tick();
+                fused_heading_deg = (fusion_output.heading.value != ValueData::Empty).then(|| fusion_output.heading.as_f32());
                 self.sensor_manager.set_external_value(HWInput::HwHeading, fusion_output.heading);
                 self.sensor_manager.set_external_value(HWInput::HwHeadingConfidence, fusion_output.confidence);
                 self.sensor_manager.set_external_value(HWInput::HwHeadingAccuracy, fusion_output.accuracy);
                 self.sensor_manager.set_external_value(HWInput::HwDeadReckoningElapsed, fusion_output.dead_reckoning_elapsed);
             }
+
+            // Route-validation CSV (see util::nav_validation_log) -- rate-limited internally,
+            // so this call itself is unconditional every loop iteration.
+            let ins_heading_deg = self.bno_frame.as_ref()
+                .filter(|b| !b.game_orientation_is_stale())
+                .map(|b| b.game_orientation().heading_deg);
+            let gnss_fix = self.gnss_frame.as_ref().map(|g| g.fix());
+            let logical_speed_kmh = self.sensor_manager.get_sensor_value(&HWInput::HwSpeed)
+                .filter(|v| v.value != ValueData::Empty)
+                .map(|v| v.as_f32());
+            self.nav_validation_log.maybe_log(
+                ins_heading_deg,
+                fused_heading_deg,
+                gnss_fix.and_then(|f| f.latitude_deg),
+                gnss_fix.and_then(|f| f.longitude_deg),
+                gnss_fix.and_then(|f| f.course_deg),
+                gnss_fix.and_then(|f| f.speed_kmh),
+                logical_speed_kmh,
+            );
 
             self.alert_manager.check_watchdogs(&self.sensor_manager);
 
