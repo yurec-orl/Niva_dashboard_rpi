@@ -65,6 +65,11 @@ Thumbs.db
 
 # Python venvs (e.g. hardware verification scripts)
 .venv*/
+__pycache__/
+
+# Cached Overpass API responses (scripts/validate_heading_osm.py) -- re-fetchable, and can
+# be large depending on the queried bbox.
+scripts/.osm_cache/
 
 # Backup files
 *.bk
