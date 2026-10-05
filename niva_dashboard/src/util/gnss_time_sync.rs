@@ -24,6 +24,19 @@ const POLL_INTERVAL: Duration = Duration::from_secs(5);
 const MIN_PLAUSIBLE_YEAR: u16 = 2024;
 const MAX_PLAUSIBLE_YEAR: u16 = 2100;
 
+/// Whether `CLOCK_REALTIME` has been set from a trustworthy GNSS fix at least once this run --
+/// consulted by `util::trip_log` to decide whether a finished trip's wall-clock timestamp is
+/// trustworthy enough to name the finalized file after, or whether to fall back to the
+/// incrementing counter instead.
+static CLOCK_SYNCED_FROM_GNSS: AtomicBool = AtomicBool::new(false);
+
+/// True once this run has stepped the system clock from GNSS at least once (see
+/// `CLOCK_SYNCED_FROM_GNSS`). Never reset back to false -- once the clock is known-good it
+/// stays known-good for the rest of the run, even if GNSS later drops out.
+pub fn clock_synced_from_gnss() -> bool {
+    CLOCK_SYNCED_FROM_GNSS.load(Ordering::Relaxed)
+}
+
 /// Background thread that watches a `GnssFrame` and steps `CLOCK_REALTIME` from its fix once
 /// a trustworthy time/date is seen, then re-applies it hourly. Owns nothing but the thread
 /// handle -- `frame` is a cheap clone of whatever `GnssDataProvider`/`TestGnssDataProvider`
@@ -69,6 +82,7 @@ impl GnssTimeSync {
                                 time.hour, time.minute, time.second as u8
                             );
                             last_sync = Some(Instant::now());
+                            CLOCK_SYNCED_FROM_GNSS.store(true, Ordering::Relaxed);
                         }
                         Err(e) if e.raw_os_error() == Some(libc::EPERM) => {
                             // CAP_SYS_TIME is missing (e.g. AmbientCapabilities not applied
@@ -155,6 +169,23 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     era * 146097 + doe - 719468
 }
 
+/// Inverse of `days_from_civil` (same Howard Hinnant algorithm, `civil_from_days`) -- used by
+/// `util::trip_log` to turn a finalized trip's unix timestamp back into a `YYYYMMDD_HHMMSS`
+/// filename once the clock is known to be GNSS-trustworthy (see `clock_synced_from_gnss`).
+pub fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let month = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+    let year = if month <= 2 { y + 1 } else { y };
+    (year, month, day)
+}
+
 fn apply_clock(date: UtcDate, time: UtcTime) -> Result<(), std::io::Error> {
     let days = days_from_civil(date.year as i64, date.month as i64, date.day as i64);
     let secs_of_day = time.hour as i64 * 3600 + time.minute as i64 * 60 + time.second as i64;
@@ -234,5 +265,15 @@ mod tests {
     fn days_from_civil_matches_known_epoch_offsets() {
         assert_eq!(days_from_civil(1970, 1, 1), 0);
         assert_eq!(days_from_civil(2026, 9, 12), 20708);
+    }
+
+    #[test]
+    fn civil_from_days_is_the_inverse_of_days_from_civil() {
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+        assert_eq!(civil_from_days(20708), (2026, 9, 12));
+        for days in [0, 1, 365, 366, 20708, 20709, 10957] {
+            let (y, m, d) = civil_from_days(days);
+            assert_eq!(days_from_civil(y, m as i64, d as i64), days);
+        }
     }
 }
