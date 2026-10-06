@@ -70,11 +70,29 @@ The breakout carries a 15 mΩ shunt between its VIN+/VIN− terminals. Per the A
 | VBUS input (~1 MΩ at 12 V) | ~10–15 µA |
 | IN+/IN− bias | nA, negligible |
 | Automotive LDO quiescent | ~3–15 µA (part-dependent) |
+| I2C isolator, INA228-side supply (if always powered) | ~2–3 mA (verify in ISO1540 datasheet) |
 
 The low-power modes (shutdown, triggered one-shot) **can't be used** — the accumulator only
-integrates in continuous conversion. Total ≈ 0.7 mA ≈ 0.5 Ah/month — smaller than lead-acid
-self-discharge (~2–3 Ah/month for 65 Ah) and ~2–3 % of typical vehicle parked draw (15–36 Ah/month).
-Not a practical concern.
+integrates in continuous conversion. INA228 + LDO total ≈ 0.7 mA ≈ 0.5 Ah/month — smaller than
+lead-acid self-discharge (~2–3 Ah/month for 65 Ah) and ~2–3 % of typical vehicle parked draw
+(15–36 Ah/month). Not a practical concern.
+
+The I2C isolator's battery-side supply is the largest consumer: left on the always-on rail, it takes
+the total to ~3–4 mA (~2.5 Ah/month) — still tolerable, but 4–5× the INA228 alone, for a part that's
+only needed while the Pi is running. The design therefore switches the isolator's battery-side
+supply through an optically isolated switch driven by the Pi (see design), bringing the always-on
+draw back to ~0.7 mA.
+
+### I2C isolator selection
+SDA is bidirectional and open-drain (Pi drives data out, INA228 drives ACKs/read data), so the
+isolator must be an I2C-specific part with bidirectional open-drain channels:
+- **Suitable:** TI ISO1540 (both lines bidirectional) / ISO1541 (SCL unidirectional — fine with
+  the Pi as sole master), ADI ADuM1250/1251 and ADuM2250/2251, Skyworks Si8600/Si8602.
+- **Not suitable:** general-purpose digital isolators with fixed-direction push-pull channels
+  (e.g. TI ISO6521, ADI ADuM1201) — usable for UART, not for SDA.
+- Candidate: ISO1540 breakout (STEMMA QT/Qwiic, likely a copy of Adafruit's ISO1540 board).
+  Power each side separately — never let a STEMMA QT cable carry power across the barrier. Avoid
+  modules with an onboard isolated DC-DC (e.g. B0505S) that powers the far side from the Pi side.
 
 ### Ground disconnect switch interactions
 Planned topology: `battery (−) → shunt → disconnect switch → chassis GND`.
@@ -96,21 +114,34 @@ Planned topology: `battery (−) → shunt → disconnect switch → chassis GND
 ## Preliminary design
 
 ```
-                 Battery (+) ──┬──────────────────────────────► vehicle loads
-                               │
-                     fuse + TVS/reverse diode
-                               │
-                     Automotive LDO 3.3 V (40 V in, µA Iq: TPS7B81 / TPS7B69 / LM2936)
-                               │ VS
-     ┌─────────────────────────┴──────────────┐          ┌───────────────┐
-     │ INA228  (GND = battery −, battery side) │  I2C     │ I2C isolator  │  I2C    Raspberry Pi
-     │   IN+ ◄─ 10 Ω ─ fuse ─┐                 ├─────────►│ ISO1541 /     ├────────► (shared bus
-     │   IN− ◄─ 10 Ω ─ fuse ─┼─┐  (+ diff cap) │          │ ADuM1250      │          with UPS HAT)
-     └─────────────────────── │─│──────────────┘          └───────────────┘
-                              │ │                          side 1: LDO 3.3 V
-                              │ │                          side 2: Pi 3.3 V
-  Battery (−) ───────────[ SHUNT 75 mV/500 A ]─┬─────[ disconnect switch ]─── chassis GND
-               Kelvin sense ┘ └ Kelvin sense   └─ (winch (−) here if the switch isn't rated for it)
+  Battery (+) ──┬──────────────────────────────────────────────────────────────► vehicle loads
+                │
+       fuse + TVS / reverse diode
+                │
+       Automotive LDO 3.3 V (40 V in, µA Iq: TPS7B81 / TPS7B69 / LM2936)
+                │
+                │ 3V3_BAT (always on)
+                ├─────────────────────────────┐
+                │                             │
+                │                  ┌──────────┴──────────┐   LED side     Pi side
+                │                  │ PhotoMOS (AQY212 /  │◄┄┄┄┄┄┄┄┄┄┄┄┄┄ GPIO ─ R ─ LED ─ Pi GND
+                │                  │ TLP3107) output     │   (isolated)
+                │                  └──────────┬──────────┘
+                │                             │ 3V3_ISO (on only while Pi GPIO is high)
+                │ VS                          │ VCC + SDA/SCL pull-ups
+  ┌─────────────┴──────────────────┐   ┌──────┴──────────────────────────────┐
+  │ INA228   GND = battery (−),    │   │ ISO1540 I2C isolator                │
+  │          battery side of shunt │   │ battery side      ┊       Pi side   │
+  │                        SDA/SCL ├───┤ SDA/SCL           ┊       SDA/SCL   ├──► Raspberry Pi I2C
+  │   IN+ ◄─ 10 Ω ─ fuse ─┐        │   │                   ┊  VCC = Pi 3.3 V │    (shared bus with
+  │   IN− ◄─ 10 Ω ─ fuse ─┼─┐      │   └─────────────────────────────────────┘     UPS HAT)
+  │          (+ diff cap) │ │      │
+  └───────────────────────│─│──────┘
+                          │ │
+  Battery (−) ────────[ SHUNT 75 mV/500 A ]──┬─────[ disconnect switch ]──── chassis GND
+            Kelvin sense ┘ └ Kelvin sense    └─ (winch (−) here if the switch isn't rated for it)
+
+  ┊ / ┄ = galvanic isolation barrier
 ```
 
 Hardware notes:
@@ -132,6 +163,13 @@ Hardware notes:
   Pi off and the disconnect switch open.
 - **Isolator's Pi side** is powered from the Pi's 3.3 V — only active when the Pi is on, which is
   the only time it's needed.
+- **Isolator's battery side** is powered from 3V3_ISO, switched from the always-on rail by a
+  PhotoMOS relay whose LED is driven from a Pi GPIO (via a series resistor, a few mA). Pi off →
+  LED off → isolator battery side unpowered, so only the INA228 + LDO draw remains (~0.7 mA). The
+  PhotoMOS keeps the GPIO galvanically isolated from the battery-side domain, same as the I2C lines.
+- **Battery-side I2C pull-ups go on 3V3_ISO**, not 3V3_BAT. Pull-ups on the always-on rail would
+  feed current through the unpowered isolator's input ESD diodes and partially power it. Disable
+  any onboard pull-ups on the INA228 breakout that tie to its always-on supply.
 - Breakout vs. custom board: Adafruit breakout with the onboard shunt removed works; a small custom
   PCB (INA228 in 10-pin VSSOP + LDO + isolator) is the cleaner end state.
 
@@ -141,6 +179,8 @@ Hardware notes:
 - Init: write `SHUNT_CAL` from the measured shunt resistance, `ADCRANGE = 0`, continuous
   shunt+bus conversion. Must **not** reset the accumulator on dashboard start (`RSTACC`) — the
   count spans Pi power cycles.
+- Before the first I2C access, drive the isolator-enable GPIO high and wait for the isolator to
+  power up (datasheet start-up time, microseconds to a millisecond); drive it low on shutdown.
 - Logical sensors: battery current (signed), bus voltage, accumulated charge.
 - Offset calibration: with the disconnect switch open, shunt current is truly zero (the switch is
   mechanical and the INA228/LDO are tapped on the battery side), so the reading then is pure offset.
@@ -162,6 +202,8 @@ Hardware notes:
 - **Disconnect switch rating** vs. winch current — decides where the winch (−) attaches.
 - **Measured INA228 offset** — whether real-world offset is small enough that the
   switch-open calibration is optional.
+- **PhotoMOS part choice** — LED current within Pi GPIO limits; on-resistance negligible at the
+  isolator's few-mA load.
 - **Self-consumption accounting** — LDO + INA228 tapped on the battery side of the shunt aren't
   counted; either subtract as a constant (~0.7 mA) or ignore.
 - **UI** — which page shows battery current/SoC/parked-draw history.
