@@ -1115,10 +1115,9 @@ impl GraphicsContext {
         self.brightness = self.clamp_brightness(self.brightness - step);
     }
 
-    /// Clear the screen with black
-    pub fn clear_screen(&mut self) {
+    pub fn clear_screen(&mut self, color: (f32, f32, f32)) {
         unsafe {
-            gl::ClearColor(0.0, 0.0, 0.0, 1.0);
+            gl::ClearColor(color.0, color.1, color.2, 1.0);
             gl::Clear(gl::COLOR_BUFFER_BIT);
         }
     }

@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use crate::indicators::indicator::{Indicator, IndicatorBase, IndicatorBounds};
 use crate::graphics::context::GraphicsContext;
-use crate::graphics::ui_style::{UIStyle, DEFAULT_GLOBAL_FONT_PATH, DEFAULT_GLOBAL_FONT_SIZE};
+use crate::graphics::ui_style::{UIStyle, StyleKey, DEFAULT_GLOBAL_FONT_PATH, DEFAULT_GLOBAL_FONT_SIZE};
 use crate::hardware::sensor_value::{SensorValue, ValueData};
 
 /// Context-agnostic text indicator that displays sensor values as formatted text.
@@ -12,7 +12,8 @@ use crate::hardware::sensor_value::{SensorValue, ValueData};
 /// provided externally during construction, making it a pure rendering component.
 ///
 /// ## Benefits
-/// - **Performance**: No runtime style lookups, all values are pre-resolved
+/// - **Performance**: No runtime style lookups, all values are pre-resolved (except colors
+///   given via `with_color_keys`, which must follow the active color theme)
 /// - **Flexibility**: Can be styled independently without knowledge of UI context
 /// - **Testability**: Easy to test with known style parameters
 /// - **Reusability**: Same component can be used with different styling systems
@@ -50,6 +51,9 @@ pub struct TextIndicator {
     warning_color: (f32, f32, f32),
     /// Error text color (RGB)
     error_color: (f32, f32, f32),
+    /// When set, overrides the fixed colors above with (primary, warning, error) style
+    /// keys, resolved per render so the text follows the active color theme.
+    color_keys: Option<(StyleKey, StyleKey, StyleKey)>,
     base: IndicatorBase,
 }
 
@@ -77,6 +81,7 @@ impl TextIndicator {
             primary_color: (1.0, 1.0, 1.0),
             warning_color: (1.0, 1.0, 0.0),
             error_color: (1.0, 0.0, 0.0),
+            color_keys: None,
             base: IndicatorBase::new(),
         }
     }
@@ -110,6 +115,11 @@ impl TextIndicator {
         self.primary_color = primary_color;
         self.warning_color = warning_color;
         self.error_color = error_color;
+        self
+    }
+
+    pub fn with_color_keys(mut self, primary: StyleKey, warning: StyleKey, error: StyleKey) -> Self {
+        self.color_keys = Some((primary, warning, error));
         self
     }
 
@@ -155,13 +165,17 @@ impl TextIndicator {
     }
     
     /// Get text color based on value status
-    fn get_text_color(&self, value: &SensorValue) -> (f32, f32, f32) {
+    fn get_text_color(&self, value: &SensorValue, style: &UIStyle) -> (f32, f32, f32) {
+        let (primary, warning, error) = match self.color_keys {
+            Some((primary, warning, error)) => (style.get_color(primary), style.get_color(warning), style.get_color(error)),
+            None => (self.primary_color, self.warning_color, self.error_color),
+        };
         if value.is_critical() {
-            self.error_color
+            error
         } else if value.is_warning() {
-            self.warning_color
+            warning
         } else {
-            self.primary_color
+            primary
         }
     }
     
@@ -212,8 +226,7 @@ impl Indicator for TextIndicator {
         let label_text = if self.show_label { self.get_label(value) } else { "".to_string() };
         let value_text = if self.show_value { self.format_value(value) } else { "".to_string() };
         
-        // Use stored style parameters (no lookup needed)
-        let text_color = self.get_text_color(value);
+        let text_color = self.get_text_color(value, style);
         
         // Calculate text dimensions
         let label_width = if !label_text.is_empty() {

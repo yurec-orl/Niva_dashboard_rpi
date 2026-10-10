@@ -55,6 +55,9 @@ pub const TEMP_PAGE_ID: u32 = 8;
 /// Config section key PageManager persists the last-open page under.
 const LAST_PAGE_CONFIG_KEY: &str = "last_page";
 
+/// Config section key the active color theme (day/night) is persisted under.
+const COLOR_THEME_CONFIG_KEY: &str = "color_theme";
+
 /// Config section key a page's own persisted settings are stored under -- Config only knows
 /// about opaque string keys, so PageManager (the only thing that knows pages have numeric ids)
 /// turns each page's id into one.
@@ -185,6 +188,10 @@ pub trait Page {
     // Restores settings previously returned by `get_config` (or `Value::Null` on first run /
     // no prior entry) -- implementations must tolerate Null and missing/stale fields.
     fn set_config(&mut self, _config: &serde_json::Value) {}
+
+    // Called whenever the active color theme changes (and once at startup), for pages whose
+    // button labels or other cached state depend on it.
+    fn on_theme_changed(&mut self, _theme: ColorTheme) {}
 
     fn buttons(&self) -> &Vec<PageButton<Box<dyn FnMut()>>>;
     fn set_buttons(&mut self, buttons: Vec<PageButton<Box<dyn FnMut()>>>);
@@ -676,6 +683,11 @@ impl PageManager {
             page.set_config(&config);
         }
 
+        let theme = self.config.section(COLOR_THEME_CONFIG_KEY).as_str()
+            .and_then(ColorTheme::from_config_name)
+            .unwrap_or(ColorTheme::Night);
+        self.apply_color_theme(theme);
+
         // Reopen wherever the user left off last run, falling back to Main if that page
         // no longer exists (e.g. GNSS was persisted as last-open but the receiver failed
         // to start this run) or this is a first run with nothing persisted yet.
@@ -932,8 +944,7 @@ impl PageManager {
                     log::error!("Bloom render error: {}", e);
                 }
             } else {
-                // Clear screen with black for normal rendering
-                self.context.clear_screen();
+                self.context.clear_screen(self.ui_style.get_color(StyleKey::GlobalBackgroundColor));
             }
         
             unsafe {
@@ -1030,6 +1041,11 @@ impl PageManager {
             }
             UIEvent::SetBrightness(level) => {
                 self.set_brightness(level);
+            }
+            UIEvent::ToggleColorTheme => {
+                let theme = self.ui_style.theme().toggled();
+                self.apply_color_theme(theme);
+                self.config.set_section(COLOR_THEME_CONFIG_KEY, serde_json::json!(theme.config_name()));
             }
             UIEvent::SwitchToPage(page_id) => {
                 if let Err(e) = self.switch_page(page_id) {
@@ -1445,6 +1461,16 @@ impl PageManager {
     // =============================================================================
     // Brightness Control for UI
     // =============================================================================
+
+    fn apply_color_theme(&mut self, theme: ColorTheme) {
+        self.ui_style.set_theme(theme);
+        // AlertManager caches its colors at construction; everything else reads ui_style per frame.
+        self.alert_manager.apply_style(&self.ui_style);
+        for page in self.pages.iter_mut() {
+            page.on_theme_changed(theme);
+        }
+        log::info!("Color theme set to: {}", theme.config_name());
+    }
 
     /// Set display brightness (0.0 to 1.0)
     pub fn set_brightness(&mut self, brightness: f32) {

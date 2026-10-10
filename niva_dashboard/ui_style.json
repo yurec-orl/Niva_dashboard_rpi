@@ -20,7 +20,7 @@
   "gauge_border_width": 2.0,
   "gauge_radius": 80.0,
 
-  "gauge_needle_color": "#FF0000",
+  "gauge_needle_color": "#FFFF00",
   "gauge_needle_width": 8.0,
   "gauge_needle_length": 0.8,
   "gauge_needle_tip_width": 2.0,
@@ -183,14 +183,98 @@
   "animation_bar_speed": 1.0,
   "animation_smooth_enabled": true,
 
+  "osc_grid_color": "#404040",
+  "osc_axis_color": "#999999",
+  "osc_waveform_color": "#33FF66",
+
   "alert_font_path": "/home/user/Work/Niva_Dashboard_Rpi/Niva_dashboard_rpi/fonts/OpenGostTypeB.ttf",
   "alert_font_size": 48,
-  "alert_warning_color": "#FFFF00",
-  "alert_critical_color": "#FF0000",
+  "alert_warning_color": "#FFFFFF",
+  "alert_critical_color": "#FFFF00",
   "alert_background_color": "#000000",
   "alert_border_color": "#FFFFFF",
   "alert_border_width": 4.0,
   "alert_margin": 8.0,
   "alert_corner_radius": 8.0,
-  "alert_sound_path": ""
+  "alert_sound_path": "",
+
+  "day": {
+    "global_background_color": "#FFFFFF",
+
+    "page_button_label_color": "#000000",
+    "page_button_pressed_frame_color": "#000000",
+    "page_status_color": "#000000",
+
+    "gauge_background_color": "#FFFFFF",
+    "gauge_border_color": "#000000",
+    "gauge_needle_color": "#000000",
+    "gauge_needle_center_color": "#404040",
+    "gauge_needle_shadow_color": "#808080",
+    "gauge_major_mark_color": "#000000",
+    "gauge_minor_mark_color": "#000000",
+    "gauge_label_color": "#000000",
+    "gauge_title_color": "#000000",
+    "gauge_unit_color": "#333333",
+    "gauge_normal_zone_color": "#007700",
+    "gauge_warning_zone_color": "#CC6600",
+    "gauge_critical_zone_color": "#CC0000",
+    "gauge_inactive_zone_color": "#D0D0D0",
+
+    "bar_background_color": "#C0C0C0",
+    "bar_border_color": "#000000",
+    "bar_empty_color": "#D0D0D0",
+    "bar_normal_color": "#000000",
+    "bar_warning_color": "#CC6600",
+    "bar_critical_color": "#CC0000",
+    "bar_marks_color": "#000000",
+    "bar_mark_labels_color": "#000000",
+
+    "compass_major_mark_color": "#000000",
+    "compass_minor_mark_color": "#000000",
+    "compass_label_color": "#000000",
+    "compass_heading_color": "#0050C0",
+    "compass_arrow_color": "#000000",
+    "compass_center_line_color": "#000000",
+    "compass_hdop_excellent_color": "#007700",
+    "compass_hdop_good_color": "#8A7A00",
+    "compass_hdop_moderate_color": "#CC6600",
+    "compass_hdop_poor_color": "#CC0000",
+
+    "pitch_sky_color": "#6BA4D9",
+    "pitch_ground_color": "#734B2A",
+    "pitch_above_horizon_label_color": "#000000",
+    "pitch_below_horizon_label_color": "#FFFFFF",
+    "pitch_border_color": "#000000",
+    "roll_indicator_color": "#000000",
+    "roll_scale_color": "#000000",
+
+    "text_primary_color": "#000000",
+    "text_secondary_color": "#505050",
+    "text_accent_color": "#0050C0",
+    "text_warning_color": "#B35C00",
+    "text_error_color": "#CC0000",
+
+    "terminal_background_color": "#FFFFFF",
+    "terminal_border_color": "#000000",
+    "terminal_text_color": "#000000",
+
+    "indicator_normal_color": "#007700",
+    "indicator_warning_color": "#CC6600",
+    "indicator_critical_color": "#CC0000",
+    "indicator_off_color": "#C0C0C0",
+
+    "digital_display_active_color": "#000000",
+    "digital_display_inactive_color": "#C0C0C0",
+    "digital_display_background_color": "#FFFFFF",
+    "digital_display_border_color": "#000000",
+
+    "osc_grid_color": "#C0C0C0",
+    "osc_axis_color": "#606060",
+    "osc_waveform_color": "#007700",
+
+    "alert_warning_color": "#000000",
+    "alert_critical_color": "#000000",
+    "alert_background_color": "#FFFFFF",
+    "alert_border_color": "#000000"
+  }
 }

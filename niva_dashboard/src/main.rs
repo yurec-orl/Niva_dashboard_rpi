@@ -685,7 +685,7 @@ fn config_error_fallback_loop(context: &mut GraphicsContext, message: &str) -> s
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
         }
 
-        context.clear_screen();
+        context.clear_screen((0.0, 0.0, 0.0));
         let block_top = context.height as f32 / 2.0 - (lines.len() as f32 * line_height) / 2.0;
         for (i, line) in lines.iter().enumerate() {
             let _ = context.render_text_with_font(

@@ -8,6 +8,7 @@ pub enum UIEvent {
     BrightnessUp,
     BrightnessDown,
     SetBrightness(f32),
+    ToggleColorTheme,
     
     // Page navigation
     SwitchToPage(u32),
@@ -208,6 +209,7 @@ impl SmartEventSender {
             UIEvent::BrightnessUp |
             UIEvent::BrightnessDown |
             UIEvent::SetBrightness(_) |
+            UIEvent::ToggleColorTheme |
             UIEvent::SwitchToPage(_) |
             UIEvent::SuppressAlerts |
             UIEvent::SwitchSensorSet |
@@ -304,6 +306,7 @@ mod tests {
             UIEvent::BrightnessUp,
             UIEvent::BrightnessDown,
             UIEvent::SetBrightness(0.5),
+            UIEvent::ToggleColorTheme,
             UIEvent::SwitchToPage(2),
             UIEvent::Shutdown,
             UIEvent::Restart,

@@ -49,6 +49,22 @@ pub struct AlertStyle {
     pub background_color: (f32, f32, f32), // Changed from 4 elements to 3
 }
 
+impl AlertStyle {
+    fn from_ui_style(ui_style: &UIStyle) -> Self {
+        Self {
+            font_path: ui_style.get_string(StyleKey::AlertFontPath),
+            font_size: ui_style.get_float(StyleKey::AlertFontSize),
+            warning_color: ui_style.get_color(StyleKey::AlertWarningColor),
+            critical_color: ui_style.get_color(StyleKey::AlertCriticalColor),
+            border_color: ui_style.get_color(StyleKey::AlertBorderColor),
+            border_width: ui_style.get_float(StyleKey::AlertBorderWidth),
+            margin: ui_style.get_float(StyleKey::AlertMargin),
+            corner_radius: ui_style.get_float(StyleKey::AlertCornerRadius),
+            background_color: ui_style.get_color(StyleKey::AlertBackgroundColor),
+        }
+    }
+}
+
 pub struct AlertManager {
     watchdog_id_counter: u32,       // Unique ID number to match watchdogs to alerts
     enabled: bool,
@@ -67,19 +83,14 @@ impl AlertManager {
             enabled,
             watchdogs: Vec::new(),
             alerts: Vec::new(),
-            alert_style: AlertStyle {
-                font_path: ui_style.get_string(StyleKey::AlertFontPath),
-                font_size: ui_style.get_float(StyleKey::AlertFontSize),
-                warning_color: ui_style.get_color(StyleKey::AlertWarningColor),
-                critical_color: ui_style.get_color(StyleKey::AlertCriticalColor),
-                border_color: ui_style.get_color(StyleKey::AlertBorderColor),
-                border_width: ui_style.get_float(StyleKey::AlertBorderWidth),
-                margin: ui_style.get_float(StyleKey::AlertMargin),
-                corner_radius: ui_style.get_float(StyleKey::AlertCornerRadius),
-                background_color: ui_style.get_color(StyleKey::AlertBackgroundColor),
-            },
+            alert_style: AlertStyle::from_ui_style(ui_style),
             sound_path: ui_style.get_string(StyleKey::AlertSoundPath),
         }
+    }
+
+    /// Re-reads alert styling after the active color theme changed.
+    pub fn apply_style(&mut self, ui_style: &UIStyle) {
+        self.alert_style = AlertStyle::from_ui_style(ui_style);
     }
 
     fn get_next_watchdog_id(&mut self) -> u32 {

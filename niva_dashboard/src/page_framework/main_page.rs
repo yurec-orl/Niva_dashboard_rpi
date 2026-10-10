@@ -41,6 +41,10 @@ pub struct MainPage {
     // would be indistinguishable from every other missing reading (see issue #28). Render()
     // takes &self, hence the RefCell.
     last_known_values: RefCell<HashMap<HWInput, SensorValue>>,
+    // The theme toggle's label shows the active theme, so the secondary set is rebuilt
+    // when the theme changes while it's on screen.
+    color_theme: ColorTheme,
+    secondary_buttons_active: bool,
 }
 
 impl MainPage {
@@ -56,6 +60,8 @@ impl MainPage {
             indicator_sets: vec![gauge_indicator_set, bar_indicator_set, test_indicator_set],
             current_indicator_set: 0,
             last_known_values: RefCell::new(HashMap::new()),
+            color_theme: ui_style.theme(),
+            secondary_buttons_active: false,
         };
 
         // Set up default buttons for the main page
@@ -99,9 +105,6 @@ impl MainPage {
 
         let indicator_font = ui_style.get_string(StyleKey::TextSecondaryFont);
         let indicator_font_size = ui_style.get_integer(StyleKey::TextSecondaryFontSize);
-        let indicator_color = ui_style.get_color(StyleKey::TextSecondaryColor);
-        let indicator_warning_color = ui_style.get_color(StyleKey::TextWarningColor);
-        let indicator_error_color = ui_style.get_color(StyleKey::TextErrorColor);
 
         // Digital sensors - plain text readout, no precision setting
         let digital_inputs = [
@@ -124,7 +127,7 @@ impl MainPage {
                 indicator: Box::new(
                     TextIndicator::new()
                         .with_font(indicator_font.clone(), indicator_font_size, 1.0)
-                        .with_colors(indicator_color, indicator_warning_color, indicator_error_color),
+                        .with_color_keys(StyleKey::TextSecondaryColor, StyleKey::TextWarningColor, StyleKey::TextErrorColor),
                 ),
                 bounds: create_bounds_and_advance(&mut col, &mut row),
             });
@@ -144,7 +147,7 @@ impl MainPage {
                     TextIndicator::new()
                         .with_precision(precision)
                         .with_font(indicator_font.clone(), indicator_font_size, 1.0)
-                        .with_colors(indicator_color, indicator_warning_color, indicator_error_color),
+                        .with_color_keys(StyleKey::TextSecondaryColor, StyleKey::TextWarningColor, StyleKey::TextErrorColor),
                 ),
                 bounds: create_bounds_and_advance(&mut col, &mut row),
             });
@@ -276,6 +279,7 @@ impl MainPage {
     // Primary button set, shown on entering the page and after returning from the
     // secondary set (ВОЗВР). УСТАНОВ swaps to the secondary set below.
     fn setup_buttons(&mut self) {
+        self.secondary_buttons_active = false;
         let smart_sender = self.smart_event_sender.clone();
         let buttons = vec![
             PageButton::new(ButtonPosition::Left1, "НАВ".into(), Box::new({
@@ -307,10 +311,15 @@ impl MainPage {
         self.base.set_buttons(buttons);
     }
 
-    // Secondary button set, entered via УСТАНОВ. Holds the view/brightness controls freed
+    // Secondary button set, entered via УСТАНОВ. Holds the view/theme/brightness controls freed
     // from the primary set's left1/left2/right1/right2 slots; ВОЗВР returns to primary.
     fn setup_secondary_buttons(&mut self) {
+        self.secondary_buttons_active = true;
         let smart_sender = self.smart_event_sender.clone();
+        let theme_label = match self.color_theme {
+            ColorTheme::Night => "НОЧЬ",
+            ColorTheme::Day => "ДЕНЬ",
+        };
         let buttons = vec![
             PageButton::new(ButtonPosition::Left1, "ВИД+".into(), Box::new({
                 let sender = smart_sender.clone();
@@ -319,6 +328,10 @@ impl MainPage {
             PageButton::new(ButtonPosition::Left2, "ВИД-".into(), Box::new({
                 let sender = smart_sender.clone();
                 move || sender.send(UIEvent::PreviousIndicatorSet)
+            }) as Box<dyn FnMut()>),
+            PageButton::new(ButtonPosition::Left3, theme_label.into(), Box::new({
+                let sender = smart_sender.clone();
+                move || sender.send(UIEvent::ToggleColorTheme)
             }) as Box<dyn FnMut()>),
             PageButton::new(ButtonPosition::Right1, "ЯРК+".into(), Box::new({
                 let sender = smart_sender.clone();
@@ -401,6 +414,13 @@ impl Page for MainPage {
 
     fn on_enter(&mut self) -> Result<(), String> {
         Ok(())
+    }
+
+    fn on_theme_changed(&mut self, theme: ColorTheme) {
+        self.color_theme = theme;
+        if self.secondary_buttons_active {
+            self.setup_secondary_buttons();
+        }
     }
 
     fn on_exit(&mut self) -> Result<(), String> {

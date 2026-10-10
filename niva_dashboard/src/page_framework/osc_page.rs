@@ -104,10 +104,6 @@ fn adc_code_to_volts(code: f32) -> f32 {
     adc_pin_volts * (OSC_DIVIDER_R1_OHM + OSC_DIVIDER_R2_OHM) / OSC_DIVIDER_R2_OHM * OSC_V12_TRIM
 }
 
-const GRID_COLOR: (f32, f32, f32) = (0.25, 0.25, 0.25);
-const AXIS_COLOR: (f32, f32, f32) = (0.6, 0.6, 0.6);
-const WAVEFORM_COLOR: (f32, f32, f32) = (0.2, 1.0, 0.4);
-
 /// Oscilloscope page: on entry (and on ЗАХВ), requests a burst capture from the STM32 ADC
 /// module via OscFrame and renders the result as a time-amplitude graph. See
 /// OSCILLOSCOPE_DESIGN.md for the capture protocol.
@@ -208,6 +204,9 @@ impl Page for OscPage {
         let text_font = ui_style.get_string(StyleKey::TextMonospaceFont);
         let text_font_size = ui_style.get_integer(StyleKey::TextMonospaceFontSize);
         let text_color = ui_style.get_color(StyleKey::TerminalTextColor);
+        let grid_color = ui_style.get_color(StyleKey::OscGridColor);
+        let axis_color = ui_style.get_color(StyleKey::OscAxisColor);
+        let waveform_color = ui_style.get_color(StyleKey::OscWaveformColor);
 
         context.render_text_with_font(
             "ОСЦИЛЛОГРАФ (БОРТ СЕТЬ)", GRAPH_LEFT_MARGIN, TITLE_Y, 1.0, title_color, &title_font, title_font_size,
@@ -282,7 +281,7 @@ impl Page for OscPage {
             let frac = i as f32 / AMPLITUDE_DIVISIONS as f32;
             let y = graph_y1 - frac * graph_h;
             let value = y_min + frac * y_span;
-            context.render_line((graph_x0, y), (graph_x1, y), GRID_COLOR, 1.0)?;
+            context.render_line((graph_x0, y), (graph_x1, y), grid_color, 1.0)?;
             let label = format!("{:.2}В", adc_code_to_volts(value));
             let label_w = context.calculate_text_width_with_font(&label, 1.0, &text_font, text_font_size)?;
             context.render_text_with_font(&label, graph_x0 - label_w - 8.0, y - text_font_size as f32 * 0.5, 1.0, text_color, &text_font, text_font_size)?;
@@ -293,15 +292,15 @@ impl Page for OscPage {
         let mut t = (t_start / TIME_GRID_STEP_MS).ceil() * TIME_GRID_STEP_MS;
         while t <= t_end + 0.01 {
             let x = graph_x0 + (t - t_start) / window_ms * graph_w;
-            context.render_line((x, graph_y0), (x, graph_y1), GRID_COLOR, 1.0)?;
+            context.render_line((x, graph_y0), (x, graph_y1), grid_color, 1.0)?;
             let label = format!("{:.0}мс", t);
             context.render_text_with_font(&label, x - 12.0, graph_y1 + 8.0, 1.0, text_color, &text_font, text_font_size)?;
             t += TIME_GRID_STEP_MS;
         }
 
         // Axis lines, brighter than the grid.
-        context.render_line((graph_x0, graph_y0), (graph_x0, graph_y1), AXIS_COLOR, 1.5)?;
-        context.render_line((graph_x0, graph_y1), (graph_x1, graph_y1), AXIS_COLOR, 1.5)?;
+        context.render_line((graph_x0, graph_y0), (graph_x0, graph_y1), axis_color, 1.5)?;
+        context.render_line((graph_x0, graph_y1), (graph_x1, graph_y1), axis_color, 1.5)?;
 
         // Signal waveform -- the visible-window sample slice computed above, mapped so that
         // window fills the graph width, in one batched draw call (see osc_waveform module doc).
@@ -315,7 +314,7 @@ impl Page for OscPage {
         unsafe {
             gl::Enable(gl::BLEND);
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-            let color = context.apply_brightness(WAVEFORM_COLOR);
+            let color = context.apply_brightness(waveform_color);
             osc_waveform::draw_polyline(&points, WAVEFORM_THICKNESS, color, screen_w, screen_h);
         }
 

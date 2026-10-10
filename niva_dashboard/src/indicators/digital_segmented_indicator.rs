@@ -175,7 +175,7 @@ impl Indicator for DigitalSegmentedIndicator {
                 style.get_float(StyleKey::DigitalDisplayBorderWidth),
                 style.get_float(StyleKey::DigitalDisplayBorderRadius),
             )?;
-            background_color = (0.0, 0.0, 0.0); // Use black background if only border
+            background_color = style.get_color(StyleKey::GlobalBackgroundColor);
         }
 
         let active_color = style.get_color(StyleKey::DigitalDisplayActiveColor); // Black by default

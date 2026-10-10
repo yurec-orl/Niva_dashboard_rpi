@@ -17,9 +17,14 @@
 //!   "gauge_mark_font_size": 14,
 //!   "gauge_major_mark_width": 2.0,
 //!   "bar_fill_color": "#00FF00",
-//!   "global_contrast": 1.0
+//!   "global_contrast": 1.0,
+//!   "day": { "gauge_needle_color": "#000000", ... }
 //! }
 //! ```
+//!
+//! Top-level values are the night theme. The `day` section overrides them while
+//! `ColorTheme::Day` is active, and must give every Color key a day value -- otherwise a
+//! forgotten key would silently keep its night color on a white background.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -274,6 +279,11 @@ define_style_keys! {
     AnimationBarSpeed: Float = "animation_bar_speed",
     AnimationSmoothEnabled: Boolean = "animation_smooth_enabled",
 
+    // Oscilloscope page
+    OscGridColor: Color = "osc_grid_color",
+    OscAxisColor: Color = "osc_axis_color",
+    OscWaveformColor: Color = "osc_waveform_color",
+
     // Alerts
     AlertFontPath: String = "alert_font_path",
     AlertFontSize: Integer = "alert_font_size",
@@ -337,9 +347,43 @@ fn validate_kind(value: &serde_json::Value, kind: ValueKind) -> Result<(), Strin
 // UI STYLE
 // =============================================================================
 
+const DAY_SECTION_KEY: &str = "day";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColorTheme {
+    Night,
+    Day,
+}
+
+impl ColorTheme {
+    pub fn toggled(self) -> Self {
+        match self {
+            ColorTheme::Night => ColorTheme::Day,
+            ColorTheme::Day => ColorTheme::Night,
+        }
+    }
+
+    pub fn config_name(self) -> &'static str {
+        match self {
+            ColorTheme::Night => "night",
+            ColorTheme::Day => "day",
+        }
+    }
+
+    pub fn from_config_name(name: &str) -> Option<Self> {
+        match name {
+            "night" => Some(ColorTheme::Night),
+            "day" => Some(ColorTheme::Day),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct UIStyle {
     values: HashMap<StyleKey, serde_json::Value>,
+    day_overrides: HashMap<StyleKey, serde_json::Value>,
+    theme: ColorTheme,
 }
 
 impl UIStyle {
@@ -380,6 +424,8 @@ impl UIStyle {
             }
         }
 
+        let day_overrides = Self::parse_day_section(raw.get(DAY_SECTION_KEY), &mut problems);
+
         if !problems.is_empty() {
             return Err(format!(
                 "ui style validation failed ({} problem(s)):\n  {}",
@@ -388,7 +434,59 @@ impl UIStyle {
             ));
         }
 
-        Ok(UIStyle { values })
+        Ok(UIStyle { values, day_overrides, theme: ColorTheme::Night })
+    }
+
+    fn parse_day_section(section: Option<&serde_json::Value>, problems: &mut Vec<String>) -> HashMap<StyleKey, serde_json::Value> {
+        let mut overrides = HashMap::new();
+        let Some(section) = section else {
+            problems.push(format!("'{DAY_SECTION_KEY}': missing"));
+            return overrides;
+        };
+        let Some(section) = section.as_object() else {
+            problems.push(format!("'{DAY_SECTION_KEY}': expected an object, got {section}"));
+            return overrides;
+        };
+
+        let keys_by_name: HashMap<&str, StyleKey> =
+            StyleKey::ALL.iter().map(|key| (key.json_name(), *key)).collect();
+
+        for (name, value) in section {
+            match keys_by_name.get(name.as_str()) {
+                Some(key) => match validate_kind(value, key.kind()) {
+                    Ok(()) => {
+                        overrides.insert(*key, value.clone());
+                    }
+                    Err(reason) => problems.push(format!("'{DAY_SECTION_KEY}.{name}': {reason}")),
+                },
+                None => problems.push(format!("'{DAY_SECTION_KEY}.{name}': unknown style key")),
+            }
+        }
+
+        for key in StyleKey::ALL.iter().filter(|key| key.kind() == ValueKind::Color) {
+            if !section.contains_key(key.json_name()) {
+                problems.push(format!("'{DAY_SECTION_KEY}.{}': missing", key.json_name()));
+            }
+        }
+
+        overrides
+    }
+
+    pub fn theme(&self) -> ColorTheme {
+        self.theme
+    }
+
+    pub fn set_theme(&mut self, theme: ColorTheme) {
+        self.theme = theme;
+    }
+
+    fn value(&self, key: StyleKey) -> &serde_json::Value {
+        if self.theme == ColorTheme::Day {
+            if let Some(value) = self.day_overrides.get(&key) {
+                return value;
+            }
+        }
+        self.values.get(&key).unwrap_or_else(|| panic!("StyleKey::{key:?} missing after validation"))
     }
 
     // Every accessor below panics if `key` is somehow absent -- validation in
@@ -397,27 +495,27 @@ impl UIStyle {
     // programming error (a key read via the wrong accessor for its kind), not a bad file.
 
     pub fn get_color(&self, key: StyleKey) -> (f32, f32, f32) {
-        let value = self.values.get(&key).unwrap_or_else(|| panic!("StyleKey::{key:?} missing after validation"));
+        let value = self.value(key);
         value_as_color(value).unwrap_or_else(|e| panic!("StyleKey::{key:?}: {e}"))
     }
 
     pub fn get_float(&self, key: StyleKey) -> f32 {
-        let value = self.values.get(&key).unwrap_or_else(|| panic!("StyleKey::{key:?} missing after validation"));
+        let value = self.value(key);
         value_as_float(value).unwrap_or_else(|e| panic!("StyleKey::{key:?}: {e}"))
     }
 
     pub fn get_integer(&self, key: StyleKey) -> u32 {
-        let value = self.values.get(&key).unwrap_or_else(|| panic!("StyleKey::{key:?} missing after validation"));
+        let value = self.value(key);
         value_as_integer(value).unwrap_or_else(|e| panic!("StyleKey::{key:?}: {e}"))
     }
 
     pub fn get_bool(&self, key: StyleKey) -> bool {
-        let value = self.values.get(&key).unwrap_or_else(|| panic!("StyleKey::{key:?} missing after validation"));
+        let value = self.value(key);
         value_as_bool(value).unwrap_or_else(|e| panic!("StyleKey::{key:?}: {e}"))
     }
 
     pub fn get_string(&self, key: StyleKey) -> String {
-        let value = self.values.get(&key).unwrap_or_else(|| panic!("StyleKey::{key:?} missing after validation"));
+        let value = self.value(key);
         value_as_string(value).unwrap_or_else(|e| panic!("StyleKey::{key:?}: {e}"))
     }
 }
@@ -510,24 +608,41 @@ mod tests {
         assert!(parse_color("invalid").is_err());
     }
 
-    fn minimal_json_for_all_keys() -> String {
-        let mut map = serde_json::Map::new();
-        for key in StyleKey::ALL {
-            let value = match key.kind() {
-                ValueKind::Color => serde_json::json!("#FF0000"),
-                ValueKind::Float => serde_json::json!(1.0),
-                ValueKind::Integer => serde_json::json!(1),
-                ValueKind::Boolean => serde_json::json!(true),
-                ValueKind::String => serde_json::json!("value"),
-            };
-            map.insert(key.json_name().to_string(), value);
+    fn placeholder_value(kind: ValueKind) -> serde_json::Value {
+        match kind {
+            ValueKind::Color => serde_json::json!("#FF0000"),
+            ValueKind::Float => serde_json::json!(1.0),
+            ValueKind::Integer => serde_json::json!(1),
+            ValueKind::Boolean => serde_json::json!(true),
+            ValueKind::String => serde_json::json!("value"),
         }
+    }
+
+    // Every key with a placeholder value, plus a day section overriding every color to black.
+    fn all_keys_map() -> serde_json::Map<String, serde_json::Value> {
+        let mut map = serde_json::Map::new();
+        let mut day = serde_json::Map::new();
+        for key in StyleKey::ALL {
+            map.insert(key.json_name().to_string(), placeholder_value(key.kind()));
+            if key.kind() == ValueKind::Color {
+                day.insert(key.json_name().to_string(), serde_json::json!("#000000"));
+            }
+        }
+        map.insert(DAY_SECTION_KEY.to_string(), serde_json::Value::Object(day));
+        map
+    }
+
+    fn to_json(map: serde_json::Map<String, serde_json::Value>) -> String {
         serde_json::Value::Object(map).to_string()
+    }
+
+    fn day_section(map: &mut serde_json::Map<String, serde_json::Value>) -> &mut serde_json::Map<String, serde_json::Value> {
+        map.get_mut(DAY_SECTION_KEY).and_then(|v| v.as_object_mut()).unwrap()
     }
 
     #[test]
     fn loads_when_every_key_present_and_well_typed() {
-        let style = UIStyle::from_json(&minimal_json_for_all_keys()).expect("should validate");
+        let style = UIStyle::from_json(&to_json(all_keys_map())).expect("should validate");
         assert_eq!(style.get_color(StyleKey::GaugeNeedleColor), (1.0, 0.0, 0.0));
         assert_eq!(style.get_integer(StyleKey::GaugeMinorMarkCount), 1);
         assert_eq!(style.get_bool(StyleKey::GaugeLabelEnabled), true);
@@ -537,75 +652,78 @@ mod tests {
     #[test]
     fn integer_key_coerces_from_a_float_shaped_json_number() {
         // ALERT_FONT_SIZE-style case: an Integer-kind key stored as e.g. `48.0`.
-        let mut map = serde_json::Map::new();
-        for key in StyleKey::ALL {
-            let value = if *key == StyleKey::AlertFontSize {
-                serde_json::json!(48.0)
-            } else {
-                match key.kind() {
-                    ValueKind::Color => serde_json::json!("#FF0000"),
-                    ValueKind::Float => serde_json::json!(1.0),
-                    ValueKind::Integer => serde_json::json!(1),
-                    ValueKind::Boolean => serde_json::json!(true),
-                    ValueKind::String => serde_json::json!("value"),
-                }
-            };
-            map.insert(key.json_name().to_string(), value);
-        }
-        let json = serde_json::Value::Object(map).to_string();
-        let style = UIStyle::from_json(&json).expect("should validate");
+        let mut map = all_keys_map();
+        map.insert("alert_font_size".to_string(), serde_json::json!(48.0));
+        let style = UIStyle::from_json(&to_json(map)).expect("should validate");
         assert_eq!(style.get_integer(StyleKey::AlertFontSize), 48);
         assert_eq!(style.get_float(StyleKey::AlertFontSize), 48.0);
     }
 
     #[test]
     fn missing_key_is_a_load_error() {
-        let mut map = serde_json::Map::new();
-        for key in StyleKey::ALL {
-            if *key == StyleKey::GaugeNeedleColor {
-                continue; // deliberately omitted
-            }
-            let value = match key.kind() {
-                ValueKind::Color => serde_json::json!("#FF0000"),
-                ValueKind::Float => serde_json::json!(1.0),
-                ValueKind::Integer => serde_json::json!(1),
-                ValueKind::Boolean => serde_json::json!(true),
-                ValueKind::String => serde_json::json!("value"),
-            };
-            map.insert(key.json_name().to_string(), value);
-        }
-        let json = serde_json::Value::Object(map).to_string();
-        let err = UIStyle::from_json(&json).expect_err("missing key should fail");
+        let mut map = all_keys_map();
+        map.remove("gauge_needle_color");
+        let err = UIStyle::from_json(&to_json(map)).expect_err("missing key should fail");
         assert!(err.contains("gauge_needle_color"));
     }
 
     #[test]
     fn wrong_type_is_a_load_error() {
-        let mut map = serde_json::Map::new();
-        for key in StyleKey::ALL {
-            let value = if *key == StyleKey::GaugeBorderWidth {
-                serde_json::json!("not a number")
-            } else {
-                match key.kind() {
-                    ValueKind::Color => serde_json::json!("#FF0000"),
-                    ValueKind::Float => serde_json::json!(1.0),
-                    ValueKind::Integer => serde_json::json!(1),
-                    ValueKind::Boolean => serde_json::json!(true),
-                    ValueKind::String => serde_json::json!("value"),
-                }
-            };
-            map.insert(key.json_name().to_string(), value);
-        }
-        let json = serde_json::Value::Object(map).to_string();
-        let err = UIStyle::from_json(&json).expect_err("wrong-typed key should fail");
+        let mut map = all_keys_map();
+        map.insert("gauge_border_width".to_string(), serde_json::json!("not a number"));
+        let err = UIStyle::from_json(&to_json(map)).expect_err("wrong-typed key should fail");
         assert!(err.contains("gauge_border_width"));
     }
 
     #[test]
     fn reports_every_problem_at_once() {
-        let json = "{}"; // every key missing
+        let json = "{}"; // every key missing, plus the day section
         let err = UIStyle::from_json(json).expect_err("empty file should fail");
-        assert_eq!(err.matches("missing").count(), StyleKey::ALL.len());
+        assert_eq!(err.matches("missing").count(), StyleKey::ALL.len() + 1);
+    }
+
+    #[test]
+    fn day_theme_overrides_only_while_active() {
+        let mut map = all_keys_map();
+        day_section(&mut map).insert("gauge_border_width".to_string(), serde_json::json!(3.0));
+        let mut style = UIStyle::from_json(&to_json(map)).expect("should validate");
+
+        assert_eq!(style.theme(), ColorTheme::Night);
+        assert_eq!(style.get_color(StyleKey::GaugeNeedleColor), (1.0, 0.0, 0.0));
+        assert_eq!(style.get_float(StyleKey::GaugeBorderWidth), 1.0);
+
+        style.set_theme(ColorTheme::Day);
+        assert_eq!(style.get_color(StyleKey::GaugeNeedleColor), (0.0, 0.0, 0.0));
+        assert_eq!(style.get_float(StyleKey::GaugeBorderWidth), 3.0);
+        // Not overridden in the day section -> falls through to the night value.
+        assert_eq!(style.get_integer(StyleKey::GaugeMinorMarkCount), 1);
+    }
+
+    #[test]
+    fn day_section_missing_a_color_is_a_load_error() {
+        let mut map = all_keys_map();
+        day_section(&mut map).remove("alert_critical_color");
+        let err = UIStyle::from_json(&to_json(map)).expect_err("day section must cover every color");
+        assert!(err.contains("day.alert_critical_color"));
+    }
+
+    #[test]
+    fn day_section_unknown_or_wrong_typed_key_is_a_load_error() {
+        let mut map = all_keys_map();
+        day_section(&mut map).insert("no_such_key".to_string(), serde_json::json!("#000000"));
+        day_section(&mut map).insert("gauge_needle_color".to_string(), serde_json::json!(5));
+        let err = UIStyle::from_json(&to_json(map)).expect_err("bad day keys should fail");
+        assert!(err.contains("day.no_such_key"));
+        assert!(err.contains("day.gauge_needle_color"));
+    }
+
+    #[test]
+    fn theme_config_name_round_trips() {
+        for theme in [ColorTheme::Night, ColorTheme::Day] {
+            assert_eq!(ColorTheme::from_config_name(theme.config_name()), Some(theme));
+        }
+        assert_eq!(ColorTheme::Night.toggled(), ColorTheme::Day);
+        assert_eq!(ColorTheme::Day.toggled(), ColorTheme::Night);
     }
 
     /// Exercises the repo's actual ui_style.json end to end, so a transcription mistake

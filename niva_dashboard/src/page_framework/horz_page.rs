@@ -43,7 +43,6 @@ pub struct HorzPage {
 
 impl HorzPage {
     pub fn new(id: u32, smart_event_sender: SmartEventSender, event_receiver: EventReceiver, bno_frame: Option<Bno085Frame>, ui_style: &UIStyle) -> Self {
-        let heading_label_color = ui_style.get_color(StyleKey::CompassHeadingColor);
         let heading_label_font = ui_style.get_string(StyleKey::CompassLabelFont);
 
         let mut page = HorzPage {
@@ -53,7 +52,7 @@ impl HorzPage {
             bno_frame,
             pitch_indicator: PitchIndicator::new().with_visible_span_deg(50.0),
             roll_indicator: RollIndicator::new().with_decorators(vec![Box::new(RollScaleDecorator::new())]),
-            heading_indicator: TextIndicator::new().with_font(heading_label_font, 36, 1.0).with_colors(heading_label_color, (1.0, 1.0, 0.0), (1.0, 0.0, 0.0)).
+            heading_indicator: TextIndicator::new().with_font(heading_label_font, 36, 1.0).with_color_keys(StyleKey::CompassHeadingColor, StyleKey::TextWarningColor, StyleKey::TextErrorColor).
                 with_parameters(TextAlignment::Center, false, false, true).with_decorators(vec![
                     Box::new(BoxDecorator::new(2.0, StyleKey::CompassHeadingColor, 0.0)),
                     //Box::new(TriangleDecorator::new([(0.5, 1.5), (0.35, 1.2), (0.65, 1.2)], 2.0, StyleKey::CompassHeadingColor, true)),

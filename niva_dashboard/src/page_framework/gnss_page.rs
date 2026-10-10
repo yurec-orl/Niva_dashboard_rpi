@@ -118,7 +118,6 @@ impl GnssPage {
         // instead of silently drifting if that default ever changes.
         let heading_marker_arrow_width = 3.0;
 
-        let heading_label_color = ui_style.get_color(StyleKey::CompassHeadingColor);
         let heading_label_font = ui_style.get_string(StyleKey::CompassLabelFont);
         let status_label_font = ui_style.get_string(StyleKey::CompassLabelFont);
 
@@ -134,7 +133,7 @@ impl GnssPage {
                 heading_marker_arrow_width, heading_marker_arrow_width,
                 StyleKey::CompassArrowColor,
             ).with_shape(Box::new(MarkNeedleShape::new(heading_marker_arrow_width, minor_mark_length))),
-            heading_indicator: TextIndicator::new().with_font(heading_label_font, 36, 1.0).with_colors(heading_label_color, (1.0, 1.0, 0.0), (1.0, 0.0, 0.0)).
+            heading_indicator: TextIndicator::new().with_font(heading_label_font, 36, 1.0).with_color_keys(StyleKey::CompassHeadingColor, StyleKey::TextWarningColor, StyleKey::TextErrorColor).
                 with_parameters(TextAlignment::Center, false, false, true).with_decorators(vec![
                     Box::new(BoxDecorator::new(2.0, StyleKey::CompassHeadingColor, 0.0)),
                     Box::new(TriangleDecorator::new([(0.5, 1.5), (0.35, 1.2), (0.65, 1.2)], 2.0, StyleKey::CompassHeadingColor, true)),
@@ -142,15 +141,15 @@ impl GnssPage {
             hdop_indicator: HdopIndicator::new(),
             ins_link_indicator: TextIndicator::new()
                 .with_font(status_label_font.clone(), STATUS_LABEL_FONT_SIZE, 1.0)
-                .with_colors((0.0, 1.0, 0.0), (1.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+                .with_color_keys(StyleKey::IndicatorNormalColor, StyleKey::IndicatorCriticalColor, StyleKey::IndicatorCriticalColor)
                 .with_parameters(TextAlignment::Center, false, true, false),
             gnss_link_indicator: TextIndicator::new()
                 .with_font(status_label_font.clone(), STATUS_LABEL_FONT_SIZE, 1.0)
-                .with_colors((0.0, 1.0, 0.0), (1.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+                .with_color_keys(StyleKey::IndicatorNormalColor, StyleKey::IndicatorCriticalColor, StyleKey::IndicatorCriticalColor)
                 .with_parameters(TextAlignment::Center, false, true, false),
             test_mode_indicator: TextIndicator::new()
                 .with_font(status_label_font, STATUS_LABEL_FONT_SIZE, 1.0)
-                .with_colors((1.0, 1.0, 0.0), (1.0, 1.0, 0.0), (1.0, 1.0, 0.0))
+                .with_color_keys(StyleKey::TextWarningColor, StyleKey::TextWarningColor, StyleKey::TextWarningColor)
                 .with_parameters(TextAlignment::Center, false, true, false),
         }
     }
